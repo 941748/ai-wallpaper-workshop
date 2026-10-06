@@ -24,14 +24,18 @@ const (
 	AppNameCN           = "AI 壁纸工坊"
 )
 
+// AskLadder 回访记忆曲线阶梯(天)。
+// 设计目的: "尽量少打扰"但不让用户遗忘产品存在感——唤醒节律前密后疏, 90 天封顶(每季度一次的底线节律)。
+var AskLadder = []int{3, 7, 15, 30, 60, 90}
+
 // Satisfaction 满意度回访状态(存 config.json)。
-// 满意 → IntervalDays 持续 +1(不设上限, 越满意打扰越少);
-// 换个风格 → 重置为默认 3 天并以强漂移事件上报;
-// 稍后 → NextAskAt 顺延 3 天(周期不变)。
+// 记忆曲线: 首次 3 天; 满意/无响应 → 沿阶梯上调一档(3→7→15→30→60→90 封顶);
+// 换个风格 → 重置 3 天并以强漂移事件上报;
+// 以后再说/调整一下 → NextAskAt 顺延 3 天(档位不变)。
 type Satisfaction struct {
 	IntervalDays int    `json:"interval_days"`
 	NextAskAt    string `json:"next_ask_at"` // RFC3339, 空=尚未初始化
-	LastChoice   string `json:"last_choice"` // satisfied | style | later
+	LastChoice   string `json:"last_choice"` // satisfied | style | later | adjust | timeout
 }
 
 // Config 客户端主配置。
@@ -145,29 +149,46 @@ func (s *Satisfaction) NextAskTime() time.Time {
 	return t
 }
 
-// ScheduleAsk 基于 now 安排下一次回访: 首次按默认周期; 满意后 +1 天持续递增(不设上限)。
+// ScheduleAsk 基于 now 按记忆曲线安排下一次回访:
+// 满意/无响应 → 上调一档(封顶 90 天, 手动设置的超长周期不被缩短);
+// 换个风格 → 重置首档; 以后再说/调整一下 → 档位不变仅顺延 3 天。
 func (s *Satisfaction) ScheduleAsk(now time.Time, choice string) {
+	if s.IntervalDays <= 0 {
+		s.IntervalDays = AskLadder[0]
+	}
+	stage := askStage(s.IntervalDays)
 	switch choice {
-	case "satisfied":
-		if s.IntervalDays < DefaultAskDays {
-			s.IntervalDays = DefaultAskDays
+	case "satisfied", "timeout":
+		if stage < len(AskLadder)-1 {
+			stage++
 		}
-		s.IntervalDays++ // 越满意越少打扰, 不设上限
+		if next := AskLadder[stage]; next > s.IntervalDays {
+			s.IntervalDays = next
+		}
 	case "style":
-		s.IntervalDays = DefaultAskDays // 换了风格, 重新密集观察
-	case "later":
-		// 周期不变, 仅顺延 3 天
+		s.IntervalDays = AskLadder[0] // 换了风格, 重新密集观察
+	case "later", "adjust":
+		// 档位不变, 仅顺延 3 天
 	default: // 首次初始化
-		if s.IntervalDays <= 0 {
-			s.IntervalDays = DefaultAskDays
-		}
+		s.IntervalDays = AskLadder[askStage(s.IntervalDays)]
 	}
 	s.LastChoice = choice
 	days := s.IntervalDays
-	if choice == "later" {
+	if choice == "later" || choice == "adjust" {
 		days = 3
 	}
 	s.NextAskAt = now.AddDate(0, 0, days).Format(time.RFC3339)
+}
+
+// askStage 按当前周期推导曲线档位(取不超过 IntervalDays 的最高档, 兼容手动与旧数据)。
+func askStage(days int) int {
+	stage := 0
+	for i, d := range AskLadder {
+		if days >= d {
+			stage = i
+		}
+	}
+	return stage
 }
 
 // 画像权重维值 Key 形如 "style/ink"。

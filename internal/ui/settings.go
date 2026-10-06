@@ -799,9 +799,7 @@ func (s *settings) buildUpdatePage(tab *walk.TabWidget) error {
 	saveBtn.SetText("保存")
 	saveBtn.Clicked().Attach(func() {
 		s.cfg.Satisfaction.IntervalDays = int(s.askSpin.Value())
-		// 重排下次回访时间(保持已过期中立处理: 从现在起算)
-		s.cfg.Satisfaction.ScheduleAsk(time.Now(), "later")
-		s.cfg.Satisfaction.IntervalDays = int(s.askSpin.Value())
+		// 手动周期直接生效(从现在起算), 后续满意仍沿曲线阶梯上调
 		s.cfg.Satisfaction.NextAskAt = time.Now().AddDate(0, 0, s.cfg.Satisfaction.IntervalDays).Format(time.RFC3339)
 		if err := s.cfg.Save(s.dir); err != nil {
 			showError(s.mw, "保存失败: %v", err)
@@ -823,7 +821,7 @@ func (s *settings) refreshAskLabel() {
 		s.askLbl.SetText("偏好回访: 尚未安排")
 		return
 	}
-	s.askLbl.SetText(fmt.Sprintf("偏好回访: 下次 %s (满意后会越来越久)",
+	s.askLbl.SetText(fmt.Sprintf("偏好回访: 下次 %s (记忆曲线 3/7/15/30/60/90 天)",
 		next.Format("2006-01-02 15:04")))
 }
 

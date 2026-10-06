@@ -29,9 +29,11 @@ type AskChoice string
 
 // 回访选择。
 const (
-	ChoiceSatisfied AskChoice = "satisfied" // 满意: 周期 +1 天持续递增
+	ChoiceSatisfied AskChoice = "satisfied" // 满意: 曲线上调一档(3→7→15→30→60→90 封顶)
 	ChoiceStyle     AskChoice = "style"     // 换个风格: 立即换 + 强漂移 + 周期重置 3 天
-	ChoiceLater     AskChoice = "later"     // 稍后: 顺延 3 天
+	ChoiceLater     AskChoice = "later"     // 以后再说: 顺延 3 天(档位不变)
+	ChoiceAdjust    AskChoice = "adjust"    // 调整一下: 已打开设置面板, 顺延 3 天
+	ChoiceTimeout   AskChoice = "timeout"   // 无响应: 按沉默处理, 曲线也上调一档(不追问)
 )
 
 // AskRequest 回访小窗参数。
@@ -303,10 +305,12 @@ func handleSatisfaction(env Env, cfg *config.Config, st *store.Store, now time.T
 	if now.Before(due) {
 		return false
 	}
-	choice := ChoiceLater
+	choice := ChoiceTimeout // 无人应答(无 UI 通道)= 沉默: 曲线拉长不追问
 	if env.Ask != nil {
 		choice = env.Ask(AskRequest{ThumbPath: st.CurrentPath(), LastChoice: cfg.Satisfaction.LastChoice})
-		if choice != ChoiceSatisfied && choice != ChoiceStyle {
+		switch choice {
+		case ChoiceSatisfied, ChoiceStyle, ChoiceLater, ChoiceAdjust, ChoiceTimeout:
+		default:
 			choice = ChoiceLater
 		}
 	}
@@ -317,13 +321,17 @@ func handleSatisfaction(env Env, cfg *config.Config, st *store.Store, now time.T
 	switch choice {
 	case ChoiceSatisfied:
 		_ = signals.Append(env.Dir, signals.Event{Type: signals.TypeStyleKeep, Detail: "满意度回访: 满意"})
-		st.Log("tick: 回访选择=满意, 周期 %d 天", cfg.Satisfaction.IntervalDays)
+		st.Log("tick: 回访选择=满意, 曲线周期上调至 %d 天", cfg.Satisfaction.IntervalDays)
 	case ChoiceStyle:
 		_ = signals.Append(env.Dir, signals.Event{Type: signals.TypeStyleReject, Detail: "满意度回访: 换个风格"})
 		st.Log("tick: 回访选择=换个风格, 本轮强制换风格, 周期重置 %d 天", cfg.Satisfaction.IntervalDays)
 		return true
+	case ChoiceAdjust:
+		st.Log("tick: 回访选择=调整偏好, 设置窗口已打开, 顺延 3 天")
+	case ChoiceTimeout:
+		st.Log("tick: 回访无响应(沉默), 曲线周期上调至 %d 天", cfg.Satisfaction.IntervalDays)
 	default:
-		st.Log("tick: 回访选择=稍后, 顺延 3 天")
+		st.Log("tick: 回访选择=以后再说, 顺延 3 天")
 	}
 	return false
 }

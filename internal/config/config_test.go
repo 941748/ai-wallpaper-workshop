@@ -40,22 +40,34 @@ func TestLoadMissingReturnsDefault(t *testing.T) {
 	}
 }
 
-func TestScheduleAskSatisfiedGrows(t *testing.T) {
+func TestScheduleAskLadder(t *testing.T) {
 	s := Satisfaction{IntervalDays: DefaultAskDays}
 	now := time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)
 	s.ScheduleAsk(now, "satisfied")
-	if s.IntervalDays != 4 {
-		t.Fatalf("want 4 days, got %d", s.IntervalDays)
+	if s.IntervalDays != 7 {
+		t.Fatalf("want 7 days, got %d", s.IntervalDays)
 	}
-	if s.NextAskTime().Sub(now) != 4*24*time.Hour {
+	if s.NextAskTime().Sub(now) != 7*24*time.Hour {
 		t.Fatalf("next ask at wrong time: %v", s.NextAskTime())
 	}
-	// 持续递增, 不设上限
-	for i := 0; i < 100; i++ {
+	// 阶梯递增并在 90 天封顶
+	for _, want := range []int{15, 30, 60, 90, 90, 90} {
 		s.ScheduleAsk(now, "satisfied")
+		if s.IntervalDays != want {
+			t.Fatalf("want %d days, got %d", want, s.IntervalDays)
+		}
 	}
-	if s.IntervalDays != 104 {
-		t.Fatalf("want 104 days (no cap), got %d", s.IntervalDays)
+	// 无响应(沉默)同样上调一档
+	s2 := Satisfaction{IntervalDays: 15}
+	s2.ScheduleAsk(now, "timeout")
+	if s2.IntervalDays != 30 {
+		t.Fatalf("timeout should grow to 30, got %d", s2.IntervalDays)
+	}
+	// 手动设置的长周期不被"满意"缩短
+	s3 := Satisfaction{IntervalDays: 100}
+	s3.ScheduleAsk(now, "satisfied")
+	if s3.IntervalDays != 100 {
+		t.Fatalf("manual long interval should not shrink, got %d", s3.IntervalDays)
 	}
 }
 
@@ -73,6 +85,12 @@ func TestScheduleAskStyleResetsLaterPostpones(t *testing.T) {
 	}
 	if s2.NextAskTime().Sub(now) != 3*24*time.Hour {
 		t.Fatalf("later should postpone 3 days, got %v", s2.NextAskTime())
+	}
+	// 调整一下: 同"以后再说"(档位不变, 顺延 3 天)
+	s3 := Satisfaction{IntervalDays: 15}
+	s3.ScheduleAsk(now, "adjust")
+	if s3.IntervalDays != 15 || s3.NextAskTime().Sub(now) != 3*24*time.Hour {
+		t.Fatalf("adjust should keep interval and postpone 3 days, got %d/%v", s3.IntervalDays, s3.NextAskTime())
 	}
 }
 

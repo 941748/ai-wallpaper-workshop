@@ -350,8 +350,8 @@ func TestRunOnceSatisfiedGrowsInterval(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg2, _ := config.Load(te.dir)
-	if cfg2.Satisfaction.IntervalDays != 4 {
-		t.Fatalf("satisfied should grow interval to 4, got %d", cfg2.Satisfaction.IntervalDays)
+	if cfg2.Satisfaction.IntervalDays != 7 {
+		t.Fatalf("satisfied should grow interval to 7 (ladder), got %d", cfg2.Satisfaction.IntervalDays)
 	}
 	if len(m.signalsGot) != 1 || m.signalsGot[0][0].Type != signals.TypeStyleKeep {
 		t.Fatalf("style_keep not reported: %+v", m.signalsGot)
