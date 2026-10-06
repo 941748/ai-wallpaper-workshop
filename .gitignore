@@ -1,0 +1,13 @@
+# 构建产物(build.ps1 生成)
+dist/
+rsrc_windows_amd64.syso
+
+# 日志与本地测试数据
+*.log
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
