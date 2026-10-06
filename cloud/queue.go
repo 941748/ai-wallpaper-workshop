@@ -19,6 +19,7 @@ type queue struct {
 	dataDir   string
 	logf      func(string, ...any)
 	lastNorm  time.Time
+	lastPool  time.Time     // 上次探针池检查
 	idleDelay time.Duration // 默认 20s; 测试可调小
 }
 
@@ -48,6 +49,11 @@ func (q *queue) tick(ctx context.Context) {
 		q.lastNorm = time.Now()
 		q.process(ctx, job)
 		return
+	}
+	// 空闲时段定期检查探针池(缺图/失败重排; 低开销, 每分钟至多一次)
+	if time.Since(q.lastPool) > time.Minute {
+		q.lastPool = time.Now()
+		q.ensureProbePool()
 	}
 	// 空闲才跑 idle(预生成/probe 池)
 	delay := q.idleDelay
@@ -115,9 +121,12 @@ func (q *queue) ensureProbePool() {
 		if _, err := os.Stat(path); err == nil {
 			continue
 		}
-		// 幂等任务 id(已存在则不重复建)
+		// 幂等任务 id(已存在则不重复建); 上次失败(如出图机离线)则重新排队
 		jobID := "probe-" + cb.ID
 		if existing, _ := q.st.Job(jobID); existing != nil {
+			if existing.Status == "failed" {
+				_ = q.st.SetJobStatus(jobID, "queued", "", "")
+			}
 			continue
 		}
 		_ = q.st.CreateJob(store.Job{

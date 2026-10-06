@@ -17,6 +17,7 @@ import (
 
 	"wallpaper/cloud/llm"
 	"wallpaper/cloud/store"
+	"wallpaper/internal/probe"
 )
 
 // ---------- mock ComfyUI ----------
@@ -581,5 +582,38 @@ func TestContextHints(t *testing.T) {
 	far := time.Date(2026, 7, 1, 10, 0, 0, 0, time.Local)
 	if len(contextHints(far, false)) != 0 {
 		t.Fatalf("7 月初不应有语境: %v", contextHints(far, false))
+	}
+}
+
+// ---------- 探针池 ----------
+
+func TestProbePoolRetriesFailed(t *testing.T) {
+	data := t.TempDir()
+	if err := os.MkdirAll(data+"/probes", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(data + "/q.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	q := &queue{st: st, reg: DefaultRegistry(), dataDir: data, logf: func(string, ...any) {}}
+
+	q.ensureProbePool()
+	id := "probe-" + probe.BalancedCombos(probe.FirstCount)[0].ID
+	j, err := st.Job(id)
+	if err != nil || j == nil {
+		t.Fatalf("探针任务应已创建: %v", err)
+	}
+	if j.Status != "queued" {
+		t.Fatalf("初始状态应为 queued, got %s", j.Status)
+	}
+
+	// 模拟出图失败(如出图机离线)后重启补池: 应重新排为 queued
+	_ = st.SetJobStatus(id, "failed", "comfy down", "")
+	q.ensureProbePool()
+	j2, _ := st.Job(id)
+	if j2 == nil || j2.Status != "queued" {
+		t.Fatalf("失败探针任务应重新排队, got %+v", j2)
 	}
 }
