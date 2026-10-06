@@ -445,11 +445,21 @@ func (w *wizard) testAndRegister() bool {
 
 // ---------- 步骤 1: 偏好问卷 ----------
 
-// buildSurveyStep 构建问卷: 自绘筹码网格(五维) + 汇总条(彩色计数/重点出图/清空本维/一键推荐)。
+// buildSurveyStep 构建问卷: 风格包(一键勾选) + 自绘筹码网格(五维) + 汇总条(计数/清空本维)。
 func (w *wizard) buildSurveyStep() {
 	w.btnExtra.SetText("图片探针校准 (可选)")
 	w.btnExtra.SetVisible(true)
 	w.ensureSurveyAnswers()
+
+	// 风格包(面向 90/00 后审美的预设组合, 一键勾选, 可多选叠加)
+	packRow, _ := walk.NewComposite(w.content)
+	_ = packRow.SetLayout(walk.NewHBoxLayout())
+	themedLabel(packRow, "风格包(一键勾选, 可多选):", nil, colBody)
+	for _, pack := range presetPacks {
+		btn, _ := walk.NewPushButton(packRow)
+		btn.SetText(pack.Name)
+		btn.Clicked().Attach(func() { w.applyPresetPack(pack.Keys) })
+	}
 
 	chips, err := newSurveyChips(w.content, w.surveyAnswers, w.updateSurveyCount)
 	if err != nil {
@@ -473,9 +483,6 @@ func (w *wizard) buildSurveyStep() {
 	clearBtn, _ := walk.NewPushButton(sumRow)
 	clearBtn.SetText("清空本维")
 	clearBtn.Clicked().Attach(func() { w.clearDim() })
-	presetBtn, _ := walk.NewPushButton(sumRow)
-	presetBtn.SetText("一键推荐")
-	presetBtn.Clicked().Attach(func() { w.applyPreset() })
 	if bl, ok := sumRow.Layout().(*walk.BoxLayout); ok {
 		_ = bl.SetStretchFactor(hsp, 1)
 	}
@@ -577,25 +584,65 @@ func (w *wizard) clearDim() {
 	w.updateSurveyCount()
 }
 
-// presetKeys 一键推荐的热门组合(覆盖 5 维, 勾选后可再微调)。
-var presetKeys = []string{
-	config.Key(taxonomy.DimStyle, "realism"),
-	config.Key(taxonomy.DimStyle, "watercolor"),
-	config.Key(taxonomy.DimStyle, "film"),
-	config.Key(taxonomy.DimSubject, "nature"),
-	config.Key(taxonomy.DimSubject, "citynight"),
-	config.Key(taxonomy.DimSubject, "animal"),
-	config.Key(taxonomy.DimPalette, "cool"),
-	config.Key(taxonomy.DimPalette, "pastel"),
-	config.Key(taxonomy.DimMood, "serene"),
-	config.Key(taxonomy.DimMood, "cozy"),
-	config.Key(taxonomy.DimComposition, "wide"),
-	config.Key(taxonomy.DimComposition, "thirds"),
+// presetPack 一个风格包(面向 90/00 后审美的预设组合)。
+type presetPack struct {
+	Name string   // 界面按钮文案
+	Keys []string // config.Key(dim, val) 列表
 }
 
-// applyPreset 将推荐项勾为喜欢(不覆盖其他已勾选项)。
-func (w *wizard) applyPreset() {
-	for _, key := range presetKeys {
+// presetPacks 风格包(每包覆盖 5 维, 点选即勾为喜欢, 可多选叠加并再微调)。
+var presetPacks = []presetPack{
+	{Name: "潮酷未来", Keys: []string{
+		config.Key(taxonomy.DimStyle, "cyberpunk"),
+		config.Key(taxonomy.DimStyle, "neonart"),
+		config.Key(taxonomy.DimSubject, "citynight"),
+		config.Key(taxonomy.DimSubject, "space"),
+		config.Key(taxonomy.DimPalette, "neon"),
+		config.Key(taxonomy.DimMood, "vibrant"),
+		config.Key(taxonomy.DimComposition, "silhouette"),
+	}},
+	{Name: "二次元", Keys: []string{
+		config.Key(taxonomy.DimStyle, "anime"),
+		config.Key(taxonomy.DimStyle, "anime3d"),
+		config.Key(taxonomy.DimSubject, "mecha"),
+		config.Key(taxonomy.DimSubject, "pet"),
+		config.Key(taxonomy.DimPalette, "pastel"),
+		config.Key(taxonomy.DimMood, "vibrant"),
+		config.Key(taxonomy.DimComposition, "centered"),
+	}},
+	{Name: "国风雅韵", Keys: []string{
+		config.Key(taxonomy.DimStyle, "ink"),
+		config.Key(taxonomy.DimStyle, "neochinese"),
+		config.Key(taxonomy.DimStyle, "papercut"),
+		config.Key(taxonomy.DimSubject, "oldstreet"),
+		config.Key(taxonomy.DimSubject, "cloudsea"),
+		config.Key(taxonomy.DimPalette, "morandi"),
+		config.Key(taxonomy.DimMood, "serene"),
+		config.Key(taxonomy.DimComposition, "wide"),
+	}},
+	{Name: "治愈日常", Keys: []string{
+		config.Key(taxonomy.DimStyle, "film"),
+		config.Key(taxonomy.DimStyle, "watercolor"),
+		config.Key(taxonomy.DimSubject, "pet"),
+		config.Key(taxonomy.DimSubject, "plants"),
+		config.Key(taxonomy.DimSubject, "food"),
+		config.Key(taxonomy.DimPalette, "warm"),
+		config.Key(taxonomy.DimMood, "cozy"),
+		config.Key(taxonomy.DimComposition, "macro"),
+	}},
+	{Name: "极简高级", Keys: []string{
+		config.Key(taxonomy.DimStyle, "minimal"),
+		config.Key(taxonomy.DimSubject, "abstract"),
+		config.Key(taxonomy.DimSubject, "building"),
+		config.Key(taxonomy.DimPalette, "dark"),
+		config.Key(taxonomy.DimMood, "mysterious"),
+		config.Key(taxonomy.DimComposition, "centered"),
+	}},
+}
+
+// applyPresetPack 将风格包内词条勾为喜欢(不覆盖其他已勾选项)。
+func (w *wizard) applyPresetPack(keys []string) {
+	for _, key := range keys {
 		if _, ok := w.surveyAnswers[key]; ok {
 			w.surveyAnswers[key] = survey.Like
 		}

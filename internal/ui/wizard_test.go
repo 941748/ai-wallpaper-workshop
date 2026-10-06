@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"wallpaper/internal/survey"
+	"wallpaper/internal/taxonomy"
 )
 
 // 向导纯逻辑单测(不依赖 walk 窗口)。
@@ -65,17 +66,26 @@ func TestCycleAttitude(t *testing.T) {
 	}
 }
 
-func TestPresetKeysCoverAllDims(t *testing.T) {
-	dims := map[string]bool{}
-	for _, k := range presetKeys {
-		dims[strings.SplitN(k, "/", 2)[0]] = true // "dim/value" 前缀即维度
+func TestPresetPacksCoverAllDims(t *testing.T) {
+	if len(presetPacks) < 4 || len(presetPacks) > 6 {
+		t.Fatalf("风格包数量 %d 不符合预期(4~6)", len(presetPacks))
 	}
-	for _, want := range []string{"style", "subject", "palette", "mood", "composition"} {
-		if !dims[want] {
-			t.Errorf("一键推荐未覆盖维度 %s", want)
+	for _, pack := range presetPacks {
+		dims := map[string]bool{}
+		for _, k := range pack.Keys {
+			parts := strings.SplitN(k, "/", 2)
+			dims[parts[0]] = true
+			if len(parts) != 2 || taxonomy.ValueOf(parts[0], parts[1]) == nil {
+				t.Errorf("风格包 %s 含非法词条 %s", pack.Name, k)
+			}
 		}
-	}
-	if len(presetKeys) < 10 || len(presetKeys) > 14 {
-		t.Errorf("推荐项数量 %d 不符合预期(约 12)", len(presetKeys))
+		for _, want := range []string{"style", "subject", "palette", "mood", "composition"} {
+			if !dims[want] {
+				t.Errorf("风格包 %s 未覆盖维度 %s", pack.Name, want)
+			}
+		}
+		if len(pack.Keys) < 6 || len(pack.Keys) > 9 {
+			t.Errorf("风格包 %s 词条数 %d 不符合预期(6~9)", pack.Name, len(pack.Keys))
+		}
 	}
 }
