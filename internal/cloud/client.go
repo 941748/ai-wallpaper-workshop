@@ -202,6 +202,7 @@ type NextReq struct {
 	ScreenW        int                `json:"screen_w"`
 	ScreenH        int                `json:"screen_h"`
 	ForceShake     bool               `json:"force_shake"`
+	DisableContext bool               `json:"disable_context,omitempty"`
 }
 
 // NextResp 云端 LLM 给出的本轮成品参数。
@@ -341,6 +342,7 @@ type PregenReq struct {
 	RecentRounds   []RoundItem        `json:"recent_rounds"`
 	ScreenW        int                `json:"screen_w"`
 	ScreenH        int                `json:"screen_h"`
+	DisableContext bool               `json:"disable_context,omitempty"`
 }
 
 // PregenSubmit 异步下单下一轮预生成(低优先级队列, 出图机空闲时执行)。

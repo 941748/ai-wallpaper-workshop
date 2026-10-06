@@ -57,6 +57,9 @@ type Config struct {
 	IntervalHours int `json:"interval_hours"`
 	PhaseMinutes  int `json:"phase_minutes"` // 0~59 换图相位(按 user_id hash 分散)
 
+	// 节日/节气语境(画面氛围轻推; 默认开启, 用户可关)
+	DisableContext bool `json:"disable_context,omitempty"`
+
 	// 安静模式(前台全屏/静默时段不打扰)
 	QuietEnabled bool   `json:"quiet_enabled"`
 	QuietStart   string `json:"quiet_start"` // HH:MM

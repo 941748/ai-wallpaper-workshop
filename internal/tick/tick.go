@@ -195,6 +195,7 @@ func RunOnce(ctx context.Context, env Env) error {
 				ScreenW:        sw,
 				ScreenH:        sh,
 				ForceShake:     forceShake,
+				DisableContext: cfg.DisableContext,
 			})
 			if err == nil && nr.Positive != "" {
 				spec = prompt.Spec{
@@ -262,6 +263,7 @@ func RunOnce(ctx context.Context, env Env) error {
 			RecentRounds:   recentRounds(history, 10),
 			ScreenW:        sw,
 			ScreenH:        sh,
+			DisableContext: cfg.DisableContext,
 		}); err != nil {
 			st.Log("tick: 预生成下单失败(忽略, 下轮现出): %v", err)
 		}

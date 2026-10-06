@@ -206,6 +206,14 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 	_ = s.kwLB.SetMinMaxSize(walk.Size{Width: 420, Height: 60}, walk.Size{Width: 420, Height: 60})
 	s.reloadKeywords(profile)
 
+	ctxCk, _ := walk.NewCheckBox(page)
+	ctxCk.SetText("跟随节日/节气氛围(默认开启; 仅画面氛围轻推, 不改你的画风, 可随时关闭)")
+	ctxCk.SetChecked(!s.cfg.DisableContext)
+	ctxCk.CheckedChanged().Attach(func() {
+		s.cfg.DisableContext = !ctxCk.Checked()
+		_ = s.cfg.Save(s.dir)
+	})
+
 	btnRow, _ := walk.NewComposite(page)
 	_ = btnRow.SetLayout(walk.NewHBoxLayout())
 	saveBtn, _ := walk.NewPushButton(btnRow)

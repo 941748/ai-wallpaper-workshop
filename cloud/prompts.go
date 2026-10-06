@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"wallpaper/internal/almanac"
 	"wallpaper/internal/config"
 	"wallpaper/internal/prompt"
 	"wallpaper/internal/taxonomy"
@@ -27,6 +28,7 @@ type nextReq struct {
 	ScreenW        int                `json:"screen_w"`
 	ScreenH        int                `json:"screen_h"`
 	ForceShake     bool               `json:"force_shake"`
+	DisableContext bool               `json:"disable_context"`
 }
 
 type roundItem struct {
@@ -245,6 +247,26 @@ func signalDesc(typ string, extra map[string]any) string {
 	return typ
 }
 
+// contextHints 构建"近期节日节气"语境条目(关闭开关或无事件时返回 nil)。
+func contextHints(now time.Time, disable bool) []string {
+	if disable {
+		return nil
+	}
+	evs := almanac.Within(now, 3)
+	if len(evs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(evs))
+	for _, e := range evs {
+		line := e.Date.Format("01-02") + " " + e.Name + ": " + e.Scene
+		if e.Sensitive {
+			line += "(庄重含蓄, 提醒非庆祝)"
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
 // anyCombo 从事件 Extra 中提取五维组合(JSON 反序列化后为 map[string]any)。
 func anyCombo(extra map[string]any) map[string]string {
 	if extra == nil {
@@ -298,6 +320,7 @@ func (a *API) systemPrompt() string {
 		"若存在 liked 事件, 在后续画面中多呼应其组合要素; 若提供 自定义偏好关键词, 在合适的画面中自然融入(不必每张出现, 不得生硬堆砌); " +
 		"若存在强烈拒斥信号(style_reject)或 force_shake, 必须给出与最近记录显著不同的风格; " +
 		"若存在 style_keep 或多次满意, 保持当前方向并做微变化; " +
+		"若提供 近期节日节气: 以画面氛围含蓄呼应(如母亲节用康乃馨色柔光), 仅作轻推不得覆盖用户画像主张, 严禁任何文字/横幅/祝福语元素, 标注敏感的节令庄重含蓄; " +
 		"禁止文字/水印/低质元素; 数字字段用 JSON 数字类型, combo 必须是 JSON 对象; 不得输出 JSON 以外的任何内容。"
 }
 
@@ -372,6 +395,9 @@ func (a *API) userPrompt(userID string, req nextReq) string {
 	}
 	if len(req.CustomKeywords) > 0 {
 		body["自定义偏好关键词"] = req.CustomKeywords
+	}
+	if hints := contextHints(time.Now(), req.DisableContext); len(hints) > 0 {
+		body["近期节日节气"] = hints
 	}
 	b, _ := json.Marshal(body)
 	return string(b)

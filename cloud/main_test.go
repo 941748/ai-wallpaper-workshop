@@ -565,3 +565,21 @@ func TestSignalDescWithCombo(t *testing.T) {
 		t.Fatal("无 combo 的评价事件应退回类型名")
 	}
 }
+
+// ---------- 语境引擎 ----------
+
+func TestContextHints(t *testing.T) {
+	now := time.Date(2026, 2, 16, 10, 0, 0, 0, time.Local)
+	hints := contextHints(now, false)
+	if !strings.Contains(strings.Join(hints, ";"), "春节") {
+		t.Fatalf("应命中春节: %v", hints)
+	}
+	if contextHints(now, true) != nil {
+		t.Fatal("关闭开关时不应返回语境")
+	}
+	// 远离节日的窗口应为空
+	far := time.Date(2026, 7, 1, 10, 0, 0, 0, time.Local)
+	if len(contextHints(far, false)) != 0 {
+		t.Fatalf("7 月初不应有语境: %v", contextHints(far, false))
+	}
+}
