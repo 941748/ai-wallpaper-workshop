@@ -21,6 +21,7 @@ type nextReq struct {
 	ProfileVersion int                `json:"profile_version"`
 	Profile        map[string]float64 `json:"profile"`
 	Disliked       []string           `json:"disliked"`
+	CustomKeywords []string           `json:"custom_keywords"`
 	RecentRounds   []roundItem        `json:"recent_rounds"`
 	PendingSignals []signalItem       `json:"pending_signals"`
 	ScreenW        int                `json:"screen_w"`
@@ -228,7 +229,38 @@ func localCompose(req nextReq) prompt.Spec {
 		hist = append(hist, prompt.HistoryEntry{At: r.At, Combo: r.Combo, Source: r.Source})
 	}
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return prompt.Compose(p, rng, prompt.Options{ForceShake: req.ForceShake, History: hist})
+	return prompt.Compose(p, rng, prompt.Options{ForceShake: req.ForceShake, History: hist, CustomKeywords: req.CustomKeywords})
+}
+
+// signalDesc 将漂移事件转为供 LLM 理解的描述; 评价类事件附带画面组合。
+func signalDesc(typ string, extra map[string]any) string {
+	if typ == "liked" || typ == "disliked" {
+		if combo := anyCombo(extra); len(combo) > 0 {
+			if typ == "liked" {
+				return "liked(用户点了喜欢: " + comboDesc(combo) + ")"
+			}
+			return "disliked(用户点了不喜欢: " + comboDesc(combo) + ")"
+		}
+	}
+	return typ
+}
+
+// anyCombo 从事件 Extra 中提取五维组合(JSON 反序列化后为 map[string]any)。
+func anyCombo(extra map[string]any) map[string]string {
+	if extra == nil {
+		return nil
+	}
+	m, ok := extra["combo"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range m {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
 }
 
 // ---------- LLM 提示词 ----------
@@ -262,8 +294,10 @@ func (a *API) systemPrompt() string {
 		"combo(JSON 对象, 键为 style/subject/palette/mood/composition, 值为词典值 ID), seed(整数), reason(一句中文理由)。\n" +
 		"五维词典: " + strings.Join(dims, "; ") + "。\n" +
 		"工作流白名单: " + strings.Join(wfs, "; ") + "。\n" +
-		"规则: 结合画像高权值选择组合; 避开 disliked 中的元素; 若存在强烈拒斥信号(style_reject)或 force_shake, " +
-		"必须给出与最近记录显著不同的风格; 若存在 style_keep 或多次满意, 保持当前方向并做微变化; " +
+		"规则: 结合画像高权值选择组合; 避开 disliked 中的元素; 若存在 disliked 事件, 必须避开其记录的组合要素; " +
+		"若存在 liked 事件, 在后续画面中多呼应其组合要素; 若提供 自定义偏好关键词, 在合适的画面中自然融入(不必每张出现, 不得生硬堆砌); " +
+		"若存在强烈拒斥信号(style_reject)或 force_shake, 必须给出与最近记录显著不同的风格; " +
+		"若存在 style_keep 或多次满意, 保持当前方向并做微变化; " +
 		"禁止文字/水印/低质元素; 数字字段用 JSON 数字类型, combo 必须是 JSON 对象; 不得输出 JSON 以外的任何内容。"
 }
 
@@ -315,7 +349,7 @@ func (a *API) userPrompt(userID string, req nextReq) string {
 
 	var sigs []string
 	for _, s := range req.PendingSignals {
-		sigs = append(sigs, s.Type)
+		sigs = append(sigs, signalDesc(s.Type, s.Extra))
 	}
 	if len(sigs) == 0 {
 		if evs, err := a.st.RecentSignals(userID, time.Now().AddDate(0, 0, -7), 20); err == nil {
@@ -335,6 +369,9 @@ func (a *API) userPrompt(userID string, req nextReq) string {
 		"漂移事件(近一周)": sigs,
 		"屏幕分辨率":    []int{req.ScreenW, req.ScreenH},
 		"force_shake": req.ForceShake,
+	}
+	if len(req.CustomKeywords) > 0 {
+		body["自定义偏好关键词"] = req.CustomKeywords
 	}
 	b, _ := json.Marshal(body)
 	return string(b)

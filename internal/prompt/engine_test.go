@@ -101,3 +101,36 @@ func TestComposeExploresSometimes(t *testing.T) {
 }
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
+
+// ---------- 自定义关键词 ----------
+
+func TestComposeCustomKeywords(t *testing.T) {
+	p := newProfile()
+	p.CustomKeywords = []string{"猫咪"}
+	rng := rand.New(rand.NewSource(42))
+	hit := 0
+	const n = 300
+	for i := 0; i < n; i++ {
+		spec := Compose(p, rng, Options{})
+		if contains(spec.Positive, "猫咪") {
+			hit++
+		}
+	}
+	if hit == 0 {
+		t.Fatal("自定义关键词从未融入提示词")
+	}
+	if hit > n/2 {
+		t.Fatalf("自定义关键词出现过于频繁(%d/%d)", hit, n)
+	}
+
+	// Options 显式传参优先级(云端 localCompose 路径)
+	ok := false
+	for i := 0; i < n && !ok; i++ {
+		if contains(Compose(p, rng, Options{CustomKeywords: []string{"高达"}}).Positive, "高达") {
+			ok = true
+		}
+	}
+	if !ok {
+		t.Fatal("Options 自定义关键词未生效")
+	}
+}

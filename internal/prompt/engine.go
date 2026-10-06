@@ -42,20 +42,41 @@ type Spec struct {
 
 // Options 组合选项。
 type Options struct {
-	ForceShake bool // 满意度回访"换个风格": 排除最近主风格值
-	History    []HistoryEntry
+	ForceShake     bool // 满意度回访"换个风格": 排除最近主风格值
+	History        []HistoryEntry
+	CustomKeywords []string // 用户自定义关键词(覆盖 profile 字段; 按概率融合)
 }
+
+// CustomKeywordProb 自定义关键词每轮出现概率(不每张出现, 保持新鲜感)。
+const CustomKeywordProb = 0.33
 
 // Compose 依据画像权重采样组合并拼装提示词。
 func Compose(profile *config.Profile, rng *rand.Rand, opt Options) Spec {
 	s := sampleCombo(profile, rng, opt)
+	pos := assemble(s.Values)
+	kws := opt.CustomKeywords
+	if len(kws) == 0 {
+		kws = profile.CustomKeywords
+	}
+	if kw := pickCustomKeyword(rng, kws); kw != "" {
+		pos += ", " + kw
+	}
 	return Spec{
 		Combo:     s.Values,
-		Positive:  assemble(s.Values),
+		Positive:  pos,
 		Negative:  assembleNegative(profile),
 		Seed:      s.Seed,
 		ShakeTurn: opt.ForceShake,
 	}
+}
+
+// pickCustomKeyword 按概率挑选一个自定义关键词融入正向提示词。
+// 中文关键词直接追加, 由 Z-Image 的 Qwen 文本编码器理解(待真机验证)。
+func pickCustomKeyword(rng *rand.Rand, kws []string) string {
+	if len(kws) == 0 || rng.Float64() >= CustomKeywordProb {
+		return ""
+	}
+	return kws[rng.Intn(len(kws))]
 }
 
 // sampledCombo 采样结果。

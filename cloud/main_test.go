@@ -546,3 +546,22 @@ const templateFixture = `{
   "57:11": {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 3, "sampling": "flow", "model": ["57:28", 0]}},
   "57:3": {"class_type": "KSampler", "inputs": {"seed": {{SEED}}, "steps": 8, "cfg": 1, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1, "model": ["57:11", 0], "positive": ["57:27", 0], "negative": ["57:33", 0], "latent_image": ["57:13", 0]}}
 }`
+
+// ---------- 评价信号描述 ----------
+
+func TestSignalDescWithCombo(t *testing.T) {
+	got := signalDesc("liked", map[string]any{"combo": map[string]any{"style": "ink"}})
+	if !strings.Contains(got, "喜欢") || !strings.Contains(got, "(") {
+		t.Fatalf("liked 事件应附带组合描述: %s", got)
+	}
+	got = signalDesc("disliked", map[string]any{"combo": map[string]any{"style": "ink"}})
+	if !strings.Contains(got, "不喜欢") {
+		t.Fatalf("disliked 事件描述错误: %s", got)
+	}
+	if signalDesc("reconfigure", nil) != "reconfigure" {
+		t.Fatal("非评价事件应原样返回")
+	}
+	if signalDesc("disliked", nil) != "disliked" {
+		t.Fatal("无 combo 的评价事件应退回类型名")
+	}
+}

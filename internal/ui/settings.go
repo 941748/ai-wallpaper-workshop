@@ -35,11 +35,18 @@ type settings struct {
 
 	restartWizard bool
 
+	// 当前壁纸页
+	curIV   *walk.ImageView
+	curLbl  *walk.Label
+	curPath string
+
 	// 偏好页
 	summaryLbl *walk.Label
 	dimValues  [][]string
 	combos     []*walk.ComboBox
 	weights    []*walk.NumberEdit
+	kwLB       *walk.ListBox
+	kwEdit     *walk.LineEdit
 
 	// 服务页
 	urlEdit     *walk.LineEdit
@@ -105,6 +112,9 @@ func (s *settings) build() error {
 
 	tab, err := walk.NewTabWidget(mw)
 	if err != nil {
+		return err
+	}
+	if err := s.buildCurrentPage(tab); err != nil {
 		return err
 	}
 	if err := s.buildProfilePage(tab); err != nil {
@@ -179,6 +189,23 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 		s.weights = append(s.weights, ne)
 	}
 
+	// 自定义关键词(词典之外的个人喜好, 改动即时生效)
+	kwTitle, _ := walk.NewLabel(page)
+	kwTitle.SetText("自定义关键词(词典之外的个人喜好, 如: 猫咪、白描、高达; 改动即时生效):")
+	kwRow, _ := walk.NewComposite(page)
+	_ = kwRow.SetLayout(walk.NewHBoxLayout())
+	s.kwEdit, _ = walk.NewLineEdit(kwRow)
+	_ = s.kwEdit.SetMinMaxSize(walk.Size{Width: 240}, walk.Size{Width: 240})
+	addKwBtn, _ := walk.NewPushButton(kwRow)
+	addKwBtn.SetText("添加")
+	addKwBtn.Clicked().Attach(func() { s.addKeyword() })
+	delKwBtn, _ := walk.NewPushButton(kwRow)
+	delKwBtn.SetText("删除选中")
+	delKwBtn.Clicked().Attach(func() { s.delKeyword() })
+	s.kwLB, _ = walk.NewListBox(page)
+	_ = s.kwLB.SetMinMaxSize(walk.Size{Width: 420, Height: 60}, walk.Size{Width: 420, Height: 60})
+	s.reloadKeywords(profile)
+
 	btnRow, _ := walk.NewComposite(page)
 	_ = btnRow.SetLayout(walk.NewHBoxLayout())
 	saveBtn, _ := walk.NewPushButton(btnRow)
@@ -199,6 +226,152 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 	saveAllBtn.Clicked().Attach(func() { openFolder(s.dir) })
 	s.refreshSummary(profile)
 	return nil
+}
+
+// ---------- 当前壁纸页 ----------
+
+// buildCurrentPage 反馈台: 当前壁纸大图 + 喜欢/不喜欢/立即换一张。
+func (s *settings) buildCurrentPage(tab *walk.TabWidget) error {
+	page, err := newPage(tab, "当前壁纸")
+	if err != nil {
+		return err
+	}
+	s.curPath = s.st.CurrentPath()
+
+	title, _ := walk.NewLabel(page)
+	title.SetText("这是你桌面上的当前壁纸, 给它一点反馈吧(改动会随下一轮出图生效):")
+
+	if s.curPath != "" {
+		if data, err := os.ReadFile(s.curPath); err == nil {
+			if bmp, err := scalePlain(data, 560, 315); err == nil {
+				s.curIV, _ = walk.NewImageView(page)
+				if s.curIV != nil {
+					s.curIV.SetImage(bmp)
+					_ = s.curIV.SetMinMaxSize(walk.Size{Width: 560, Height: 315}, walk.Size{Width: 560, Height: 315})
+				}
+			}
+		}
+	}
+	if s.curIV == nil {
+		empty, _ := walk.NewLabel(page)
+		empty.SetText("(暂无壁纸留档, 等待下一轮自动出图)")
+	}
+
+	btnRow, _ := walk.NewComposite(page)
+	_ = btnRow.SetLayout(walk.NewHBoxLayout())
+	likeBtn, _ := walk.NewPushButton(btnRow)
+	likeBtn.SetText("喜欢这张")
+	likeBtn.Clicked().Attach(func() { s.rateCurrent(signals.TypeLiked, "喜欢") })
+	dislikeBtn, _ := walk.NewPushButton(btnRow)
+	dislikeBtn.SetText("不喜欢")
+	dislikeBtn.Clicked().Attach(func() { s.rateCurrent(signals.TypeDisliked, "不喜欢") })
+	swapBtn, _ := walk.NewPushButton(btnRow)
+	swapBtn.SetText("立即换一张")
+	swapBtn.Clicked().Attach(func() {
+		if err := scheduler.RunNow(); err != nil {
+			showError(s.mw, "%v", err)
+		} else {
+			s.curLbl.SetText("已触发换图, 稍后桌面会自动刷新(可重开本窗口查看)")
+		}
+	})
+
+	s.curLbl, _ = walk.NewLabel(page)
+	s.curLbl.SetText("")
+
+	hint, _ := walk.NewLabel(page)
+	if p, err := config.LoadProfile(s.dir); err == nil && !p.UpdatedAt.IsZero() {
+		days := int(time.Since(p.UpdatedAt).Hours() / 24)
+		if days <= 0 {
+			hint.SetText("上次调整偏好: 今天 — 想微调可到\"偏好\"页")
+		} else {
+			hint.SetText(fmt.Sprintf("上次调整偏好: %d 天前 — 想微调可到\"偏好\"页", days))
+		}
+	}
+	return nil
+}
+
+// rateCurrent 记录当前壁纸评价信号(附五维组合, 供云端 LLM 针对性调整)。
+func (s *settings) rateCurrent(typ, word string) {
+	if s.curPath == "" {
+		showInfo(s.mw, "当前没有可评价的壁纸。")
+		return
+	}
+	ev := signals.Event{Type: typ, Detail: filepath.Base(s.curPath)}
+	if h, err := s.st.LoadHistory(); err == nil && len(h) > 0 {
+		if combo := h[len(h)-1].Combo; len(combo) > 0 {
+			ev.Extra = map[string]any{"combo": combo}
+		}
+	}
+	if err := signals.Append(s.dir, ev); err != nil {
+		showError(s.mw, "%v", err)
+		return
+	}
+	if typ == signals.TypeLiked {
+		s.curLbl.SetText("已记录 " + word + " — 之后会多给你这类画面 ✓")
+	} else {
+		s.curLbl.SetText("已记录 " + word + " — 之后会避开这类画面 ✓")
+	}
+}
+
+// keywordListModel 自定义关键词列表模型。
+type keywordListModel struct {
+	walk.ListModelBase
+	items []string
+}
+
+func (m *keywordListModel) ItemCount() int { return len(m.items) }
+
+func (m *keywordListModel) Value(i int) any { return m.items[i] }
+
+// reloadKeywords 刷新关键词列表显示。
+func (s *settings) reloadKeywords(profile *config.Profile) {
+	if s.kwLB == nil || profile == nil {
+		return
+	}
+	m := &keywordListModel{items: append([]string{}, profile.CustomKeywords...)}
+	_ = s.kwLB.SetModel(m)
+}
+
+// addKeyword 添加自定义关键词(即时保存, 递增画像版本作废旧预生成)。
+func (s *settings) addKeyword() {
+	kw := strings.TrimSpace(s.kwEdit.Text())
+	if kw == "" {
+		return
+	}
+	profile, _ := config.LoadProfile(s.dir)
+	profile.CustomKeywords = config.NormalizeKeywords(append(profile.CustomKeywords, kw))
+	if err := profile.Save(s.dir); err != nil {
+		showError(s.mw, "关键词保存失败: %v", err)
+		return
+	}
+	s.kwEdit.SetText("")
+	s.reloadKeywords(profile)
+	s.saveKeywordMeta("添加 " + kw)
+}
+
+// delKeyword 删除选中的自定义关键词。
+func (s *settings) delKeyword() {
+	profile, _ := config.LoadProfile(s.dir)
+	idx := s.kwLB.CurrentIndex()
+	if idx < 0 || idx >= len(profile.CustomKeywords) {
+		showInfo(s.mw, "请先在列表中选中要删除的关键词。")
+		return
+	}
+	removed := profile.CustomKeywords[idx]
+	profile.CustomKeywords = append(profile.CustomKeywords[:idx], profile.CustomKeywords[idx+1:]...)
+	if err := profile.Save(s.dir); err != nil {
+		showError(s.mw, "关键词保存失败: %v", err)
+		return
+	}
+	s.reloadKeywords(profile)
+	s.saveKeywordMeta("删除 " + removed)
+}
+
+// saveKeywordMeta 关键词变化 = 画像方向调整: 递增画像版本 + 记录漂移事件。
+func (s *settings) saveKeywordMeta(detail string) {
+	s.cfg.ProfileVer++
+	_ = s.cfg.Save(s.dir)
+	_ = signals.Append(s.dir, signals.Event{Type: signals.TypeKeywordsAdjust, Detail: "自定义关键词: " + detail})
 }
 
 // refreshSummary 刷新画像摘要标签。

@@ -196,6 +196,7 @@ type NextReq struct {
 	ProfileVersion int                `json:"profile_version"`
 	Profile        map[string]float64 `json:"profile"`
 	Disliked       []string           `json:"disliked,omitempty"`
+	CustomKeywords []string           `json:"custom_keywords,omitempty"` // 用户自定义关键词
 	RecentRounds   []RoundItem        `json:"recent_rounds"`
 	PendingSignals []signals.Event    `json:"pending_signals,omitempty"`
 	ScreenW        int                `json:"screen_w"`
@@ -336,6 +337,7 @@ type PregenReq struct {
 	ProfileVersion int                `json:"profile_version"`
 	Profile        map[string]float64 `json:"profile"`
 	Disliked       []string           `json:"disliked,omitempty"`
+	CustomKeywords []string           `json:"custom_keywords,omitempty"` // 用户自定义关键词
 	RecentRounds   []RoundItem        `json:"recent_rounds"`
 	ScreenW        int                `json:"screen_w"`
 	ScreenH        int                `json:"screen_h"`

@@ -14,13 +14,16 @@ import (
 
 // 事件类型。
 const (
-	TypeReconfigure   = "reconfigure"    // 重跑向导/重新点选探针(最强信号)
-	TypeReapply       = "reapply"        // 历史页重新应用某张壁纸
-	TypeWeightAdjust  = "weight_adjust"  // 设置页手工微调权重
-	TypeStyleKeep     = "style_keep"     // 满意度回访: 满意(弱正向)
-	TypeStyleReject   = "style_reject"   // 满意度回访: 换个风格(强拒斥)
-	TypeDeviceLinked  = "device_linked"  // 新设备扫码配对成功
-	TypeReinitialized = "reinitialized"  // 整轮重新初始化完成
+	TypeReconfigure    = "reconfigure"     // 重跑向导/重新点选探针(最强信号)
+	TypeReapply        = "reapply"         // 历史页重新应用某张壁纸
+	TypeWeightAdjust   = "weight_adjust"   // 设置页手工微调权重
+	TypeKeywordsAdjust = "keywords_adjust" // 设置页自定义关键词增删(强偏好方向信号)
+	TypeStyleKeep      = "style_keep"      // 满意度回访: 满意(弱正向)
+	TypeStyleReject    = "style_reject"    // 满意度回访: 换个风格(强拒斥)
+	TypeLiked          = "liked"           // 设置页当前壁纸: 喜欢(强正向, Extra 带 combo)
+	TypeDisliked       = "disliked"        // 设置页当前壁纸: 不喜欢(强拒斥, Extra 带 combo)
+	TypeDeviceLinked   = "device_linked"   // 新设备扫码配对成功
+	TypeReinitialized  = "reinitialized"   // 整轮重新初始化完成
 )
 
 // Event 一条漂移事件。
