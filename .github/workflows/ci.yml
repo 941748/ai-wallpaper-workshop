@@ -1,0 +1,37 @@
+# CI: 每次推送/PR 自动跑 静态检查 + 全部测试 + 双端构建
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build client (windows/amd64)
+        run: go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/wallpaper.exe .
+
+      - name: Build cloud (linux/amd64)
+        run: |
+          $env:GOOS = "linux"
+          $env:GOARCH = "amd64"
+          go build -trimpath -ldflags "-s -w" -o dist/aiwallpaper-cloud ./cloud
