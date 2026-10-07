@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 壁纸工坊 — 你的桌面,每天都是一幅新画</title>
+<meta name="description" content="AI 读懂你的喜好与四时心境,在云端为你绘制专属壁纸。开源、免费、零操作,客户仅 10MB。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232dd4bf'/%3E%3Cstop offset='1' stop-color='%2360a5fa'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Ccircle cx='12' cy='12' r='4' fill='%23fff' opacity='.9'/%3E%3Cpath d='M4 26 L13 15 L20 22 L25 17 L29 21 L29 28 L4 28 Z' fill='%230b0f1a' opacity='.85'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#0a0e17; --bg2:#0f1522; --card:rgba(255,255,255,.035); --line:rgba(255,255,255,.09);
+  --fg:#e8edf6; --muted:#98a5bb; --teal:#2dd4bf; --blue:#60a5fa; --amber:#fb923c;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+a{color:inherit;text-decoration:none}
+
+/* 顶栏 */
+.nav{position:fixed;top:0;left:0;right:0;z-index:10;backdrop-filter:blur(12px);background:rgba(10,14,23,.55);border-bottom:1px solid var(--line)}
+.nav .wrap{display:flex;align-items:center;justify-content:space-between;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.5px}
+.dot{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,var(--teal),var(--blue))}
+.nav a.ghost{color:var(--muted);font-size:14px}
+.nav a.ghost:hover{color:var(--fg)}
+
+/* Hero */
+.hero{position:relative;min-height:92vh;display:flex;align-items:center;overflow:hidden}
+.hero .bg{position:absolute;inset:0;background:url(assets/hero.jpg) center/cover no-repeat;transform:scale(1.02)}
+.hero .shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,14,23,.42) 0%,rgba(10,14,23,.62) 55%,var(--bg) 100%)}
+.hero .wrap{position:relative;z-index:1;padding-top:90px;padding-bottom:70px}
+.badge{display:inline-block;font-size:13px;color:#cfe3ff;border:1px solid var(--line);background:rgba(255,255,255,.05);border-radius:999px;padding:6px 14px;margin-bottom:26px}
+h1{font-size:clamp(2rem,5vw,3.5rem);line-height:1.22;font-weight:700;letter-spacing:.5px}
+h1 em{font-style:normal;background:linear-gradient(100deg,var(--teal),var(--blue) 70%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p.lead{margin-top:22px;font-size:clamp(1rem,1.6vw,1.15rem);color:#c3cddd;max-width:560px}
+.cta{display:flex;flex-wrap:wrap;gap:14px;margin-top:36px}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:14px 26px;border-radius:12px;font-size:15px;font-weight:600;transition:transform .15s ease,box-shadow .15s ease}
+.btn.primary{background:linear-gradient(100deg,var(--teal),var(--blue));color:#06202a;box-shadow:0 8px 30px rgba(45,212,191,.25)}
+.btn.primary:hover{transform:translateY(-2px);box-shadow:0 12px 36px rgba(45,212,191,.35)}
+.btn.line{border:1px solid var(--line);color:var(--fg);background:rgba(255,255,255,.03)}
+.btn.line:hover{border-color:rgba(255,255,255,.25)}
+.hero .meta{margin-top:16px;font-size:13px;color:var(--muted)}
+
+/* 通用节 */
+section{padding:88px 0}
+.kicker{font-size:13px;letter-spacing:3px;color:var(--teal);margin-bottom:14px}
+h2{font-size:clamp(1.5rem,3vw,2.1rem);font-weight:700;letter-spacing:.4px}
+.sub{color:var(--muted);margin-top:12px;max-width:640px}
+
+/* 特性 */
+.features .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px;margin-top:44px}
+.fcard{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:26px 24px;transition:transform .18s ease,border-color .18s ease}
+.fcard:hover{transform:translateY(-4px);border-color:rgba(96,165,250,.35)}
+.fcard .no{font-size:13px;color:var(--amber);letter-spacing:2px;font-weight:700}
+.fcard h3{margin:10px 0 8px;font-size:17px}
+.fcard p{font-size:14px;color:var(--muted)}
+
+/* 画廊 */
+.gallery{background:linear-gradient(180deg,var(--bg),var(--bg2) 60%,var(--bg))}
+.ggrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-top:44px}
+.gitem{border-radius:16px;overflow:hidden;border:1px solid var(--line);background:var(--card)}
+.gitem img{display:block;width:100%;aspect-ratio:3/2;object-fit:cover;transition:transform .35s ease}
+.gitem:hover img{transform:scale(1.04)}
+.gitem figcaption{padding:12px 16px;font-size:13px;color:var(--muted)}
+.samples-note{margin-top:18px;font-size:13px;color:var(--muted)}
+
+/* 下载 */
+.dl{text-align:center}
+.dl .box{border:1px solid var(--line);background:radial-gradient(120% 140% at 50% 0%,rgba(45,212,191,.10),rgba(96,165,250,.06) 45%,rgba(255,255,255,.02));border-radius:22px;padding:64px 28px}
+.dl .btn.primary{font-size:16px;padding:16px 34px;margin-top:30px}
+.dl .meta{margin-top:18px;color:var(--muted);font-size:14px}
+.dl .hint{margin-top:8px;color:#7f8ca3;font-size:13px}
+
+/* 页脚 */
+footer{border-top:1px solid var(--line);padding:36px 0;color:var(--muted);font-size:13.5px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center}
+footer a:hover{color:var(--fg)}
+
+@media (max-width:620px){
+  section{padding:64px 0}
+  .hero .wrap{padding-top:120px}
+  .cta .btn{width:100%;justify-content:center}
+}
+</style>
+</head>
+<body>
+
+<nav class="nav"><div class="wrap">
+  <a class="brand" href="/"><span class="dot"></span>AI 壁纸工坊</a>
+  <a class="ghost" href="https://github.com/941748/ai-wallpaper-workshop">GitHub ↗</a>
+</div></nav>
+
+<header class="hero">
+  <div class="bg"></div><div class="shade"></div>
+  <div class="wrap">
+    <span class="badge">开源 · 免费 · 无需注册</span>
+    <h1>你的桌面<br>每天都是<em>一幅新画</em></h1>
+    <p class="lead">AI 读懂你的喜好与四时心境,在云端为你绘制专属壁纸,安静地铺满每一次亮屏。</p>
+    <div class="cta">
+      <a class="btn primary" href="/download/AIWallpaper.exe">下载 Windows 版(约 10 MB)</a>
+      <a class="btn line" href="https://github.com/941748/ai-wallpaper-workshop">查看源码</a>
+    </div>
+    <div class="meta">Windows 10 / 11 · 单文件免安装 · 首次运行只需 1 分钟偏好设置</div>
+  </div>
+</header>
+
+<section class="features"><div class="wrap">
+  <div class="kicker">WHY</div>
+  <h2>不需要你操作的壁纸引擎</h2>
+  <p class="sub">从偏好学习到出图更换,全部发生在你看不见的地方。</p>
+  <div class="grid">
+    <div class="fcard"><div class="no">01</div><h3>懂你的 AI</h3><p>从你的每次点选中学习审美,结合节气与心境生成构图;用久了,它比画廊更懂你。</p></div>
+    <div class="fcard"><div class="no">02</div><h3>全自动</h3><p>定时在后台完成规划、出图与更换。无需打开任何窗口,亮屏即是新鲜感。</p></div>
+    <div class="fcard"><div class="no">03</div><h3>轻若无物</h3><p>客户端仅 10MB,出图与推理都在云端完成;不驻留、不占内存、不打扰工作。</p></div>
+    <div class="fcard"><div class="no">04</div><h3>开源透明</h3><p>代码全部开源;匿名使用、零注册零登录,你的数据与偏好只属于你。</p></div>
+  </div>
+</div></section>
+
+<section class="gallery"><div class="wrap">
+  <div class="kicker">GALLERY</div>
+  <h2>也许你的下一张,长这样</h2>
+  <div class="ggrid">
+    <figure class="gitem"><img src="assets/demo-cat.jpg" alt="写实宠物示例"><figcaption>写实 · 宠物微距</figcaption></figure>
+    <figure class="gitem"><img src="assets/demo-mountain.jpg" alt="新中式山水示例"><figcaption>国风 · 山水云雾</figcaption></figure>
+    <figure class="gitem"><img src="assets/demo-aurora.jpg" alt="梦幻极光示例"><figcaption>梦幻 · 极光星辰</figcaption></figure>
+  </div>
+  <p class="samples-note">以上为 AI 生成的示例效果 —— 而你收到的每一张,都由偏好与时节现场构成,独一无二。</p>
+</div></section>
+
+<section class="dl"><div class="wrap">
+  <div class="box">
+    <div class="kicker">GET STARTED</div>
+    <h2>现在开始,让 AI 接管你的壁纸</h2>
+    <a class="btn primary" href="/download/AIWallpaper.exe">下载 Windows 版(约 10 MB)</a>
+    <div class="meta">Windows 10 / 11 · 免费使用 · 单文件免安装</div>
+    <div class="hint">首次运行进入 1 分钟偏好设置,随后全自动运行;唤醒与安静时段会自动避让。</div>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  <span>© 2026 AI 壁纸工坊</span>
+  <a href="https://github.com/941748/ai-wallpaper-workshop">github.com/941748/ai-wallpaper-workshop</a>
+</div></footer>
+
+</body>
+</html>

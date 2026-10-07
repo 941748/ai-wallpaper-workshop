@@ -53,6 +53,8 @@ func main() {
 
 	api := &API{
 		st: st, llm: llmClient, reg: reg, q: q, dataDir: dataDir,
+		siteDir:    env("AW_SITE", "/opt/aiwallpaper/site"),
+		dlDir:      env("AW_DL", "/opt/aiwallpaper/downloads"),
 		adminToken: env("AW_ADMIN_TOKEN", ""),
 		version:    serverVersion,
 		logf:       logf,
