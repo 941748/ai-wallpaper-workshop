@@ -44,6 +44,8 @@ const (
 
 // newSurveyChips 创建问卷控件(answers 为共享数据源, 点击直接改动)。
 func newSurveyChips(parent walk.Container, answers map[string]survey.Attitude, onChange func()) (*surveyChips, error) {
+	// 自绘组件自带主题资源初始化(设置页等非向导环境也会使用, 不能依赖调用方先 initTheme)
+	initTheme()
 	sc := &surveyChips{answers: answers, hoverTab: -1, onChange: onChange}
 	cw, err := walk.NewCustomWidgetPixels(parent, 0, sc.paint)
 	if err != nil {

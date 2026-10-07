@@ -100,6 +100,7 @@ func RunSettings(dir string, st *store.Store, cfg *config.Config) {
 }
 
 func (s *settings) build() error {
+	initTheme()
 	mw, err := walk.NewMainWindow()
 	if err != nil {
 		return err
