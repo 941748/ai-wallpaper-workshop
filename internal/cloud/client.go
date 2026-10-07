@@ -22,8 +22,9 @@ import (
 // MetaTimeout 云端元数据交互超时(绝不阻塞换壁纸主线)。
 const MetaTimeout = 3 * time.Second
 
-// PlanTimeout 提示词规划超时(服务端可能同步调用 LLM 推理, 需给足时间; 实测约 12s)。
-const PlanTimeout = 30 * time.Second
+// PlanTimeout 提示词规划超时(服务端可能同步调用 LLM 推理, 需给足时间;
+// 实测约 18s, 服务端 LLM 预算 50s, 客户端需更大以免提前断开导致降级)。
+const PlanTimeout = 60 * time.Second
 
 // QueueMaxAge 离线补传队列保留上限。
 const QueueMaxAge = 7 * 24 * time.Hour
@@ -39,7 +40,7 @@ type Client struct {
 	Device  string
 
 	meta *http.Client // 元数据请求(3s)
-	plan *http.Client // 提示词规划(服务端 LLM 推理, 30s)
+	plan *http.Client // 提示词规划(服务端 LLM 推理, 60s)
 	long *http.Client // 出图轮询/下载
 }
 

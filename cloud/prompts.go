@@ -68,11 +68,13 @@ func (a *API) decidePrompt(ctx context.Context, userID string, req nextReq) next
 		content, err := a.llm.ChatJSON(ctx, system, user)
 		if err == nil {
 			if resp, ok := a.parseLLMOut(content, req); ok {
+				a.logf("LLM 规划成功(耗时 %dms) (user=%s)", time.Since(start).Milliseconds(), userID)
 				return resp
 			}
 			a.logf("LLM 输出校验失败, 回退本地引擎 (user=%s, out=%s)", userID, snippet(content, 300))
 		} else {
-			a.logf("LLM 调用失败(耗时 %dms): %v (user=%s)", time.Since(start).Milliseconds(), err, userID)
+			a.logf("LLM 调用失败(耗时 %dms, ctxErr=%v): %v (user=%s)",
+				time.Since(start).Milliseconds(), ctx.Err(), err, userID)
 		}
 	}
 	spec := localCompose(req)

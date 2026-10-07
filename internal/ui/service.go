@@ -142,12 +142,13 @@ func generateCombo(ctx context.Context, be backend.ImageBackend, cb probe.Combo)
 	return be.Wait(ctx, id)
 }
 
-// generateWallpaper 生成首张/立即换一张壁纸(云端 LLM 优先, 本地引擎兜底), 返回适配屏幕后的 PNG 与提示词规格。
+// generateWallpaper 生成首张/立即换一张壁纸(云端 LLM 优先, 本地引擎兜底), 返回适配屏幕后的 PNG、提示词规格与来源(cloud|local)。
 func generateWallpaper(ctx context.Context, cfg *config.Config, cc *cloud.Client, be backend.ImageBackend,
-	profile *config.Profile, history []prompt.HistoryEntry, forceShake bool) ([]byte, prompt.Spec, error) {
+	profile *config.Profile, history []prompt.HistoryEntry, forceShake bool) ([]byte, prompt.Spec, string, error) {
 
 	sw, sh := desktop.PrimarySize()
 	var spec prompt.Spec
+	src := "local"
 	genW, genH := fitGenSize(sw, sh)
 
 	if cc != nil {
@@ -161,6 +162,7 @@ func generateWallpaper(ctx context.Context, cfg *config.Config, cc *cloud.Client
 		})
 		if err == nil && nr.Positive != "" {
 			spec = prompt.Spec{Positive: nr.Positive, Negative: nr.Negative, Seed: nr.Seed, Combo: nr.Combo}
+			src = "cloud"
 			if nr.Width > 0 {
 				genW, genH = nr.Width, nr.Height
 			}
@@ -176,20 +178,20 @@ func generateWallpaper(ctx context.Context, cfg *config.Config, cc *cloud.Client
 	}
 	id, err := be.Submit(ctx, gp)
 	if err != nil {
-		return nil, spec, err
+		return nil, spec, src, err
 	}
 	raw, err := be.Wait(ctx, id)
 	if err != nil {
-		return nil, spec, err
+		return nil, spec, src, err
 	}
 	if err := desktop.Inspect(raw); err != nil {
-		return nil, spec, fmt.Errorf("质量自检未通过: %w", err)
+		return nil, spec, src, fmt.Errorf("质量自检未通过: %w", err)
 	}
 	final, err := desktop.FitToScreen(raw, sw, sh)
 	if err != nil {
-		return nil, spec, err
+		return nil, spec, src, err
 	}
-	return final, spec, nil
+	return final, spec, src, nil
 }
 
 // fitGenSize 本地兜底出图尺寸: 固定 1920x1080(默认出图尺寸, 适配交给 FitToScreen)。

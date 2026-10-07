@@ -832,7 +832,7 @@ func (w *wizard) genFirstWallpaper(force bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 		defer cancel()
 		history, _ := w.st.LoadHistory()
-		data, spec, err := generateWallpaper(ctx, w.cfg, w.cc, w.be, w.profile, history, force)
+		data, spec, src, err := generateWallpaper(ctx, w.cfg, w.cc, w.be, w.profile, history, force)
 		if err != nil {
 			w.mw.Synchronize(func() {
 				if seq != w.genSeq {
@@ -854,7 +854,7 @@ func (w *wizard) genFirstWallpaper(force bool) {
 		}
 		_ = w.st.AppendHistory(prompt.HistoryEntry{
 			At: time.Now(), Combo: spec.Combo, Positive: spec.Positive,
-			Negative: spec.Negative, Seed: spec.Seed, Source: "local",
+			Negative: spec.Negative, Seed: spec.Seed, Source: src,
 		})
 		w.mw.Synchronize(func() {
 			if seq != w.genSeq {

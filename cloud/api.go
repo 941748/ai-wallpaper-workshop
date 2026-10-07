@@ -360,7 +360,9 @@ func (a *API) handlePregenSubmit(w http.ResponseWriter, r *http.Request) {
 	_ = a.st.BumpUsage(u.UserID, "llm")
 	_ = a.st.BumpUsage(u.UserID, "gen")
 
-	ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+	// 预生成是"下单后异步完成"语义: 规划(LLM)与排队不依赖请求连接生命周期。
+	// 此前绑 r.Context() 时, 客户端先行离开会过早取消 LLM, 导致预生成永远降级本地引擎。
+	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
 	defer cancel()
 	dec := a.decidePrompt(ctx, u.UserID, req)
 
