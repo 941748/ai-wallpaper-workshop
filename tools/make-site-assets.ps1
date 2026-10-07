@@ -7,13 +7,13 @@ New-Item -ItemType Directory -Force $dst | Out-Null
 
 $jpeg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
 $ep = New-Object System.Drawing.Imaging.EncoderParameters(1)
-$ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 82)
+$ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 76)
 
 $map = @(
-  @("$src\hero-inkwash-dawn_1791357243.png", "$dst\hero.jpg", 1792),
-  @("$src\demo-realistic-cat_1791357286.png", "$dst\demo-cat.jpg", 1200),
-  @("$src\demo-neochinese-mountain_1791357287.png", "$dst\demo-mountain.jpg", 1200),
-  @("$src\demo-dreamy-aurora_1791357287.png", "$dst\demo-aurora.jpg", 1200)
+  @("$src\hero-inkwash-dawn_1791357243.png", "$dst\hero.jpg", 1400),
+  @("$src\demo-realistic-cat_1791357286.png", "$dst\demo-cat.jpg", 1000),
+  @("$src\demo-neochinese-mountain_1791357287.png", "$dst\demo-mountain.jpg", 1000),
+  @("$src\demo-dreamy-aurora_1791357287.png", "$dst\demo-aurora.jpg", 1000)
 )
 foreach ($m in $map) {
   $img = [System.Drawing.Image]::FromFile($m[0])
