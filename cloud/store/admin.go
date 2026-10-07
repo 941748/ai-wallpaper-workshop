@@ -1,5 +1,7 @@
 package store
 
+import "time"
+
 // 管理看板查询(只读)。
 
 // AdminPromptRow 看板用出图记录。
@@ -86,4 +88,54 @@ func (s *Store) AdminRecentJobs(n int) ([]AdminJobRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ---------- 官网统计 ----------
+
+// SiteDailyRow 官网某天的统计行。
+type SiteDailyRow struct {
+	Day string
+	PV  int64
+	UV  int64
+	DL  int64
+}
+
+// RecordSiteEvent 记录一次官网事件(kind: pv=页面浏览 / dl=下载; iph 为访客匿名哈希)。
+func (s *Store) RecordSiteEvent(kind, iph string) error {
+	_, err := s.db.Exec(`INSERT INTO site_events(ts, kind, iph) VALUES(?,?,?)`,
+		time.Now().Format(timeFmt), kind, iph)
+	return err
+}
+
+// SiteStats 官网统计: 总 PV / 总 UV / 总下载 + 近 n 天按天明细(日期倒序)。
+func (s *Store) SiteStats(n int) (int64, int64, int64, []SiteDailyRow, error) {
+	var pv, uv, dl int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM site_events WHERE kind='pv'`).Scan(&pv); err != nil {
+		return 0, 0, 0, nil, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT iph) FROM site_events WHERE kind='pv' AND iph<>''`).Scan(&uv); err != nil {
+		return 0, 0, 0, nil, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM site_events WHERE kind='dl'`).Scan(&dl); err != nil {
+		return 0, 0, 0, nil, err
+	}
+	since := time.Now().AddDate(0, 0, -n).Format(timeFmt)
+	rows, err := s.db.Query(`SELECT substr(ts,1,10) AS d,
+  COUNT(CASE WHEN kind='pv' THEN 1 END),
+  COUNT(DISTINCT CASE WHEN kind='pv' AND iph<>'' THEN iph END),
+  COUNT(CASE WHEN kind='dl' THEN 1 END)
+FROM site_events WHERE ts >= ? GROUP BY d ORDER BY d DESC`, since)
+	if err != nil {
+		return pv, uv, dl, nil, err
+	}
+	defer rows.Close()
+	var daily []SiteDailyRow
+	for rows.Next() {
+		var r SiteDailyRow
+		if err := rows.Scan(&r.Day, &r.PV, &r.UV, &r.DL); err != nil {
+			return pv, uv, dl, nil, err
+		}
+		daily = append(daily, r)
+	}
+	return pv, uv, dl, daily, rows.Err()
 }

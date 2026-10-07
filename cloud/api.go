@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -93,6 +95,9 @@ func (a *API) handleSite(w http.ResponseWriter, r *http.Request) {
 	}
 	if p == "/index.html" {
 		w.Header().Set("Cache-Control", "no-cache")
+		if err := a.st.RecordSiteEvent("pv", siteVisitorHash(r)); err != nil {
+			a.logf("官网计数失败: %v", err)
+		}
 	}
 	if strings.HasPrefix(p, "/assets/") {
 		w.Header().Set("Cache-Control", "public, max-age=86400")
@@ -109,7 +114,29 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="AIWallpaper-Setup.exe"`)
+	if err := a.st.RecordSiteEvent("dl", siteVisitorHash(r)); err != nil {
+		a.logf("官网计数失败: %v", err)
+	}
 	http.ServeFile(w, r, fp)
+}
+
+// siteVisitorHash 访客 IP 的匿名哈希(仅用于 UV 近似去重, 不存明文 IP)。
+func siteVisitorHash(r *http.Request) string {
+	ip := r.Header.Get("X-Real-IP")
+	if ip == "" {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			ip = strings.TrimSpace(strings.Split(xff, ",")[0])
+		}
+	}
+	if ip == "" {
+		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			ip = host
+		} else {
+			ip = r.RemoteAddr
+		}
+	}
+	sum := sha1.Sum([]byte("aw-site-uv:" + ip))
+	return hex.EncodeToString(sum[:6])
 }
 
 // ---------- 基础工具 ----------

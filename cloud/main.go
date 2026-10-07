@@ -131,6 +131,10 @@ var adminTmpl = template.Must(template.New("admin").Parse(`<!doctype html><html 
 table{border-collapse:collapse;width:100%;margin:12px 0}td,th{border:1px solid #334155;padding:6px 10px;font-size:13px;text-align:left}
 th{background:#1e293b}h2{margin-top:28px}code{color:#7dd3fc}</style></head><body>
 <h1>{{.App}} 云服务 · v{{.Version}}</h1>
+<h2>官网统计</h2>
+<p>总浏览 <b>{{.SitePV}}</b> · 总访客 <b>{{.SiteUV}}</b> · 客户端下载 <b>{{.SiteDL}}</b></p>
+<table><tr><th>日期</th><th>浏览(PV)</th><th>访客(UV)</th><th>下载</th></tr>
+{{range .SiteDaily}}<tr><td>{{.Day}}</td><td>{{.PV}}</td><td>{{.UV}}</td><td>{{.DL}}</td></tr>{{end}}</table>
 <h2>用户 ({{len .Users}})</h2>
 <table><tr><th>user_id</th><th>注册时间</th><th>今日 LLM</th><th>今日出图</th><th>禁用</th></tr>
 {{range .Users}}<tr><td><code>{{.UserID}}</code></td><td>{{.CreatedAt}}</td><td>{{.LLM}}</td><td>{{.Gen}}</td><td>{{.Disabled}}</td></tr>{{end}}</table>
@@ -163,6 +167,9 @@ func (a *API) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		userRows = append(userRows, adminUserRow{u.UserID, u.CreatedAt, llmN, genN, u.Disabled})
 	}
 	data := map[string]any{"App": appNameCN, "Version": a.version, "Users": userRows}
+	if pv, uv, dl, daily, err := a.st.SiteStats(14); err == nil {
+		data["SitePV"], data["SiteUV"], data["SiteDL"], data["SiteDaily"] = pv, uv, dl, daily
+	}
 
 	// 最近记录/信号/任务: 通过 db 直查简化(只读)
 	type pr struct {

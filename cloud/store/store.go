@@ -125,6 +125,13 @@ CREATE TABLE IF NOT EXISTS drift_reports (
   summary    TEXT,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS site_events (
+  id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts   TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  iph  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_site_events ON site_events(kind, ts);
 `
 	_, err := s.db.Exec(schema)
 	return err
