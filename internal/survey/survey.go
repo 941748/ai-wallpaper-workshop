@@ -1,6 +1,6 @@
 // Package survey 偏好问卷: 五维三态(喜欢/中立/讨厌)点选 → 画像权重映射。
 // 映射契约: 喜欢=0.9 / 中立=0.3 / 讨厌=0.05; 所有词典值均显式写入权重,
-// 讨厌项的负面提示词片段合入画像 Disliked(去重追加)。
+// 讨厌项的避让片段(值自身描述)合入画像 Disliked(去重追加)。
 package survey
 
 import (
@@ -47,10 +47,9 @@ func Apply(p *config.Profile, answers map[string]Attitude) *config.Profile {
 				p.Set(d.ID, v.ID, LikeWeight)
 			case Dislike:
 				p.Set(d.ID, v.ID, DislikeWeight)
-				frag := v.Negative
-				if frag == "" {
-					frag = v.Prompt
-				}
+				// 避让词用值自身的描述; 不可用 v.Negative —— 负向词语义相反,
+				// 曾把"讨厌二次元"错误转译成"避开照片写实"。
+				frag := v.Prompt
 				if frag != "" && !disliked[frag] {
 					p.Disliked = append(p.Disliked, frag)
 					disliked[frag] = true

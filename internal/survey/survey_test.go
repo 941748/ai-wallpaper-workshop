@@ -42,18 +42,26 @@ func TestApplyFillsUntouchedWithNeutral(t *testing.T) {
 func TestApplyRecordsDislikedFragment(t *testing.T) {
 	p := config.NewProfile()
 	Apply(p, map[string]Attitude{config.Key(taxonomy.DimStyle, "realism"): Dislike})
-	neg := taxonomy.ValueOf(taxonomy.DimStyle, "realism").Negative
-	if neg == "" {
-		t.Fatal("realism should have a negative fragment")
+	// 避让片段必须是值自身的描述(而非 v.Negative —— 负向词语义相反会污染清单)
+	frag := taxonomy.ValueOf(taxonomy.DimStyle, "realism").Prompt
+	if frag == "" {
+		t.Fatal("realism should have a prompt fragment")
 	}
 	found := false
 	for _, f := range p.Disliked {
-		if f == neg {
+		if f == frag {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("negative fragment %q not recorded, got %v", neg, p.Disliked)
+		t.Fatalf("prompt fragment %q not recorded, got %v", frag, p.Disliked)
+	}
+	if neg := taxonomy.ValueOf(taxonomy.DimStyle, "realism").Negative; neg != "" {
+		for _, f := range p.Disliked {
+			if f == neg {
+				t.Fatalf("negative fragment %q must NOT be recorded (semantic pollution): %v", neg, p.Disliked)
+			}
+		}
 	}
 }
 

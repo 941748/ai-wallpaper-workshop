@@ -20,6 +20,7 @@ import (
 	"wallpaper/internal/scheduler"
 	"wallpaper/internal/signals"
 	"wallpaper/internal/store"
+	"wallpaper/internal/survey"
 	"wallpaper/internal/taxonomy"
 	"wallpaper/internal/update"
 )
@@ -42,9 +43,8 @@ type settings struct {
 
 	// 偏好页
 	summaryLbl *walk.Label
-	dimValues  [][]string
-	combos     []*walk.ComboBox
-	weights    []*walk.NumberEdit
+	chips      *surveyChips
+	answers    map[string]survey.Attitude
 	kwLB       *walk.ListBox
 	kwEdit     *walk.LineEdit
 
@@ -158,35 +158,20 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 	s.summaryLbl, _ = walk.NewLabel(page)
 	s.refreshSummary(profile)
 	hint, _ := walk.NewLabel(page)
-	hint.SetText("提示: 这里只调各维主值; 要重新勾选完整偏好清单(风格/题材等全部选项), 点下方\"重新初始化向导\"。")
+	hint.SetText("点选偏好(可多选): 点一下 = 喜欢 ✓, 再点 = 不喜欢 ✕, 再点 = 取消。\n" +
+		"· 风格、题材: 严格执行 —— 出图只在你勾选的范围内轮换;\n" +
+		"· 色调、氛围、构图: 次要参考 —— 不勾选则由系统自动变化;\n" +
+		"· 节日/节气氛围: 次要点缀 —— 见下方开关(仅画面氛围轻推, 不改你的画风)。")
 
+	// 三态点选(与初始化向导同一交互: 维度标签 + 筹码网格)
+	s.answers = map[string]survey.Attitude{}
 	for _, d := range taxonomy.Dimensions {
-		ids := make([]string, 0, len(d.Values))
 		for _, v := range d.Values {
-			ids = append(ids, v.ID)
+			s.answers[config.Key(d.ID, v.ID)] = attitudeOfWeight(profile.Get(d.ID, v.ID))
 		}
-		sort.SliceStable(ids, func(a, b int) bool {
-			return profile.Get(d.ID, ids[a]) > profile.Get(d.ID, ids[b])
-		})
-		names := make([]string, len(ids))
-		for i, id := range ids {
-			names[i] = taxonomy.NameCN(d.ID, id)
-		}
-		s.dimValues = append(s.dimValues, ids)
-
-		row, _ := walk.NewComposite(page)
-		_ = row.SetLayout(walk.NewHBoxLayout())
-		lbl, _ := walk.NewLabel(row)
-		lbl.SetText(d.NameCN + ":")
-		cb, _ := walk.NewComboBox(row)
-		_ = cb.SetModel(names)
-		cb.SetCurrentIndex(0)
-		ne, _ := walk.NewNumberEdit(row)
-		ne.SetDecimals(2)
-		ne.SetRange(0.05, 1.0)
-		ne.SetValue(profile.Get(d.ID, ids[0]))
-		s.combos = append(s.combos, cb)
-		s.weights = append(s.weights, ne)
+	}
+	if s.chips, err = newSurveyChips(page, s.answers, nil); err != nil {
+		return err
 	}
 
 	// 自定义关键词(词典之外的个人喜好, 改动即时生效)
@@ -217,7 +202,7 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 	btnRow, _ := walk.NewComposite(page)
 	_ = btnRow.SetLayout(walk.NewHBoxLayout())
 	saveBtn, _ := walk.NewPushButton(btnRow)
-	saveBtn.SetText("保存画像")
+	saveBtn.SetText("保存偏好")
 	saveBtn.Clicked().Attach(func() { s.saveProfileEdits() })
 	reBtn, _ := walk.NewPushButton(btnRow)
 	reBtn.SetText("重新初始化向导")
@@ -382,34 +367,38 @@ func (s *settings) saveKeywordMeta(detail string) {
 	_ = signals.Append(s.dir, signals.Event{Type: signals.TypeKeywordsAdjust, Detail: "自定义关键词: " + detail})
 }
 
-// refreshSummary 刷新画像摘要标签。
+// refreshSummary 刷新偏好摘要标签(只罗列名称, 不显示权重数值)。
 func (s *settings) refreshSummary(profile *config.Profile) {
 	items := probe.Summarize(profile, 10)
-	if len(items) == 0 {
-		s.summaryLbl.SetText("画像摘要: 暂无(多为中立)")
+	var names []string
+	for _, it := range items {
+		// Summarize 返回 "名称 0.90" 形式: 去掉尾部权重数值
+		if i := strings.LastIndex(it, " "); i > 0 {
+			names = append(names, it[:i])
+		} else {
+			names = append(names, it)
+		}
+	}
+	if len(names) == 0 {
+		s.summaryLbl.SetText("当前偏好: 暂无(多为中立)")
 	} else {
-		s.summaryLbl.SetText("画像摘要: " + strings.Join(items, " · "))
+		s.summaryLbl.SetText("当前偏好: " + strings.Join(names, " · "))
 	}
 }
 
 func (s *settings) saveProfileEdits() {
 	profile, _ := config.LoadProfile(s.dir)
-	for i, d := range taxonomy.Dimensions {
-		idx := s.combos[i].CurrentIndex()
-		if idx < 0 || idx >= len(s.dimValues[i]) {
-			idx = 0
-		}
-		profile.Set(d.ID, s.dimValues[i][idx], s.weights[i].Value())
-	}
+	// 三态点选 → 画像(喜欢 0.9 / 中立 0.3 / 不喜欢 0.05 + 避让清单)
+	survey.Apply(profile, s.answers)
 	if err := profile.Save(s.dir); err != nil {
-		showError(s.mw, "画像保存失败: %v", err)
+		showError(s.mw, "偏好保存失败: %v", err)
 		return
 	}
 	s.cfg.ProfileVer++
 	_ = s.cfg.Save(s.dir)
-	_ = signals.Append(s.dir, signals.Event{Type: signals.TypeWeightAdjust, Detail: "设置页手工调整偏好权重"})
+	_ = signals.Append(s.dir, signals.Event{Type: signals.TypeWeightAdjust, Detail: "设置页调整偏好"})
 	s.refreshSummary(profile)
-	showInfo(s.mw, "画像已保存。云端 LLM 将参考你的调整生成后续壁纸。")
+	showInfo(s.mw, "偏好已保存。出图将严格按你勾选的画风与题材生成。")
 }
 
 // ---------- 服务与调度页 ----------
