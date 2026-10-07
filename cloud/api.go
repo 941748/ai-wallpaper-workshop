@@ -91,6 +91,9 @@ func (a *API) handleSite(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if p == "/index.html" {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
 	if strings.HasPrefix(p, "/assets/") {
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 	}
