@@ -75,7 +75,7 @@ func TestCheckNoUpdateForSameOrOlder(t *testing.T) {
 	exe := filepath.Join(dir, "bin", "wallpaper.exe")
 
 	srvSame := mockCloud(t, func(base string) map[string]any {
-		return map[string]any{"version": "0.1.0", "url": base + "/releases/w.exe",
+		return map[string]any{"version": CurrentVersion, "url": base + "/releases/w.exe",
 			"sha256": sumHex(payload), "size": int64(len(payload))}
 	}, payload)
 	c := cloud.New(srvSame.URL, "u1", "tok", "dev")
@@ -97,7 +97,7 @@ func TestCheckNoUpdateForSameOrOlder(t *testing.T) {
 func TestCheckRejectsBadSHA(t *testing.T) {
 	payload := []byte("payload-v2")
 	srv := mockCloud(t, func(base string) map[string]any {
-		return map[string]any{"version": "0.2.0", "url": base + "/releases/w.exe",
+		return map[string]any{"version": "1.0.2", "url": base + "/releases/w.exe",
 			"sha256": strings.Repeat("ab", 32), "size": int64(len(payload))}
 	}, payload)
 	dir := t.TempDir()
@@ -114,7 +114,7 @@ func TestCheckRejectsBadSHA(t *testing.T) {
 func TestCheckRejectsSizeMismatch(t *testing.T) {
 	payload := []byte("payload-v2")
 	srv := mockCloud(t, func(base string) map[string]any {
-		return map[string]any{"version": "0.2.0", "url": base + "/releases/w.exe",
+		return map[string]any{"version": "1.0.2", "url": base + "/releases/w.exe",
 			"sha256": sumHex(payload), "size": int64(len(payload) + 10)}
 	}, payload)
 	dir := t.TempDir()
@@ -140,7 +140,7 @@ func TestCheckStagesNewVersion(t *testing.T) {
 
 	payload := []byte("wallpaper-v2-binary-content")
 	srv := mockCloud(t, func(base string) map[string]any {
-		return map[string]any{"version": "0.2.0", "url": base + "/releases/wallpaper-0.2.0.exe",
+		return map[string]any{"version": "1.0.2", "url": base + "/releases/wallpaper-1.0.2.exe",
 			"sha256": sumHex(payload), "size": int64(len(payload))}
 	}, payload)
 	dir := t.TempDir()
