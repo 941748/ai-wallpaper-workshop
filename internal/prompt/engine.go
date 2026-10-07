@@ -1,5 +1,6 @@
 // Package prompt 本地提示词引擎(云端 LLM 不可达时的兜底, 也是画像采样核心)。
-// 规则: 每维按权重采样一个值(权重下限 0.05 保证多样性; 15% 概率探索非最高值),
+// 规则: 每维优先从明确偏好(权重 ≥ HighPref)的值中加权采样; 无明确偏好时在活跃值
+// (权重 ≥ LowCut)中加权轮换; 明显负面(低于 LowCut)的值不再采出。
 // 由片段模板拼装正向提示词; 负面 = 通用负面 + 用户不喜欢片段;
 // 近 30 条内禁止完全重复组合。
 package prompt
@@ -15,11 +16,11 @@ import (
 // RecentWindow 去重窗口(近 30 条禁止完全重复)。
 const RecentWindow = 30
 
-// ExploreProb 每维探索概率(选非最高值)。
-const ExploreProb = 0.15
+// HighPref 明确偏好阈值: 达到后该维仅从高权值集合中采样(风格等维度由此稳定跟随用户选择)。
+const HighPref = 0.6
 
-// WeightFloor 采样权重下限。
-const WeightFloor = 0.05
+// LowCut 活跃下限: 低于此权重视为明显负面(用户点踩), 不再进入采样。
+const LowCut = 0.25
 
 // HistoryEntry 一条历史记录(prompt_history.json)。
 type HistoryEntry struct {
@@ -123,48 +124,52 @@ func sampleCombo(profile *config.Profile, rng *rand.Rand, opt Options) sampledCo
 	return sampledCombo{values, seedOf(values)}
 }
 
-// sampleDim 单维加权采样。
+// sampleDim 单维采样: 明确偏好值优先(集合内按权重); 无明确偏好时在活跃值间加权轮换;
+// 明显负面的值不采出; excludeVal 用于"换个风格"排除最近主值。
 func sampleDim(profile *config.Profile, d taxonomy.Dimension, rng *rand.Rand, excludeVal string) string {
 	type cand struct {
 		id string
 		w  float64
 	}
-	var cands []cand
+	var high, active []cand
 	for _, v := range d.Values {
 		if excludeVal != "" && v.ID == excludeVal {
 			continue
 		}
 		w := profile.Get(d.ID, v.ID)
-		if w < WeightFloor {
-			w = WeightFloor
+		if w < LowCut {
+			continue
 		}
-		cands = append(cands, cand{v.ID, w})
+		active = append(active, cand{v.ID, w})
+		if w >= HighPref {
+			high = append(high, cand{v.ID, w})
+		}
 	}
-	if len(cands) == 0 {
-		return d.Values[0].ID
+	pool := high
+	if len(pool) == 0 {
+		pool = active
 	}
-	// 探索: 以 ExploreProb 概率排除当前最高值后再采样
-	if len(cands) > 1 && rng.Float64() < ExploreProb {
-		top := 0
-		for i := range cands {
-			if cands[i].w > cands[top].w {
-				top = i
+	if len(pool) == 0 {
+		// 全部被排除或均为负面: 兜底取排除值之外的第一个值。
+		for _, v := range d.Values {
+			if v.ID != excludeVal {
+				return v.ID
 			}
 		}
-		cands = append(cands[:top], cands[top+1:]...)
+		return d.Values[0].ID
 	}
 	total := 0.0
-	for _, c := range cands {
+	for _, c := range pool {
 		total += c.w
 	}
 	r := rng.Float64() * total
-	for _, c := range cands {
+	for _, c := range pool {
 		r -= c.w
 		if r <= 0 {
 			return c.id
 		}
 	}
-	return cands[len(cands)-1].id
+	return pool[len(pool)-1].id
 }
 
 // assemble 按维度顺序拼装正向提示词。

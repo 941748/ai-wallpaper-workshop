@@ -4,10 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"math/rand"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -58,33 +55,40 @@ type nextResp struct {
 	Source     string            `json:"source"` // llm | local
 }
 
-// decidePrompt 生成本轮决策: LLM 优先生成(其输出经校验), 失败回退本地引擎。
+// decidePrompt 生成本轮决策: 五维组合由本地引擎按画像确定(风格/内容严格跟随偏好),
+// LLM 仅负责把组合润色为自然语言画面描述(可融入语境, 不得改动组合); 失败回退本地拼装。
 func (a *API) decidePrompt(ctx context.Context, userID string, req nextReq) nextResp {
 	wf := a.reg.Resolve("")
-	if a.llm.Enabled() {
-		system := a.systemPrompt()
-		user := a.userPrompt(userID, req)
-		start := time.Now()
-		content, err := a.llm.ChatJSON(ctx, system, user)
-		if err == nil {
-			if resp, ok := a.parseLLMOut(content, req); ok {
-				a.logf("LLM 规划成功(耗时 %dms) (user=%s)", time.Since(start).Milliseconds(), userID)
-				return resp
-			}
-			a.logf("LLM 输出校验失败, 回退本地引擎 (user=%s, out=%s)", userID, snippet(content, 300))
-		} else {
-			a.logf("LLM 调用失败(耗时 %dms, ctxErr=%v): %v (user=%s)",
-				time.Since(start).Milliseconds(), ctx.Err(), err, userID)
-		}
-	}
 	spec := localCompose(req)
 	width, height := BucketSize(req.ScreenW, req.ScreenH, wf)
-	return nextResp{
+	resp := nextResp{
 		Positive: spec.Positive, Negative: spec.Negative,
 		Width: width, Height: height, WorkflowID: wf.ID,
 		Combo: spec.Combo, Seed: spec.Seed,
 		Reason: "本地引擎(画像加权采样)", Source: "local",
 	}
+	if a.llm.Enabled() {
+		system := a.systemPrompt()
+		user := a.userPrompt(userID, req, spec.Combo)
+		start := time.Now()
+		content, err := a.llm.ChatJSON(ctx, system, user)
+		if err == nil {
+			if pos, reason, ok := parsePolish(content); ok {
+				resp.Positive = pos
+				if reason != "" {
+					resp.Reason = reason
+				}
+				resp.Source = "llm"
+				a.logf("LLM 文案成功(耗时 %dms) (user=%s)", time.Since(start).Milliseconds(), userID)
+				return resp
+			}
+			a.logf("LLM 文案校验失败, 回退本地拼装 (user=%s, out=%s)", userID, snippet(content, 300))
+		} else {
+			a.logf("LLM 调用失败(耗时 %dms, ctxErr=%v): %v (user=%s)",
+				time.Since(start).Milliseconds(), ctx.Err(), err, userID)
+		}
+	}
+	return resp
 }
 
 // snippet 截断字符串用于日志(rune 安全)。
@@ -96,87 +100,27 @@ func snippet(s string, n int) string {
 	return string(r[:n]) + "..."
 }
 
-// parseLLMOut 宽容解析并校验 LLM 输出(白名单/尺寸/字段完整性)。
-// 兼容不稳定的输出类型: 数字可为字符串/浮点; combo 可为对象或字符串化对象。
-func (a *API) parseLLMOut(content string, req nextReq) (nextResp, bool) {
+// parsePolish 解析并校验 LLM 文案输出: 仅取 positive(画面描述)与 reason;
+// 兼容 markdown 包裹与多余字段; positive 缺失视为无效。
+func parsePolish(content string) (string, string, bool) {
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(extractJSON(content)), &raw); err != nil {
-		a.logf("LLM 输出 JSON 解析失败: %v (out=%s)", err, snippet(content, 500))
-		return nextResp{}, false
+		return "", "", false
 	}
-	positive := strOf(raw["positive"])
-	if strings.TrimSpace(positive) == "" {
-		a.logf("LLM 输出 positive 为空 (out=%s)", snippet(content, 500))
-		return nextResp{}, false
+	pos := strings.TrimSpace(strOf(raw["positive"]))
+	if pos == "" {
+		return "", "", false
 	}
-	if len(positive) > 1200 {
-		positive = positive[:1200]
+	if len(pos) > 1200 {
+		pos = pos[:1200]
 	}
-	negative := strOf(raw["negative"])
-	if len(negative) > 800 {
-		negative = negative[:800]
-	}
-	wf := a.reg.Resolve(strOf(raw["workflow_id"]))
-	w0, h0 := intOf(raw["width"]), intOf(raw["height"])
-	width, height := ClampSize(wf, w0, h0)
-	if w0 == 0 || h0 == 0 {
-		width, height = BucketSize(req.ScreenW, req.ScreenH, wf)
-	}
-	combo := comboOf(raw["combo"])
-	if len(combo) == 0 {
-		combo = topCombo(req.Profile)
-	}
-	seed := int64(intOf(raw["seed"]))
-	if seed <= 0 {
-		seed = time.Now().UnixNano() & 0x7fffffff
-	}
-	return nextResp{
-		Positive: positive, Negative: negative,
-		Width: width, Height: height, WorkflowID: wf.ID,
-		Combo: combo, Seed: seed, Reason: strOf(raw["reason"]), Source: "llm",
-	}, true
+	return pos, strOf(raw["reason"]), true
 }
 
 // strOf 宽容取字符串(非字符串返回空)。
 func strOf(v any) string {
 	s, _ := v.(string)
 	return s
-}
-
-// intOf 宽容取整数(兼容浮点与数字字符串)。
-func intOf(v any) int {
-	switch n := v.(type) {
-	case float64:
-		return int(n)
-	case string:
-		f, _ := strconv.ParseFloat(strings.TrimSpace(n), 64)
-		return int(f)
-	}
-	return 0
-}
-
-// comboOf 宽容解析五维组合: 对象直接取; 字符串形态(可能被字符串化的 JSON)尽力解析;
-// 非法键值由 sanitizeCombo 白名单剔除。
-func comboOf(v any) map[string]string {
-	collect := func(m map[string]any) map[string]string {
-		out := map[string]string{}
-		for k, vv := range m {
-			if s, ok := vv.(string); ok {
-				out[k] = s
-			}
-		}
-		return sanitizeCombo(out)
-	}
-	switch c := v.(type) {
-	case map[string]any:
-		return collect(c)
-	case string:
-		var nested map[string]any
-		if err := json.Unmarshal([]byte(c), &nested); err == nil {
-			return collect(nested)
-		}
-	}
-	return nil
 }
 
 // extractJSON 容错提取 JSON(LLM 偶尔包 markdown 代码块)。
@@ -190,37 +134,7 @@ func extractJSON(s string) string {
 	return s
 }
 
-// sanitizeCombo 仅保留合法维值。
-func sanitizeCombo(in map[string]string) map[string]string {
-	out := map[string]string{}
-	for _, d := range taxonomy.Dimensions {
-		if v, ok := in[d.ID]; ok && taxonomy.ValueOf(d.ID, v) != nil {
-			out[d.ID] = v
-		}
-	}
-	return out
-}
-
-// topCombo 画像最高权重组合(全维)。
-func topCombo(weights map[string]float64) map[string]string {
-	out := map[string]string{}
-	for _, d := range taxonomy.Dimensions {
-		best, bestW := "", math.Inf(-1)
-		for _, v := range d.Values {
-			w := weights[config.Key(d.ID, v.ID)]
-			if w == 0 {
-				w = 0.5
-			}
-			if w > bestW {
-				best, bestW = v.ID, w
-			}
-		}
-		out[d.ID] = best
-	}
-	return out
-}
-
-// localCompose 本地引擎兜底(与客户端一致的加权采样/探索/去重规则)。
+// localCompose 本地引擎(与客户端一致的加权采样/去重规则; 组合由画像确定, 也是兜底文案的拼装器)。
 func localCompose(req nextReq) prompt.Spec {
 	p := config.NewProfile()
 	p.Weights = map[string]float64{}
@@ -289,64 +203,27 @@ func anyCombo(extra map[string]any) map[string]string {
 
 // ---------- LLM 提示词 ----------
 
+// systemPrompt 润色写手角色: 组合已定, 只写画面, 不得改动组合。
 func (a *API) systemPrompt() string {
-	// 词典摘要
-	var dims []string
-	for _, d := range taxonomy.Dimensions {
-		var vals []string
-		for _, v := range d.Values {
-			vals = append(vals, v.ID+"("+v.NameCN+")")
-		}
-		dims = append(dims, d.ID+" 可选: "+strings.Join(vals, ", "))
-	}
-	var wfs []string
-	for _, w := range a.reg.List() {
-		desc := w.ID + "(" + w.Name + ")"
-		if len(w.Loras) > 0 {
-			names := make([]string, 0, len(w.Loras))
-			for _, l := range w.Loras {
-				names = append(names, l.Name)
-			}
-			desc += " LoRA:" + strings.Join(names, "+")
-		}
-		wfs = append(wfs, desc)
-	}
-	return "你是壁纸出图规划器。根据用户的偏好画像、最近壁纸记录与漂移事件, 规划下一张壁纸。" +
-		"输出必须是 JSON 对象, 字段: positive(英文自然语言描述, 60-120 词, 面向 Z-Image Turbo), " +
-		"negative(英文负向提示词, 当前工作流不使用, 可留空), width/height(整数, 8 的倍数, 512~1920, 默认 1920/1080), " +
-		"workflow_id(必须从工作流白名单选择), " +
-		"combo(JSON 对象, 键为 style/subject/palette/mood/composition, 值为词典值 ID), seed(整数), reason(一句中文理由)。\n" +
-		"五维词典: " + strings.Join(dims, "; ") + "。\n" +
-		"工作流白名单: " + strings.Join(wfs, "; ") + "。\n" +
-		"规则: 结合画像高权值选择组合; 避开 disliked 中的元素; 若存在 disliked 事件, 必须避开其记录的组合要素; " +
-		"若存在 liked 事件, 在后续画面中多呼应其组合要素; 若提供 自定义偏好关键词, 在合适的画面中自然融入(不必每张出现, 不得生硬堆砌); " +
-		"若存在强烈拒斥信号(style_reject)或 force_shake, 必须给出与最近记录显著不同的风格; " +
-		"若存在 style_keep 或多次满意, 保持当前方向并做微变化; " +
-		"若提供 近期节日节气: 以画面氛围含蓄呼应(如母亲节用康乃馨色柔光), 仅作轻推不得覆盖用户画像主张, 严禁任何文字/横幅/祝福语元素, 标注敏感的节令庄重含蓄; " +
-		"禁止文字/水印/低质元素; 数字字段用 JSON 数字类型, combo 必须是 JSON 对象; 不得输出 JSON 以外的任何内容。"
+	return "你是壁纸画面的英文提示词写手。用户的偏好组合已由系统确定(风格/题材/配色/氛围/构图), " +
+		"你的唯一任务: 为给定组合撰写 60-120 词的英文自然语言画面描述(供 Z-Image Turbo 出图, 面向 16:9 桌面壁纸)。\n" +
+		"硬性要求:\n" +
+		"1. 画面必须忠实呈现组合中的每一个维度; 风格维度严禁偏离或混入其他风格" +
+		"(例: 组合为写实(realism)时, 不得出现 watercolor/oil painting/anime/illustration 等词);\n" +
+		"2. 可自然融入给定语境(最近壁纸记录、漂移事件、节日节气氛围、自定义偏好关键词), 但不得改变组合要素;\n" +
+		"3. 禁止文字/水印/横幅/边框元素; 只输出正向画面描述。\n" +
+		"输出必须是 JSON 对象: {\"positive\": \"...\", \"reason\": \"一句中文理由\"}, 不得输出 JSON 以外的任何内容。"
 }
 
-func (a *API) userPrompt(userID string, req nextReq) string {
-	type kv struct {
-		name string
-		w    float64
-	}
-	var tops []kv
+// userPrompt 构造润色请求: 已定组合(中文 + 各维英文参考片段)与语境(最近记录/漂移/节日/自定义词)。
+func (a *API) userPrompt(userID string, req nextReq, combo map[string]string) string {
+	var refs []string
 	for _, d := range taxonomy.Dimensions {
-		for _, v := range d.Values {
-			w := req.Profile[config.Key(d.ID, v.ID)]
-			if w >= 0.6 {
-				tops = append(tops, kv{taxonomy.NameCN(d.ID, v.ID), w})
-			}
+		v := taxonomy.ValueOf(d.ID, combo[d.ID])
+		if v == nil {
+			continue
 		}
-	}
-	sort.Slice(tops, func(i, j int) bool { return tops[i].w > tops[j].w })
-	var topList []string
-	for _, e := range tops {
-		topList = append(topList, fmt.Sprintf("%s=%.2f", e.name, e.w))
-	}
-	if len(topList) == 0 {
-		topList = append(topList, "(中立, 无显著偏好)")
+		refs = append(refs, d.ID+"("+v.NameCN+"): "+v.Prompt)
 	}
 
 	var recent []string
@@ -363,11 +240,11 @@ func (a *API) userPrompt(userID string, req nextReq) string {
 				if len(recent) >= 10 {
 					break
 				}
-				var combo map[string]string
+				var c map[string]string
 				if rec.Combo != "" {
-					_ = json.Unmarshal([]byte(rec.Combo), &combo)
+					_ = json.Unmarshal([]byte(rec.Combo), &c)
 				}
-				recent = append(recent, comboDesc(combo))
+				recent = append(recent, comboDesc(c))
 			}
 		}
 	}
@@ -388,12 +265,10 @@ func (a *API) userPrompt(userID string, req nextReq) string {
 	}
 
 	body := map[string]any{
-		"偏好高权值":    topList,
-		"disliked":   req.Disliked,
-		"最近壁纸记录":   recent,
+		"组合":        comboDesc(combo),
+		"组合参考片段":    refs,
+		"最近壁纸记录":    recent,
 		"漂移事件(近一周)": sigs,
-		"屏幕分辨率":    []int{req.ScreenW, req.ScreenH},
-		"force_shake": req.ForceShake,
 	}
 	if len(req.CustomKeywords) > 0 {
 		body["自定义偏好关键词"] = req.CustomKeywords

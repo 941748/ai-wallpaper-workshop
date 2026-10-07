@@ -62,16 +62,10 @@ func newMockComfy(t *testing.T) *httptest.Server {
 func newMockLLM(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		// 新架构: LLM 仅产出文案(positive/reason); 多余字段即使返回也会被忽略。
 		out := map[string]any{
-			"positive": "photorealistic mountain lake at dawn, cool teal palette, serene mood, ultra wide",
-			"negative": "watermark, text",
-			"width":    1365, "height": 761, // 非法值: 服务器应 clamp 到 64 倍数
-			"workflow_id": "wf-not-exists", // 非法: 应回退白名单默认
-			"combo": map[string]string{
-				"style": "realism", "subject": "nature", "palette": "cool",
-				"mood": "serene", "composition": "wide", "junk": "nope",
-			},
-			"seed": 123, "reason": "清晨宁静的冷色调湖景",
+			"positive": "ink wash landscape, misty peaks at dawn, serene mood, wide composition, soft gradients",
+			"reason":   "测试文案",
 		}
 		content, _ := json.Marshal(out)
 		resp := map[string]any{
@@ -197,35 +191,17 @@ func decodeData(t *testing.T, raw []byte, out any) {
 
 // ---------- 用例 ----------
 
-// TestParseLLMOutTolerant LLM 输出类型不稳定时的宽容解析(字符串 combo/数字字符串)。
-func TestParseLLMOutTolerant(t *testing.T) {
-	llmMock := newMockLLM(t)
-	defer llmMock.Close()
-	ts := newTestServer(t, llmMock.URL, true)
-	defer ts.srv.Close()
-
-	content := `{"positive":"ink wash landscape, misty peaks","negative":"",` +
-		`"width":"1920","height":"1080","workflow_id":"","reason":"测试",` +
-		`"combo":"{\"style\":\"ink\",\"junk\":\"x\"}","seed":"42"}`
-	resp, ok := ts.api.parseLLMOut(content, nextReq{ScreenW: 2240, ScreenH: 1400,
-		Profile: map[string]float64{"style/ink": 0.9}})
-	if !ok {
-		t.Fatal("tolerant parse should succeed")
+// TestParsePolishTolerant LLM 文案解析: 兼容 markdown 包裹与多余字段; positive 缺失判无效。
+func TestParsePolishTolerant(t *testing.T) {
+	pos, reason, ok := parsePolish("```json\n{\"positive\":\"ink wash landscape, misty peaks\",\"junk\":123,\"reason\":\"测试\"}\n```")
+	if !ok || pos == "" || reason != "测试" {
+		t.Fatalf("polish parse failed: %q %q %v", pos, reason, ok)
 	}
-	if resp.Source != "llm" || resp.Positive == "" {
-		t.Fatalf("resp = %+v", resp)
+	if _, _, ok := parsePolish(`{"reason":"no positive"}`); ok {
+		t.Fatal("missing positive must fail")
 	}
-	if resp.Width != 1920 || resp.Height != 1080 {
-		t.Fatalf("size = %dx%d", resp.Width, resp.Height)
-	}
-	if resp.Seed != 42 {
-		t.Fatalf("seed = %d", resp.Seed)
-	}
-	if resp.Combo["style"] != "ink" {
-		t.Fatalf("combo = %v", resp.Combo)
-	}
-	if _, ok := resp.Combo["junk"]; ok {
-		t.Fatalf("illegal combo key kept: %v", resp.Combo)
+	if _, _, ok := parsePolish("not json at all"); ok {
+		t.Fatal("non-json must fail")
 	}
 }
 
@@ -253,7 +229,7 @@ func TestFullClientLifecycle(t *testing.T) {
 		t.Fatalf("health = %+v", health)
 	}
 
-	// prompts/next: LLM 输出经校验(非法 workflow 回退, 尺寸 clamp 到 64 倍数, 非法维值剔除)
+	// prompts/next: 组合由本地引擎按画像确定(ink), LLM 仅润色文案; 尺寸/工作流由本地决定
 	resp, raw = ts.do(t, "POST", "/api/v1/prompts/next", token, map[string]any{
 		"profile_version": 1,
 		"profile":         map[string]float64{"style/ink": 0.9},
@@ -277,16 +253,20 @@ func TestFullClientLifecycle(t *testing.T) {
 		t.Fatalf("source = %s", nresp.Source)
 	}
 	if nresp.WorkflowID != "wf-base" {
-		t.Fatalf("workflow should fallback to whitelist default, got %s", nresp.WorkflowID)
+		t.Fatalf("workflow should be local default, got %s", nresp.WorkflowID)
 	}
 	if nresp.Width%8 != 0 || nresp.Height%8 != 0 {
 		t.Fatalf("size not multiple of 8: %dx%d", nresp.Width, nresp.Height)
 	}
-	if _, ok := nresp.Combo["junk"]; ok {
-		t.Fatalf("illegal combo key kept: %v", nresp.Combo)
+	// 组合必须严格跟随画像: style/ink=0.9 是唯一高权值, 采样必须命中 ink, 不得被 LLM 改写
+	if nresp.Combo["style"] != "ink" {
+		t.Fatalf("combo style must follow profile, got %v", nresp.Combo)
 	}
-	if nresp.Combo["style"] != "realism" {
-		t.Fatalf("combo mismatch: %v", nresp.Combo)
+	if nresp.Seed == 0 {
+		t.Fatal("seed should be set by local engine")
+	}
+	if !strings.Contains(nresp.Positive, "ink wash landscape") {
+		t.Fatalf("positive should be LLM polishing output: %s", nresp.Positive)
 	}
 
 	// signals 上报 + 漂移摘要

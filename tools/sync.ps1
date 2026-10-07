@@ -27,10 +27,13 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  GitHub done (direct)" -ForegroundColor Green
 } else {
     Write-Host "  direct push failed, falling back to frp proxy..." -ForegroundColor Yellow
-    # Pick frpc.exe whose directory also contains frpc.toml.
+    # Pick frpc.exe whose frpc.toml listens on :8877 (the Singapore config).
     # Path comes from the filesystem (not hardcoded) to stay ASCII-safe.
     $frpc = Get-ChildItem "e:\X1-fwt" -Recurse -Filter "frpc.exe" -ErrorAction SilentlyContinue |
-        Where-Object { Test-Path (Join-Path $_.DirectoryName "frpc.toml") } |
+        Where-Object {
+            $toml = Join-Path $_.DirectoryName "frpc.toml"
+            (Test-Path $toml) -and (Select-String -Path $toml -Pattern "8877" -Quiet)
+        } |
         Select-Object -First 1
     if ($frpc) {
         $frpDir = $frpc.DirectoryName

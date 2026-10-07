@@ -234,13 +234,11 @@ func Infer(combos []Combo, choices map[string]Choice, prev *config.Profile) *con
 				w = prev.Get(d.ID, v.ID)*0.35 + w*0.65
 			}
 			next.Set(d.ID, v.ID, w)
-			// 明显负面: 新证据下净负面且出现至少 1 次
+			// 明显负面: 新证据下净负面且出现至少 1 次; 避让词用该值自身的描述。
+			// 不可用 v.Negative —— 负向词语义相反, 会污染避让清单(例如"不喜欢二次元"
+			// 曾被错误转译成"避开照片写实"); 明显负面的值已由采样层(LowCut)保证不再采出。
 			if st.neg > st.pos && st.neg > 0 {
-				if f := v.Negative; f != "" {
-					next.Disliked = append(next.Disliked, f)
-				} else {
-					next.Disliked = append(next.Disliked, v.Prompt)
-				}
+				next.Disliked = append(next.Disliked, v.Prompt)
 			}
 		}
 	}
