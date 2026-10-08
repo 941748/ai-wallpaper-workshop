@@ -597,3 +597,69 @@ func TestProbePoolRetriesFailed(t *testing.T) {
 		t.Fatalf("失败探针任务应重新排队, got %+v", j2)
 	}
 }
+
+// ---------- 客户端自更新 ----------
+
+func TestClientLatestURLOverride(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	manifestPath := ts.data + "/releases/manifest.json"
+
+	// 含 url 覆盖(Gitee 直链): 应原样返回
+	override := "https://gitee.com/x/y/releases/download/v1.0.2/AIWallpaper.exe"
+	body := `{"version":"1.0.2","file":"AIWallpaper-1.0.2.exe","sha256":"aa","size":7,"url":"` + override + `"}`
+	if err := os.WriteFile(manifestPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := latestData(t, ts, "1.0.1")
+	if got.URL != override {
+		t.Fatalf("url 覆盖未生效: got %q, want %q", got.URL, override)
+	}
+	if got.Version != "1.0.2" || got.Size != 7 {
+		t.Fatalf("元数据异常: %+v", got)
+	}
+
+	// 缺省(无 url 字段): 回退为本站 /releases/ 拼装
+	body = `{"version":"1.0.2","file":"AIWallpaper-1.0.2.exe","sha256":"aa","size":7}`
+	if err := os.WriteFile(manifestPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got = latestData(t, ts, "1.0.1")
+	if !strings.HasSuffix(got.URL, "/releases/AIWallpaper-1.0.2.exe") || strings.Contains(got.URL, "gitee.com") {
+		t.Fatalf("缺省下载地址异常: %q", got.URL)
+	}
+
+	// 同版本: 无更新(不应下发下载地址)
+	got = latestData(t, ts, "1.0.2")
+	if got.URL != "" || got.Version != "1.0.2" {
+		t.Fatalf("同版本不应返回下载地址: %+v", got)
+	}
+}
+
+type latestResp struct {
+	Version string `json:"version"`
+	URL     string `json:"url"`
+	SHA256  string `json:"sha256"`
+	Size    int64  `json:"size"`
+	Notes   string `json:"notes"`
+}
+
+// latestData 请求 /api/v1/client/latest 并解包 data 字段。
+func latestData(t *testing.T, ts *testServer, version string) latestResp {
+	t.Helper()
+	resp, err := http.Get(ts.srv.URL + "/api/v1/client/latest?version=" + version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		Success bool       `json:"success"`
+		Data    latestResp `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Success {
+		t.Fatalf("接口未成功: %+v", out)
+	}
+	return out.Data
+}

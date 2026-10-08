@@ -517,6 +517,7 @@ func (a *API) handleClientLatest(w http.ResponseWriter, r *http.Request) {
 		SHA256  string `json:"sha256"`
 		Size    int64  `json:"size"`
 		Notes   string `json:"notes"`
+		URL     string `json:"url"` // 可选: 覆盖下载地址(如 Gitee 直链)
 	}
 	if err := json.Unmarshal(raw, &m); err != nil || m.Version == "" || m.File == "" {
 		writeOK(w, map[string]any{"version": current, "notes": ""})
@@ -536,9 +537,14 @@ func (a *API) handleClientLatest(w http.ResponseWriter, r *http.Request) {
 	if os.Getenv("AW_FORCE_HTTPS") == "1" {
 		scheme = "https"
 	}
+	dlURL := fmt.Sprintf("%s://%s/releases/%s", scheme, r.Host, m.File)
+	if m.URL != "" {
+		// 下载地址覆盖(如 Gitee 直链): 所有客户端(含旧版)立即改从该地址下载
+		dlURL = m.URL
+	}
 	writeOK(w, map[string]any{
 		"version": m.Version,
-		"url":     fmt.Sprintf("%s://%s/releases/%s", scheme, r.Host, m.File),
+		"url":     dlURL,
 		"sha256":  m.SHA256, "size": m.Size, "notes": m.Notes,
 	})
 }
