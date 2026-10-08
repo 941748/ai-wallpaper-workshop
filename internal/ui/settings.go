@@ -107,8 +107,8 @@ func (s *settings) build() error {
 	}
 	s.mw = mw
 	mw.SetTitle(config.AppNameCN + " — 设置")
-	// 标题栏/任务栏图标: 从 exe 资源加载(rsrc 嵌入的 RT_GROUP_ICON id=1)
-	if icon, err := walk.NewIconFromResourceId(1); err == nil {
+	// 标题栏/任务栏图标: 从 exe 资源加载(rsrc 嵌入的 RT_GROUP_ICON id=2; manifest 占用 id=1)
+	if icon, err := walk.NewIconFromResourceId(2); err == nil {
 		_ = mw.SetIcon(icon)
 	}
 	mw.SetBackground(brushPageBg)
