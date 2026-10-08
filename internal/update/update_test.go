@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -37,6 +38,21 @@ func mockCloud(t *testing.T, meta func(base string) map[string]any, payload []by
 func sumHex(b []byte) string {
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])
+}
+
+// nextVersion 返回比 CurrentVersion 更高一档的版本号(末段+1), 供"应发现新版本"场景使用;
+// 避免硬编码发版号, 发版递增后测试自动适应。
+func nextVersion() string {
+	parts := strings.Split(CurrentVersion, ".")
+	if len(parts) == 0 {
+		return CurrentVersion + ".1"
+	}
+	n, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return CurrentVersion + ".1"
+	}
+	parts[len(parts)-1] = strconv.Itoa(n + 1)
+	return strings.Join(parts, ".")
 }
 
 func stagedPath(dir string) string { return filepath.Join(dir, "bin", "wallpaper.new.exe") }
@@ -97,7 +113,7 @@ func TestCheckNoUpdateForSameOrOlder(t *testing.T) {
 func TestCheckRejectsBadSHA(t *testing.T) {
 	payload := []byte("payload-v2")
 	srv := mockCloud(t, func(base string) map[string]any {
-		return map[string]any{"version": "1.0.2", "url": base + "/releases/w.exe",
+		return map[string]any{"version": nextVersion(), "url": base + "/releases/w.exe",
 			"sha256": strings.Repeat("ab", 32), "size": int64(len(payload))}
 	}, payload)
 	dir := t.TempDir()
@@ -114,7 +130,7 @@ func TestCheckRejectsBadSHA(t *testing.T) {
 func TestCheckRejectsSizeMismatch(t *testing.T) {
 	payload := []byte("payload-v2")
 	srv := mockCloud(t, func(base string) map[string]any {
-		return map[string]any{"version": "1.0.2", "url": base + "/releases/w.exe",
+		return map[string]any{"version": nextVersion(), "url": base + "/releases/w.exe",
 			"sha256": sumHex(payload), "size": int64(len(payload) + 10)}
 	}, payload)
 	dir := t.TempDir()
@@ -140,7 +156,7 @@ func TestCheckStagesNewVersion(t *testing.T) {
 
 	payload := []byte("wallpaper-v2-binary-content")
 	srv := mockCloud(t, func(base string) map[string]any {
-		return map[string]any{"version": "1.0.2", "url": base + "/releases/wallpaper-1.0.2.exe",
+		return map[string]any{"version": nextVersion(), "url": base + "/releases/wallpaper-" + nextVersion() + ".exe",
 			"sha256": sumHex(payload), "size": int64(len(payload))}
 	}, payload)
 	dir := t.TempDir()
