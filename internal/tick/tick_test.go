@@ -17,6 +17,8 @@ import (
 
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
+	"wallpaper/internal/policy"
+	"wallpaper/internal/pool"
 	"wallpaper/internal/signals"
 	"wallpaper/internal/taxonomy"
 )
@@ -99,7 +101,7 @@ func (m *mockCloud) handler() http.Handler {
 		defer m.mu.Unlock()
 		if r.Method == http.MethodPost {
 			m.pregenSubmits++
-			writeEnv(w, map[string]any{"queued": true})
+			writeEnv(w, map[string]any{"queued": true, "job_id": "pg-test"})
 			return
 		}
 		m.pregenFetches++
@@ -112,6 +114,13 @@ func (m *mockCloud) handler() http.Handler {
 	})
 	mux.HandleFunc("/api/v1/pregen/image", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(m.pngData)
+	})
+	mux.HandleFunc("/api/v1/policy", func(w http.ResponseWriter, r *http.Request) {
+		writeEnv(w, map[string]any{
+			"policy_version": 1,
+			"active_blocks": [][]string{{"09:00", "12:00"}, {"14:00", "18:00"}, {"20:00", "24:00"}},
+			"pool_target": 3, "pause_options_hours": []int{8, 24, 48}, "max_pause_hours": 48,
+		})
 	})
 	mux.HandleFunc("/api/v1/client/latest", func(w http.ResponseWriter, r *http.Request) {
 		writeEnv(w, map[string]any{"version": "0.1.0"})
@@ -150,7 +159,7 @@ func (te *testEnv) env(cloudURL string, m *mockCloud) Env {
 		Log: func(format string, args ...any) { tLog(format, args...) },
 		Now: func() time.Time { return te.now },
 		Screen: func() (int, int) { return 1920, 1080 },
-		Quiet:  func(*config.Config, time.Time) bool { return false },
+		Quiet:  func() bool { return false },
 		SetWP: func(path string) error {
 			te.wpPath = path
 			return nil
@@ -183,6 +192,7 @@ func setupClient(t *testing.T, cloudURL string, te *testEnv) {
 	cfg.Token = "tok"
 	cfg.CloudURL = cloudURL
 	cfg.ProfileVer = 1
+	cfg.TaskTickHours = 1 // 视为已修正, 测试中不触碰系统计划任务
 	cfg.PhaseMinutes = 17
 	cfg.Satisfaction.IntervalDays = 3
 	cfg.Satisfaction.NextAskAt = te.now.Add(1 * time.Hour).Format(time.RFC3339) // 未到期
@@ -204,7 +214,7 @@ func TestRunOnceCloudHappyPath(t *testing.T) {
 	m.srv = httptest.NewServer(m.handler())
 	defer m.srv.Close()
 
-	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 12, 0, 0, 0, time.Local)}
+	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)}
 	setupClient(t, m.srv.URL, te)
 	if err := RunOnce(context.Background(), te.env(m.srv.URL, m)); err != nil {
 		t.Fatal(err)
@@ -246,27 +256,46 @@ func TestRunOnceCloudHappyPath(t *testing.T) {
 	}
 }
 
-func TestRunOncePregenHit(t *testing.T) {
+func TestRunOncePoolFetchDelivers(t *testing.T) {
+	// 在途补池单 + 云端已就绪 → 本轮提货入池; 次轮换图走池, 池空后补新单
 	m := &mockCloud{pngData: gradientPNG(t, 1344, 768), pregenReady: true}
 	m.srv = httptest.NewServer(m.handler())
 	defer m.srv.Close()
 
-	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 12, 0, 0, 0, time.Local)}
+	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)}
 	setupClient(t, m.srv.URL, te)
+	if err := pool.SavePending(te.dir, pool.Pending{JobID: "pg-x", ProfileVersion: 1, Since: te.now.Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
 	if err := RunOnce(context.Background(), te.env(m.srv.URL, m)); err != nil {
 		t.Fatal(err)
 	}
 	if te.wpPath == "" {
 		t.Fatal("wallpaper not set")
 	}
-	if m.nextCalls != 0 {
-		t.Fatalf("pregen hit should skip LLM, nextCalls=%d", m.nextCalls)
-	}
-	if len(m.prompts) != 1 || m.prompts[0].Source != "pregen" {
-		t.Fatalf("prompt report wrong: %+v", m.prompts)
-	}
 	if m.pregenFetches != 1 {
 		t.Fatalf("pregenFetches=%d", m.pregenFetches)
+	}
+	if pool.Count(te.dir) != 1 {
+		t.Fatalf("pool count=%d want 1", pool.Count(te.dir))
+	}
+	if pool.LoadPending(te.dir) != nil {
+		t.Fatal("pending should be cleared after delivery")
+	}
+
+	// 第二轮: 池有图 → 换图走池(推进到 15:00 活跃时段); 池空后补池下新单
+	te.now = te.now.Add(5 * time.Hour)
+	if err := RunOnce(context.Background(), te.env(m.srv.URL, m)); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.prompts[len(m.prompts)-1].Source; got != "pool" {
+		t.Fatalf("second round source=%s want pool", got)
+	}
+	if m.pregenSubmits != 1 {
+		t.Fatalf("pregenSubmits=%d want 1", m.pregenSubmits)
+	}
+	if pool.Count(te.dir) != 0 {
+		t.Fatalf("pool should be consumed, count=%d", pool.Count(te.dir))
 	}
 }
 
@@ -275,7 +304,7 @@ func TestRunOnceLocalFallbackWhenLLMFails(t *testing.T) {
 	m.srv = httptest.NewServer(m.handler())
 	defer m.srv.Close()
 
-	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 12, 0, 0, 0, time.Local)}
+	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)}
 	setupClient(t, m.srv.URL, te)
 	if err := RunOnce(context.Background(), te.env(m.srv.URL, m)); err != nil {
 		t.Fatal(err)
@@ -293,7 +322,7 @@ func TestRunOnceStyleShakeOnSatisfaction(t *testing.T) {
 	m.srv = httptest.NewServer(m.handler())
 	defer m.srv.Close()
 
-	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 12, 0, 0, 0, time.Local)}
+	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)}
 	setupClient(t, m.srv.URL, te)
 	te.askChoice = ChoiceStyle
 	// 回访到期
@@ -339,7 +368,7 @@ func TestRunOnceSatisfiedGrowsInterval(t *testing.T) {
 	m.srv = httptest.NewServer(m.handler())
 	defer m.srv.Close()
 
-	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 12, 0, 0, 0, time.Local)}
+	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)}
 	setupClient(t, m.srv.URL, te)
 	te.askChoice = ChoiceSatisfied
 	cfg, _ := config.Load(te.dir)
@@ -360,13 +389,67 @@ func TestRunOnceSatisfiedGrowsInterval(t *testing.T) {
 
 func TestRunOnceCloudDownKeepsWallpaper(t *testing.T) {
 	// 指向关闭端口: 连接立即失败
-	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 12, 0, 0, 0, time.Local)}
+	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)}
 	setupClient(t, "http://127.0.0.1:1", te)
 	if err := RunOnce(context.Background(), te.env("http://127.0.0.1:1", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if te.wpPath != "" {
 		t.Fatal("cloud down should keep old wallpaper")
+	}
+}
+
+// TestRunOnceCloudDownUsesPool 云端不可达: 本地备用池兜底换图(断网可用核心场景)。
+func TestRunOnceCloudDownUsesPool(t *testing.T) {
+	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)}
+	setupClient(t, "http://127.0.0.1:1", te)
+	if err := pool.Add(te.dir, pool.Entry{ProfileVersion: 1, Positive: "p", Seed: 1, CreatedAt: te.now.Format(time.RFC3339)}, gradientPNG(t, 1344, 768)); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunOnce(context.Background(), te.env("http://127.0.0.1:1", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if te.wpPath == "" {
+		t.Fatal("pool should be used when cloud is down")
+	}
+	if pool.Count(te.dir) != 0 {
+		t.Fatalf("pool should be consumed, count=%d", pool.Count(te.dir))
+	}
+}
+
+// TestChangeWindow 换图窗口判定: 开关/暂停/时段/锁屏/频率节流。
+func TestChangeWindow(t *testing.T) {
+	cfg := config.Default()
+	env := Env{Quiet: func() bool { return false }}
+	pol := policy.Default()
+	at := func(h, m int) time.Time { return time.Date(2026, 9, 15, h, m, 0, 0, time.Local) }
+	if ok, _ := changeWindow(env, cfg, pol, at(10, 0), false); !ok {
+		t.Fatal("active window should allow change")
+	}
+	if ok, why := changeWindow(env, cfg, pol, at(13, 0), false); ok || why != "非活跃时段" {
+		t.Fatalf("inactive got ok=%v why=%s", ok, why)
+	}
+	cfgOff := config.Default()
+	cfgOff.AutoChange = false
+	if ok, why := changeWindow(env, cfgOff, pol, at(10, 0), false); ok || why != "换图开关已关闭" {
+		t.Fatalf("auto off got ok=%v why=%s", ok, why)
+	}
+	if ok, why := changeWindow(env, cfg, pol, at(10, 0), true); ok || why != "用户暂停中" {
+		t.Fatalf("paused got ok=%v why=%s", ok, why)
+	}
+	quietEnv := Env{Quiet: func() bool { return true }}
+	if ok, why := changeWindow(quietEnv, cfg, pol, at(10, 0), false); ok || why != "锁屏/全屏" {
+		t.Fatalf("quiet got ok=%v why=%s", ok, why)
+	}
+	// 频率节流(2 小时频率: 1 小时差不够, 2 小时差放行)
+	cfg3 := config.Default()
+	cfg3.IntervalHours = 2
+	cfg3.LastChangeAt = at(9, 0).Format(time.RFC3339)
+	if ok, why := changeWindow(env, cfg3, pol, at(10, 0), false); ok || why != "换图频率未到" {
+		t.Fatalf("throttle got ok=%v why=%s", ok, why)
+	}
+	if ok, _ := changeWindow(env, cfg3, pol, at(11, 0), false); !ok {
+		t.Fatal("2h gap should pass throttle")
 	}
 }
 

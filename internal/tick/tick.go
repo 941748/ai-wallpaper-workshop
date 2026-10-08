@@ -1,8 +1,7 @@
 // Package tick 实现 --tick 单次运行的全流程编排:
-// 文件锁 → 读配置 → 安静检查 → 满意度回访 → 云端健康/配额 → 取成品(预生成优先)
-// → 出图(云端 LLM 定提示词+尺寸+工作流, 不可达回退本地引擎) → 适配 → 换壁纸
-// → 预约下一轮预生成 → 静默自更新 → 上报(离线补传) → 留档清理 → 退出。
-// 全程无窗口, 进程秒级~分钟级即退, 无常驻。
+// 文件锁 → 读配置 → 拉策略 → 节律判定 → 换图(本地备用池优先, 池空实时出图)
+// → 补池(静默也执行) → 静默自更新 → 上报(离线补传) → 留档清理 → 退出。
+// "静默"= 不换图但后台维护照常(补池/自更新/策略同步); 全程无窗口, 进程秒级~分钟级即退。
 package tick
 
 import (
@@ -18,7 +17,10 @@ import (
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
 	"wallpaper/internal/desktop"
+	"wallpaper/internal/policy"
+	"wallpaper/internal/pool"
 	"wallpaper/internal/prompt"
+	"wallpaper/internal/scheduler"
 	"wallpaper/internal/signals"
 	"wallpaper/internal/store"
 	"wallpaper/internal/update"
@@ -48,7 +50,7 @@ type Env struct {
 	Log        func(format string, args ...any)
 	Now        func() time.Time
 	Screen     func() (int, int)
-	Quiet      func(cfg *config.Config, now time.Time) bool
+	Quiet      func() bool // 锁屏/全屏等"不打扰"判定(换图节律由策略控制)
 	SetWP      func(path string) error
 	Ask        func(AskRequest) AskChoice // nil = 不弹(顺延处理)
 	ExePath    string
@@ -109,13 +111,27 @@ func RunOnce(ctx context.Context, env Env) error {
 	}
 
 	now := env.Now()
-	if env.Quiet(cfg, now) {
-		st.Log("tick: 安静检测命中(锁屏/静默时段/全屏), 本轮跳过")
-		return nil
-	}
 
-	// ---------- 满意度回访 ----------
-	forceShake := handleSatisfaction(env, cfg, st, now)
+	// 暂停到期自动恢复(防"关了忘了再开")
+	if cfg.PauseUntil != "" {
+		if t, err := time.Parse(time.RFC3339, cfg.PauseUntil); err == nil && now.After(t) {
+			cfg.PauseUntil = ""
+			if err := cfg.Save(env.Dir); err != nil {
+				st.Log("tick: 暂停状态保存失败: %v", err)
+			}
+			st.Log("tick: 暂停到期, 已自动恢复换图")
+		}
+	}
+	paused := cfg.PauseUntil != ""
+
+	// 计划任务节律修正(固定每小时; 补池与换图节流均由 tick 内部完成)
+	if cfg.TaskTickHours != taskTickHours {
+		if err := scheduler.Register(env.ExePath, taskTickHours, cfg.PhaseMinutes); err == nil {
+			cfg.TaskTickHours = taskTickHours
+			_ = cfg.Save(env.Dir)
+			st.Log("tick: 计划任务节律已修正为每 %d 小时", taskTickHours)
+		}
+	}
 
 	profile, err := config.LoadProfile(env.Dir)
 	if err != nil {
@@ -124,7 +140,7 @@ func RunOnce(ctx context.Context, env Env) error {
 	}
 	history, _ := st.LoadHistory()
 
-	// ---------- 云端 / 直连 ----------
+	// ---------- 云端 / 直连(不可达也不终止: 本地备用池仍可换图) ----------
 	var (
 		cc      *cloud.Client
 		cloudOK bool
@@ -136,22 +152,45 @@ func RunOnce(ctx context.Context, env Env) error {
 	} else {
 		device, _ := os.Hostname()
 		cc = cloud.New(cfg.CloudURL, cfg.UserID, cfg.Token, device)
-		h, err := cc.Health(ctx)
-		if err != nil {
-			st.Log("tick: 云端不可达(%v), 保留当前壁纸, 下轮再试", err)
-			env.Log("云端不可达: %v", err)
-			return nil
+		if h, err := cc.Health(ctx); err != nil {
+			st.Log("tick: 云端不可达(%v), 仅使用本地备用池", err)
+		} else if !h.QuotaOK {
+			st.Log("tick: 云端配额用尽, 仅使用本地备用池")
+		} else {
+			cloudOK = true
+			cc.FlushQueue(ctx, env.Dir) // 尽力补传历史离线记录
+			be = &cloud.Backend{C: cc}
 		}
-		if !h.QuotaOK {
-			st.Log("tick: 云端配额用尽, 本轮跳过")
-			return nil
+	}
+
+	// ---------- 运营策略同步(失败沿用本地缓存/内置默认) ----------
+	pol := policy.Load(env.Dir)
+	if cloudOK {
+		if p, err := cc.Policy(ctx); err != nil {
+			st.Log("tick: 策略同步失败(%v), 沿用缓存", err)
+		} else if p != nil {
+			pol = p.Normalize()
+			if err := policy.Save(env.Dir, pol); err != nil {
+				st.Log("tick: 策略缓存写入失败: %v", err)
+			}
 		}
-		cloudOK = true
-		cc.FlushQueue(ctx, env.Dir) // 尽力补传历史离线记录
-		be = &cloud.Backend{C: cc}
 	}
 
 	sw, sh := env.Screen()
+
+	// ---------- 节律判定: 本轮是否进入换图窗口 ----------
+	changeOK, skipReason := changeWindow(env, cfg, pol, now, paused)
+	if !changeOK {
+		st.Log("tick: 本轮不换图(%s), 仅后台维护", skipReason)
+	}
+
+	// ---------- 满意度回访(仅换图窗口内; 关闭回访开关则整体跳过) ----------
+	forceShake := false
+	if changeOK {
+		forceShake = handleSatisfaction(env, cfg, st, now)
+	}
+
+	// 信号快照须在回访之后加载(回访可能写入新信号, 本轮一并上报)
 	pending, _ := signals.Load(env.Dir)
 
 	// ---------- 取本轮成品 ----------
@@ -166,23 +205,21 @@ func RunOnce(ctx context.Context, env Env) error {
 	)
 	genW, genH = chooseGenSize(sw, sh)
 
-	// 预生成优先(换风格轮除外)
-	if cloudOK && !forceShake {
-		if p, err := cc.PregenFetch(ctx, cfg.ProfileVer); err == nil && p.Ready {
-			if img, err := cc.PregenImage(ctx); err == nil && desktop.Inspect(img) == nil {
-				imgData = img
-				source = "pregen"
-				wfID = p.WorkflowID
-				spec = prompt.Spec{Combo: p.Combo, Positive: p.Positive, Negative: p.Negative, Seed: p.Seed}
-				if p.Width > 0 {
-					genW, genH = p.Width, p.Height
-				}
-				st.Log("tick: 命中云端预生成图")
+	// 本地备用池优先(换风格轮除外): 已生成未使用, 断网可换
+	if changeOK && !forceShake {
+		if e, img, err := pool.Take(env.Dir); err == nil && e != nil && desktop.Inspect(img) == nil {
+			imgData = img
+			source = "pool"
+			wfID = e.WorkflowID
+			spec = prompt.Spec{Combo: e.Combo, Positive: e.Positive, Negative: e.Negative, Seed: e.Seed}
+			if e.Width > 0 {
+				genW, genH = e.Width, e.Height
 			}
+			st.Log("tick: 使用本地备用池(池余 %d)", pool.Count(env.Dir))
 		}
 	}
 
-	if imgData == nil {
+	if changeOK && imgData == nil && be != nil {
 		// 提示词: 云端 LLM 优先, 失败回退本地引擎
 		if cloudOK {
 			nr, err := cc.NextPrompt(ctx, cloud.NextReq{
@@ -231,51 +268,51 @@ func RunOnce(ctx context.Context, env Env) error {
 		if err != nil {
 			st.Log("tick: 出图失败: %v, 保留当前壁纸", err)
 			reportPrompt(env, cc, cfg, spec, genW, genH, wfID, source, duration, false)
-			return nil
+		} else {
+			imgData = img
 		}
-		imgData = img
 	}
 
 	// ---------- 适配 + 换壁纸 ----------
-	final, err := desktop.FitToScreen(imgData, sw, sh)
-	if err != nil {
-		st.Log("tick: 适配失败: %v, 保留当前壁纸", err)
-		return nil
-	}
-	path, err := st.SaveWallpaper(final, now)
-	if err != nil {
-		st.Log("tick: 留档失败: %v", err)
-		return nil
-	}
-	if err := env.SetWP(path); err != nil {
-		st.Log("tick: 换壁纸失败: %v", err)
-		return nil
-	}
-	st.SetCurrent(path)
-
-	// ---------- 预约下一轮预生成 ----------
-	if cloudOK {
-		if err := cc.PregenSubmit(ctx, cloud.PregenReq{
-			ProfileVersion: cfg.ProfileVer,
-			Profile:        profile.Weights,
-			Disliked:       profile.Disliked,
-			CustomKeywords: profile.CustomKeywords,
-			RecentRounds:   recentRounds(history, 10),
-			ScreenW:        sw,
-			ScreenH:        sh,
-			DisableContext: cfg.DisableContext,
-		}); err != nil {
-			st.Log("tick: 预生成下单失败(忽略, 下轮现出): %v", err)
+	changed := false
+	if imgData != nil {
+		if final, err := desktop.FitToScreen(imgData, sw, sh); err != nil {
+			st.Log("tick: 适配失败: %v, 保留当前壁纸", err)
+		} else if path, err := st.SaveWallpaper(final, now); err != nil {
+			st.Log("tick: 留档失败: %v", err)
+		} else if err := env.SetWP(path); err != nil {
+			st.Log("tick: 换壁纸失败: %v", err)
+		} else {
+			st.SetCurrent(path)
+			changed = true
+			// 记录换图锚点(换图频率节流依据)
+			cfg.LastChangeAt = now.Format(time.RFC3339)
+			if err := cfg.Save(env.Dir); err != nil {
+				st.Log("tick: 换图时间记录失败: %v", err)
+			}
 		}
 	}
 
-	// ---------- 静默自更新 ----------
+	// ---------- 补池(静默也执行; 储备充足则延缓申请, 避免拥堵) ----------
+	if cloudOK {
+		replenishPool(ctx, env, st, cc, cfg, pol, profile, history, sw, sh)
+	}
+
+	// ---------- 静默自更新(不受换图节律影响) ----------
 	if cc != nil && env.SelfUpdate && env.ExePath != "" {
 		update.Check(ctx, cc, env.Dir, env.ExePath, func(f string, a ...any) { st.Log("update: "+f, a...) })
 	}
 
 	// ---------- 上报 + 历史 ----------
-	reportPrompt(env, cc, cfg, spec, genW, genH, wfID, source, duration, true)
+	if imgData != nil {
+		reportPrompt(env, cc, cfg, spec, genW, genH, wfID, source, duration, changed)
+		if changed {
+			_ = st.AppendHistory(prompt.HistoryEntry{
+				At: now, Combo: spec.Combo, Positive: spec.Positive,
+				Negative: spec.Negative, Seed: spec.Seed, Source: source,
+			})
+		}
+	}
 	if cc != nil && len(pending) > 0 {
 		if err := cc.ReportSignals(ctx, pending); err == nil {
 			_ = signals.Clear(env.Dir)
@@ -284,20 +321,19 @@ func RunOnce(ctx context.Context, env Env) error {
 		}
 	}
 
-	_ = st.AppendHistory(prompt.HistoryEntry{
-		At: now, Combo: spec.Combo, Positive: spec.Positive,
-		Negative: spec.Negative, Seed: spec.Seed, Source: source,
-	})
-
 	_ = st.CleanupWallpapers(store.KeepWallpapers)
-	st.Log("tick 完成: source=%s 屏幕=%dx%d 出图=%dx%d 耗时=%dms", source, sw, sh, genW, genH, duration)
+	st.Log("tick 完成: 换图=%v source=%s 池=%d/%d", changed, source, pool.Count(env.Dir), pol.PoolTarget)
 	return nil
 }
 
 // ---------- 满意度回访 ----------
 
 // handleSatisfaction 到期时弹回访小窗并应用选择; 返回是否"换个风格"轮。
+// 回访开关关闭时整体跳过(包括首次排期)。
 func handleSatisfaction(env Env, cfg *config.Config, st *store.Store, now time.Time) bool {
+	if !cfg.AskEnabled {
+		return false
+	}
 	due := cfg.Satisfaction.NextAskTime()
 	if due.IsZero() {
 		cfg.Satisfaction.ScheduleAsk(now, "") // 首次: 从现在起算 3 天
@@ -403,4 +439,105 @@ func recentRounds(history []prompt.HistoryEntry, n int) []cloud.RoundItem {
 // chooseGenSize 本地兜底出图尺寸: 固定 1920x1080(默认出图尺寸, 适配交给 FitToScreen)。
 func chooseGenSize(sw, sh int) (int, int) {
 	return 1920, 1080
+}
+
+// taskTickHours 计划任务理想节律(小时; 换图频率由 tick 内部节流完成)。
+const taskTickHours = 1
+
+// changeWindow 判定本轮是否进入换图窗口, 并给出跳过原因(日志用)。
+// 频率节流: 距上次成功换图不足 interval_hours 的 90% 时跳过(容忍计划任务抖动)。
+func changeWindow(env Env, cfg *config.Config, pol policy.Policy, now time.Time, paused bool) (bool, string) {
+	switch {
+	case !cfg.AutoChange:
+		return false, "换图开关已关闭"
+	case paused:
+		return false, "用户暂停中"
+	case !pol.InActive(now):
+		return false, "非活跃时段"
+	case env.Quiet():
+		return false, "锁屏/全屏"
+	}
+	if last, err := time.Parse(time.RFC3339, cfg.LastChangeAt); err == nil {
+		gap := time.Duration(cfg.IntervalHours) * time.Hour
+		if now.Sub(last) < gap*9/10 {
+			return false, "换图频率未到"
+		}
+	}
+	return true, ""
+}
+
+// replenishPool 补池: 本地备用池(含在途)不足目标时补货, 每轮最多 1 张(天然限流);
+// 静默期照常执行, 保证断网/出图拥挤时仍有成品可换; 储备充足则延缓申请避免拥堵。
+func replenishPool(ctx context.Context, env Env, st *store.Store, cc *cloud.Client, cfg *config.Config, pol policy.Policy, profile *config.Profile, history []prompt.HistoryEntry, sw, sh int) {
+	if n := pool.CleanVersion(env.Dir, cfg.ProfileVer); n > 0 {
+		st.Log("tick: 清理失效备用池 %d 张", n)
+	}
+	pend := pool.LoadPending(env.Dir)
+	if pend != nil && pend.ProfileVersion != cfg.ProfileVer {
+		pool.ClearPending(env.Dir)
+		pend = nil
+	}
+	if pend != nil {
+		if t, err := time.Parse(time.RFC3339, pend.Since); err == nil && env.Now().Sub(t) > 24*time.Hour {
+			pool.ClearPending(env.Dir)
+			pend = nil
+			st.Log("tick: 补池在途超时, 已放弃重试")
+		}
+	}
+	depth := pool.Count(env.Dir)
+	inFlight := 0
+	if pend != nil {
+		inFlight = 1
+	}
+	if depth+inFlight >= pol.PoolTarget {
+		return // 储备充足: 延缓出图申请
+	}
+	if pend == nil {
+		jobID, err := cc.PregenSubmit(ctx, cloud.PregenReq{
+			ProfileVersion: cfg.ProfileVer,
+			Profile:        profile.Weights,
+			Disliked:       profile.Disliked,
+			CustomKeywords: profile.CustomKeywords,
+			RecentRounds:   recentRounds(history, 10),
+			ScreenW:        sw,
+			ScreenH:        sh,
+			DisableContext: cfg.DisableContext,
+		})
+		if err != nil {
+			st.Log("tick: 补池下单失败: %v", err)
+			return
+		}
+		_ = pool.SavePending(env.Dir, pool.Pending{
+			JobID:          jobID,
+			ProfileVersion: cfg.ProfileVer,
+			Since:          env.Now().Format(time.RFC3339),
+		})
+		st.Log("tick: 补池下单(池 %d/%d)", depth, pol.PoolTarget)
+		return
+	}
+	// 在途: 查询就绪则提货入池
+	p, err := cc.PregenFetch(ctx, cfg.ProfileVer)
+	if err != nil || !p.Ready {
+		return
+	}
+	img, err := cc.PregenImage(ctx)
+	if err != nil || desktop.Inspect(img) != nil {
+		return // 下轮重试
+	}
+	if err := pool.Add(env.Dir, pool.Entry{
+		ProfileVersion: cfg.ProfileVer,
+		Positive:       p.Positive,
+		Negative:       p.Negative,
+		Combo:          p.Combo,
+		Seed:           p.Seed,
+		WorkflowID:     p.WorkflowID,
+		Width:          p.Width,
+		Height:         p.Height,
+		CreatedAt:      env.Now().Format(time.RFC3339),
+	}, img); err != nil {
+		st.Log("tick: 补池入池失败: %v", err)
+		return
+	}
+	pool.ClearPending(env.Dir)
+	st.Log("tick: 补池成功(池 %d/%d)", pool.Count(env.Dir), pol.PoolTarget)
 }

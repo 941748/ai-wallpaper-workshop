@@ -663,3 +663,42 @@ func latestData(t *testing.T, ts *testServer, version string) latestResp {
 	}
 	return out.Data
 }
+
+// ---------- 运营策略 ----------
+
+func TestPolicyEndpoint(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	// 未部署 policy.json: 返回内置默认且匿名可拉
+	resp, raw := ts.do(t, "GET", "/api/v1/policy", "", nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("policy status %d: %s", resp.StatusCode, raw)
+	}
+	var env struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Version      int         `json:"policy_version"`
+			ActiveBlocks [][2]string `json:"active_blocks"`
+			PoolTarget   int         `json:"pool_target"`
+			PauseOptions []int       `json:"pause_options_hours"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || !env.Success {
+		t.Fatalf("policy decode: %v %s", err, raw)
+	}
+	if env.Data.PoolTarget != 3 || len(env.Data.ActiveBlocks) != 3 || len(env.Data.PauseOptions) != 3 {
+		t.Fatalf("default policy unexpected: %+v", env.Data)
+	}
+	// 部署 policy.json: 改文件即生效(无需重启)
+	custom := `{"policy_version":5,"active_blocks":[["08:00","10:00"]],"pool_target":4,` +
+		`"pause_options_hours":[2,12],"max_pause_hours":12}`
+	if err := os.WriteFile(ts.data+"/policy.json", []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, raw = ts.do(t, "GET", "/api/v1/policy", "", nil)
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data.Version != 5 || env.Data.PoolTarget != 4 || len(env.Data.PauseOptions) != 2 {
+		t.Fatalf("custom policy not applied: %+v", env.Data)
+	}
+}

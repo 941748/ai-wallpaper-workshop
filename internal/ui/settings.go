@@ -16,6 +16,7 @@ import (
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
 	"wallpaper/internal/desktop"
+	"wallpaper/internal/policy"
 	"wallpaper/internal/probe"
 	"wallpaper/internal/scheduler"
 	"wallpaper/internal/signals"
@@ -56,9 +57,10 @@ type settings struct {
 	directRow   *walk.Composite
 	connLbl     *walk.Label
 	intervalCB  *walk.ComboBox
-	quietCheck  *walk.CheckBox
-	quietStart  *walk.LineEdit
-	quietEnd    *walk.LineEdit
+	autoCk      *walk.CheckBox
+	pauseCB     *walk.ComboBox
+	pauseLB     *walk.Label
+	askCk       *walk.CheckBox
 	taskLbl     *walk.Label
 
 	// 历史页
@@ -443,31 +445,40 @@ func (s *settings) buildServicePage(tab *walk.TabWidget) error {
 	})
 	s.connLbl, _ = walk.NewLabel(page)
 
-	// 换图间隔
+	// 自动换图(用户唯一控制项): 开=按节律换图; 关=暂停, 到期自动恢复防遗忘
 	row1, _ := walk.NewComposite(page)
 	_ = row1.SetLayout(walk.NewHBoxLayout())
+	s.autoCk, _ = walk.NewCheckBox(row1)
+	s.autoCk.SetText("自动换图")
+	s.autoCk.SetChecked(s.cfg.AutoChange)
 	lbl1, _ := walk.NewLabel(row1)
-	lbl1.SetText("换图间隔:")
+	lbl1.SetText("  换图频率:")
 	s.intervalCB, _ = walk.NewComboBox(row1)
 	_ = s.intervalCB.SetModel([]string{"1 小时", "2 小时", "3 小时", "4 小时", "6 小时", "8 小时", "12 小时"})
 	_ = s.intervalCB.SetCurrentIndex(intervalIndex(s.cfg.IntervalHours))
 
-	// 安静模式
 	row2, _ := walk.NewComposite(page)
 	_ = row2.SetLayout(walk.NewHBoxLayout())
-	s.quietCheck, _ = walk.NewCheckBox(row2)
-	s.quietCheck.SetText("安静模式(全屏/静默时段不打扰)")
-	s.quietCheck.SetChecked(s.cfg.QuietEnabled)
-	lbl2, _ := walk.NewLabel(row2)
-	lbl2.SetText("  静默时段:")
-	s.quietStart, _ = walk.NewLineEdit(row2)
-	s.quietStart.SetText(s.cfg.QuietStart)
-	_ = s.quietStart.SetMinMaxSize(walk.Size{Width: 64}, walk.Size{Width: 64})
-	toLbl, _ := walk.NewLabel(row2)
-	toLbl.SetText("—")
-	s.quietEnd, _ = walk.NewLineEdit(row2)
-	s.quietEnd.SetText(s.cfg.QuietEnd)
-	_ = s.quietEnd.SetMinMaxSize(walk.Size{Width: 64}, walk.Size{Width: 64})
+	pauseLbl, _ := walk.NewLabel(row2)
+	pauseLbl.SetText("暂停时长(关闭自动换图时生效):")
+	s.pauseCB, _ = walk.NewComboBox(row2)
+	opts := s.pauseOptions()
+	labels := make([]string, len(opts))
+	for i, h := range opts {
+		labels[i] = policy.PauseLabel(h)
+	}
+	_ = s.pauseCB.SetModel(labels)
+	_ = s.pauseCB.SetCurrentIndex(s.pauseIndex(s.cfg.PauseHours))
+	s.pauseLB, _ = walk.NewLabel(row2)
+
+	askRow2, _ := walk.NewComposite(page)
+	_ = askRow2.SetLayout(walk.NewHBoxLayout())
+	s.askCk, _ = walk.NewCheckBox(askRow2)
+	s.askCk.SetText("接收偏好回访(偶尔确认是否合你心意, 帮我们更懂你)")
+	s.askCk.SetChecked(s.cfg.AskEnabled)
+
+	s.autoCk.CheckedChanged().Attach(func() { s.updatePauseHint() })
+	s.updatePauseHint()
 
 	// 任务状态
 	taskRow, _ := walk.NewComposite(page)
@@ -518,6 +529,52 @@ func intervalValue(idx int) int {
 	return values[idx]
 }
 
+// pauseOptions 暂停时长选项(由运营策略下发, 默认 8 小时/1 天/2 天)。
+func (s *settings) pauseOptions() []int {
+	return policy.Load(s.dir).PauseOptions
+}
+
+// pauseIndex 匹配暂停时长对应的下拉索引; 未设置过时默认"1 天"。
+func (s *settings) pauseIndex(h int) int {
+	opts := s.pauseOptions()
+	for i, v := range opts {
+		if v == h {
+			return i
+		}
+	}
+	for i, v := range opts {
+		if v == 24 {
+			return i
+		}
+	}
+	return 0
+}
+
+// pauseHours 当前选中的暂停时长(小时)。
+func (s *settings) pauseHours() int {
+	opts := s.pauseOptions()
+	i := s.pauseCB.CurrentIndex()
+	if i < 0 || i >= len(opts) {
+		i = 0
+	}
+	return opts[i]
+}
+
+// updatePauseHint 刷新暂停控件状态与提示(关闭自动换图时才可选暂停时长)。
+func (s *settings) updatePauseHint() {
+	on := s.autoCk.Checked()
+	s.pauseCB.SetEnabled(!on)
+	if on {
+		s.pauseLB.SetText("")
+		return
+	}
+	if t, err := time.Parse(time.RFC3339, s.cfg.PauseUntil); err == nil && time.Now().Before(t) {
+		s.pauseLB.SetText(fmt.Sprintf("已暂停, 将于 %s 自动恢复", t.Format("01-02 15:04")))
+		return
+	}
+	s.pauseLB.SetText("保存后按所选时长暂停, 到期自动恢复")
+}
+
 func (s *settings) collectServiceConfig() *config.Config {
 	c := *s.cfg
 	c.CloudURL = strings.TrimSpace(s.urlEdit.Text())
@@ -525,9 +582,16 @@ func (s *settings) collectServiceConfig() *config.Config {
 	c.DirectURL = strings.TrimSpace(s.directURL.Text())
 	c.DirectToken = strings.TrimSpace(s.directTok.Text())
 	c.IntervalHours = intervalValue(s.intervalCB.CurrentIndex())
-	c.QuietEnabled = s.quietCheck.Checked()
-	c.QuietStart = strings.TrimSpace(s.quietStart.Text())
-	c.QuietEnd = strings.TrimSpace(s.quietEnd.Text())
+	c.AskEnabled = s.askCk.Checked()
+	// 自动换图开关与暂停状态: 关闭时按所选时长暂停, 到期自动恢复(防遗忘)
+	c.AutoChange = s.autoCk.Checked()
+	if c.AutoChange {
+		c.PauseUntil = ""
+		c.PauseHours = 0
+	} else {
+		c.PauseHours = s.pauseHours()
+		c.PauseUntil = time.Now().Add(time.Duration(c.PauseHours) * time.Hour).Format(time.RFC3339)
+	}
 	return &c
 }
 
@@ -547,9 +611,12 @@ func (s *settings) saveService() {
 				showError(s.mw, "复制程序失败: %v", err)
 			}
 		}
-		if err := scheduler.Register(dst, s.cfg.IntervalHours, s.cfg.PhaseMinutes); err != nil {
+		// 计划任务固定每小时(tick 内部按用户频率节流; 频率改动即时生效)
+		if err := scheduler.Register(dst, 1, s.cfg.PhaseMinutes); err != nil {
 			showError(s.mw, "任务注册失败: %v", err)
 		} else {
+			s.cfg.TaskTickHours = 1
+			_ = s.cfg.Save(s.dir)
 			showInfo(s.mw, "设置已保存, 计划任务已修复。")
 		}
 	}

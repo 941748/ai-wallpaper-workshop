@@ -1,12 +1,9 @@
 package desktop
 
 import (
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-
-	"wallpaper/internal/config"
 )
 
 // monitorInfo 对应 Win32 MONITORINFO。
@@ -17,47 +14,11 @@ type monitorInfo struct {
 	DwFlags   uint32
 }
 
-// IsQuiet 安静检测: 锁屏 / 静默时段 / 前台全屏应用(游戏/演示/视频)。
-// 任一命中则本轮不打扰(不换壁纸、不弹回访)。
-func IsQuiet(cfg *config.Config, now time.Time) bool {
-	if IsSessionLocked() {
-		return true
-	}
-	if cfg.QuietEnabled && InQuietHours(cfg.QuietStart, cfg.QuietEnd, now) {
-		return true
-	}
-	if IsFullscreenForeground() {
-		return true
-	}
-	return false
-}
-
-// InQuietHours 判断 now 是否落在 [start, end) 静默时段(支持跨天, 如 23:00~07:00)。
-func InQuietHours(start, end string, now time.Time) bool {
-	sh, sm, ok1 := parseHHMM(start)
-	eh, em, ok2 := parseHHMM(end)
-	if !ok1 || !ok2 || (sh == eh && sm == em) {
-		return false
-	}
-	cur := now.Hour()*60 + now.Minute()
-	s := sh*60 + sm
-	e := eh*60 + em
-	if s < e {
-		return cur >= s && cur < e
-	}
-	return cur >= s || cur < e // 跨天
-}
-
-func parseHHMM(s string) (int, int, bool) {
-	if len(s) != 5 || s[2] != ':' {
-		return 0, 0, false
-	}
-	h := int(s[0]-'0')*10 + int(s[1]-'0')
-	m := int(s[3]-'0')*10 + int(s[4]-'0')
-	if h > 23 || m > 59 {
-		return 0, 0, false
-	}
-	return h, m, true
+// IsQuiet 安静检测: 锁屏 / 前台全屏应用(游戏/演示/视频)。
+// 任一命中则本轮不换图(仅后台维护: 补池/自更新/策略同步)。
+// 注: 换图节律(活跃时段)由 policy 策略控制, 不在此判断。
+func IsQuiet() bool {
+	return IsSessionLocked() || IsFullscreenForeground()
 }
 
 // IsSessionLocked 通过 OpenInputDesktop 判断当前会话是否锁定。

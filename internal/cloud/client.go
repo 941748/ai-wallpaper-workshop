@@ -13,9 +13,11 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"wallpaper/internal/backend"
+	"wallpaper/internal/policy"
 	"wallpaper/internal/signals"
 )
 
@@ -346,10 +348,16 @@ type PregenReq struct {
 	DisableContext bool               `json:"disable_context,omitempty"`
 }
 
-// PregenSubmit 异步下单下一轮预生成(低优先级队列, 出图机空闲时执行)。
+// PregenSubmit 异步下单预生成(低优先级队列, 出图机空闲时执行), 返回任务 ID。
 // 服务端下单时会同步调用 LLM 规划提示词(秒级), 同样不能用 meta 的 3s 超时。
-func (c *Client) PregenSubmit(ctx context.Context, req PregenReq) error {
-	return c.doJSON(ctx, c.plan, http.MethodPost, "/pregen", req, nil)
+func (c *Client) PregenSubmit(ctx context.Context, req PregenReq) (string, error) {
+	var out struct {
+		JobID string `json:"job_id"`
+	}
+	if err := c.doJSON(ctx, c.plan, http.MethodPost, "/pregen", req, &out); err != nil {
+		return "", err
+	}
+	return out.JobID, nil
 }
 
 // PregenInfo 预生成状态与参数。
@@ -380,6 +388,17 @@ func (c *Client) PregenImage(ctx context.Context) ([]byte, error) {
 	return c.doRaw(ctx, c.long, http.MethodGet, "/pregen/image")
 }
 
+// ---------- 运营策略 ----------
+
+// Policy 拉取运营策略(活跃时段/备用池目标/暂停选项; 失败由调用方回退本地缓存)。
+func (c *Client) Policy(ctx context.Context) (*policy.Policy, error) {
+	var out policy.Policy
+	if err := c.doJSON(ctx, c.meta, http.MethodGet, "/policy", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ---------- 静默自更新 ----------
 
 // LatestResp 最新客户端信息。
@@ -401,9 +420,24 @@ func (c *Client) ClientLatest(ctx context.Context, currentVersion string) (*Late
 	return &out, nil
 }
 
-// DownloadFile 从给定 URL 下载(仅允许自有云端域名前缀, 保证安全边界)。
+// allowedDownloadPrefixes 更新包下载的允许来源前缀(自有云端 + 官方软件源镜像)。
+// Gitee/GitHub 直链需放行; 重定向后的真实域名不检查(以初始链接为准)。
+var allowedDownloadPrefixes = []string{
+	"https://gitee.com/",
+	"https://github.com/",
+	"https://raw.githubusercontent.com/",
+}
+
+// DownloadFile 从给定 URL 下载(仅允许自有云端与官方镜像来源, 保证安全边界)。
 func (c *Client) DownloadFile(ctx context.Context, fileURL string) ([]byte, error) {
-	if len(fileURL) < len(c.BaseURL) || fileURL[:len(c.BaseURL)] != c.BaseURL {
+	allowed := c.BaseURL != "" && strings.HasPrefix(fileURL, c.BaseURL)
+	for _, p := range allowedDownloadPrefixes {
+		if strings.HasPrefix(fileURL, p) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
 		return nil, fmt.Errorf("拒绝非云端来源的下载: %s", fileURL)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)

@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"wallpaper/internal/config"
+	"wallpaper/internal/pool"
 	"wallpaper/internal/signals"
 	"wallpaper/internal/tick"
 )
 
 // TestClientTickAgainstRealCloud 跨模块端到端:
 // 真实 tick.RunOnce(注入桌面桩) ↔ 真实云服务(httptest) ↔ mock ComfyUI/LLM。
-// 覆盖: 注册 → health → prompts/next → generate → 轮询 → 下载 → 换壁纸 → 预生成下单/命中 → 上报。
+// 覆盖: 注册 → health → 策略同步 → prompts/next → generate → 轮询 → 下载 → 换壁纸 → 备用池补货/提货/命中 → 上报。
 func TestClientTickAgainstRealCloud(t *testing.T) {
 	llmMock := newMockLLM(t)
 	defer llmMock.Close()
@@ -35,8 +36,9 @@ func TestClientTickAgainstRealCloud(t *testing.T) {
 	cfg.Token = token
 	cfg.CloudURL = ts.srv.URL
 	cfg.ProfileVer = 1
+	cfg.TaskTickHours = 1 // 视为已修正, 测试中不触碰系统计划任务
 	cfg.Satisfaction.IntervalDays = 3
-	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.Local)
+	now := time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)
 	cfg.Satisfaction.NextAskAt = now.Add(48 * time.Hour).Format(time.RFC3339) // 未到期
 	if err := cfg.Save(clientDir); err != nil {
 		t.Fatal(err)
@@ -52,7 +54,7 @@ func TestClientTickAgainstRealCloud(t *testing.T) {
 		Dir:        clientDir,
 		Now:        func() time.Time { return now },
 		Screen:     func() (int, int) { return 1920, 1080 },
-		Quiet:      func(*config.Config, time.Time) bool { return false },
+		Quiet:      func() bool { return false },
 		SetWP:      func(p string) error { wpPath = p; return nil },
 		ExePath:    filepath.Join(clientDir, "bin", "wallpaper.exe"), // 更新检查指向不存在文件, 无更新时不会用到
 		SelfUpdate: true,                                              // 顺带走一遍 /client/latest
@@ -99,7 +101,8 @@ func TestClientTickAgainstRealCloud(t *testing.T) {
 		t.Fatal("pregen not ready")
 	}
 
-	// 第二轮: 命中预生成(不再调 LLM)
+	// 第二轮: 现取出图 + 在途预生成提货入本地备用池(12:00 已出活跃时段, 推进到 11:00 下一小时)
+	now = now.Add(1 * time.Hour)
 	wpPath = ""
 	if err := tick.RunOnce(context.Background(), env); err != nil {
 		t.Fatalf("round2: %v", err)
@@ -108,11 +111,35 @@ func TestClientTickAgainstRealCloud(t *testing.T) {
 		t.Fatal("round2: wallpaper not applied")
 	}
 	prompts, _ = ts.st.AdminRecentPrompts(5)
-	if prompts[0].Source != "pregen" {
-		t.Fatalf("round2 should hit pregen, got source=%s", prompts[0].Source)
+	if prompts[0].Source != "cloud" {
+		t.Fatalf("round2 should be realtime, got source=%s", prompts[0].Source)
+	}
+	if pool.Count(clientDir) != 1 {
+		t.Fatalf("round2: pool count=%d want 1", pool.Count(clientDir))
+	}
+	if pool.LoadPending(clientDir) != nil {
+		t.Fatal("round2: pending should be cleared after delivery")
+	}
+
+	// 第二轮补: 备用池命中(秒换, 不再请求云端出图)
+	now = now.Add(3*time.Hour + 30*time.Minute)
+	wpPath = ""
+	if err := tick.RunOnce(context.Background(), env); err != nil {
+		t.Fatalf("round2b: %v", err)
+	}
+	if wpPath == "" {
+		t.Fatal("round2b: wallpaper not applied")
+	}
+	prompts, _ = ts.st.AdminRecentPrompts(5)
+	if prompts[0].Source != "pool" {
+		t.Fatalf("round2b should hit pool, got source=%s", prompts[0].Source)
+	}
+	if pool.Count(clientDir) != 0 {
+		t.Fatalf("round2b: pool should be consumed, count=%d", pool.Count(clientDir))
 	}
 
 	// 第三轮: 满意度回访"换个风格"到期(注意与 env.Now 用同一时间基准)
+	now = now.Add(1*time.Hour + 30*time.Minute)
 	cfg2, _ := config.Load(clientDir)
 	cfg2.Satisfaction.NextAskAt = now.Add(-time.Minute).Format(time.RFC3339)
 	_ = cfg2.Save(clientDir)
@@ -146,6 +173,7 @@ func TestClientTickAgainstRealCloud(t *testing.T) {
 
 	// 第四轮: 云端发布了一个 sha256 错误的"新版本" → 自更新必须失败,
 	// 但绝不中断主线: 本轮壁纸仍要正常更换, 且错误版本不得暂存。
+	now = now.Add(1 * time.Hour)
 	relDir := filepath.Join(ts.data, "releases")
 	if err := os.WriteFile(filepath.Join(relDir, "wallpaper-9.9.9.exe"), []byte("corrupted"), 0o644); err != nil {
 		t.Fatal(err)

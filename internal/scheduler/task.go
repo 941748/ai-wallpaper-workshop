@@ -5,13 +5,17 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/encoding/unicode"
+	"golang.org/x/text/transform"
 
 	"wallpaper/internal/config"
 )
@@ -134,18 +138,40 @@ func RunNow() error {
 	return nil
 }
 
-// QueryState 查询任务是否存在及其状态描述。
+// QueryState 查询任务是否存在及其状态描述(如 "就绪"/"已禁用"/"正在运行")。
+// schtasks 输出为本地 OEM 编码(中文系统即 GBK), 需转码后再提取"状态"行。
 func QueryState() (string, error) {
 	out, err := run("schtasks", "/Query", "/TN", config.TaskName)
 	if err != nil {
 		return "", err
 	}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) != "" {
-			return strings.TrimSpace(line), nil
+	return parseTaskState([]byte(out)), nil
+}
+
+// parseTaskState 从 schtasks /Query 输出中提取状态值; 找不到时返回空串。
+func parseTaskState(out []byte) string {
+	text := decodeOEM(out)
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		for _, prefix := range []string{"状态:", "Status:"} {
+			if strings.HasPrefix(line, prefix) {
+				return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			}
 		}
 	}
-	return "", nil
+	return ""
+}
+
+// decodeOEM 将本地编码(GBK)输出转为 UTF-8; 已是合法 UTF-8 时原样返回。
+func decodeOEM(b []byte) string {
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	decoded, err := io.ReadAll(transform.NewReader(bytes.NewReader(b), simplifiedchinese.GBK.NewDecoder()))
+	if err != nil {
+		return string(b)
+	}
+	return string(decoded)
 }
 
 func run(name string, args ...string) (string, error) {

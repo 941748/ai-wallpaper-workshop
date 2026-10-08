@@ -6,33 +6,7 @@ import (
 	"image/color"
 	"image/png"
 	"testing"
-	"time"
 )
-
-func TestInQuietHours(t *testing.T) {
-	at := func(h, m int) time.Time {
-		return time.Date(2026, 9, 15, h, m, 0, 0, time.Local)
-	}
-	cases := []struct {
-		start, end string
-		now        time.Time
-		want       bool
-	}{
-		{"23:00", "07:00", at(23, 30), true},
-		{"23:00", "07:00", at(3, 0), true},
-		{"23:00", "07:00", at(7, 0), false},
-		{"23:00", "07:00", at(12, 0), false},
-		{"09:00", "18:00", at(10, 0), true},
-		{"09:00", "18:00", at(8, 59), false},
-		{"bad", "07:00", at(3, 0), false},
-		{"00:00", "00:00", at(0, 0), false},
-	}
-	for _, c := range cases {
-		if got := InQuietHours(c.start, c.end, c.now); got != c.want {
-			t.Errorf("InQuietHours(%s,%s,%v)=%v want %v", c.start, c.end, c.now, got, c.want)
-		}
-	}
-}
 
 func makePNG(w, h int, solid bool) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))

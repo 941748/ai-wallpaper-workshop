@@ -1,7 +1,7 @@
 // Package config 负责客户端配置与偏好画像的读写。
 // 数据目录默认 %LOCALAPPDATA%\AIWallpaper, 主要文件:
 //
-//	config.json         主配置(云端地址/配额相位/安静时段/满意度周期)
+//	config.json         主配置(云端地址/换图开关/满意度周期/策略缓存指针)
 //	profile.json        偏好画像(5 维权重 + 负面片段)
 package config
 
@@ -54,16 +54,25 @@ type Config struct {
 	DirectToken string `json:"direct_token"`
 
 	// 调度
-	IntervalHours int `json:"interval_hours"`
-	PhaseMinutes  int `json:"phase_minutes"` // 0~59 换图相位(按 user_id hash 分散)
+	IntervalHours int `json:"interval_hours"` // 用户选择的换图频率(小时; 换图节流, 不影响计划任务节律)
+	PhaseMinutes  int `json:"phase_minutes"`  // 0~59 换图相位(按 user_id hash 分散)
 
 	// 节日/节气语境(画面氛围轻推; 默认开启, 用户可关)
 	DisableContext bool `json:"disable_context,omitempty"`
 
-	// 安静模式(前台全屏/静默时段不打扰)
-	QuietEnabled bool   `json:"quiet_enabled"`
-	QuietStart   string `json:"quiet_start"` // HH:MM
-	QuietEnd     string `json:"quiet_end"`   // HH:MM
+	// 换图总开关(用户唯一控制项; 关闭=暂停换图, 到期自动恢复防遗忘)
+	AutoChange bool   `json:"auto_change"`
+	PauseUntil string `json:"pause_until,omitempty"` // 暂停到期时间(RFC3339); 空=未暂停
+	PauseHours int    `json:"pause_hours,omitempty"` // 用户选择的暂停时长(小时)
+
+	// 最近一次成功换图时间(RFC3339; 换图频率节流依据)
+	LastChangeAt string `json:"last_change_at,omitempty"`
+
+	// 偏好回访开关(默认开启)
+	AskEnabled bool `json:"ask_enabled"`
+
+	// 已注册计划任务的节律(小时); 与理想值不一致时自动重注册
+	TaskTickHours int `json:"task_tick_hours,omitempty"`
 
 	// 画像版本(重配置后 +1, 云端预生成据此作废)
 	ProfileVer int `json:"profile_version"`
@@ -74,12 +83,11 @@ type Config struct {
 // Default 返回默认配置。
 func Default() *Config {
 	return &Config{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		CloudURL:      DefaultCloudURL,
 		IntervalHours: DefaultIntervalHour,
-		QuietEnabled:  true,
-		QuietStart:    "23:00",
-		QuietEnd:      "07:00",
+		AutoChange:    true,
+		AskEnabled:    true,
 		Satisfaction: Satisfaction{
 			IntervalDays: DefaultAskDays,
 		},
@@ -131,6 +139,12 @@ func Load(dir string) (*Config, error) {
 	}
 	if cfg.PhaseMinutes < 0 || cfg.PhaseMinutes > 59 {
 		cfg.PhaseMinutes = 0
+	}
+	if cfg.SchemaVersion < 2 {
+		// v1→v2 迁移: 换图开关/回访开关默认开启; 安静时段由内部节律策略取代
+		cfg.AutoChange = true
+		cfg.AskEnabled = true
+		cfg.SchemaVersion = 2
 	}
 	return cfg, nil
 }

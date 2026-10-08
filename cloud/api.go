@@ -20,6 +20,7 @@ import (
 	"wallpaper/cloud/llm"
 	"wallpaper/cloud/store"
 	"wallpaper/internal/backend"
+	"wallpaper/internal/policy"
 	"wallpaper/internal/probe"
 )
 
@@ -55,6 +56,7 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/pregen", a.handlePregenSubmit)
 	mux.HandleFunc("GET /api/v1/pregen", a.handlePregenFetch)
 	mux.HandleFunc("GET /api/v1/pregen/image", a.handlePregenImage)
+	mux.HandleFunc("GET /api/v1/policy", a.handlePolicy)
 	mux.HandleFunc("GET /api/v1/client/latest", a.handleClientLatest)
 	mux.HandleFunc("POST /api/v1/devices/link", a.handleLink)
 	mux.HandleFunc("GET /api/v1/profile/drift", a.handleDrift)
@@ -498,6 +500,23 @@ func (a *API) handlePregenImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serveFile(w, p.ImagePath)
+}
+
+// ---------- 运营策略 ----------
+
+// handlePolicy 下发运营策略(活跃时段/备用池目标/暂停选项)。
+// 数据源 AW_DATA/policy.json 改文件即生效; 缺失或非法时返回内置默认。
+// 策略不含隐私且向导阶段即可拉取, 故不要求鉴权; 客户端失败时回退本地缓存。
+func (a *API) handlePolicy(w http.ResponseWriter, r *http.Request) {
+	pol := policy.Default()
+	raw, err := os.ReadFile(filepath.Join(a.dataDir, "policy.json"))
+	if err == nil {
+		var p policy.Policy
+		if json.Unmarshal(raw, &p) == nil {
+			pol = p.Normalize()
+		}
+	}
+	writeOK(w, pol)
 }
 
 // ---------- 客户端版本分发 ----------

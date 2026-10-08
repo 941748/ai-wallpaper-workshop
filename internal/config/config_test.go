@@ -35,7 +35,7 @@ func TestLoadMissingReturnsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.CloudURL != DefaultCloudURL || !got.QuietEnabled {
+	if got.CloudURL != DefaultCloudURL || !got.AutoChange || !got.AskEnabled {
 		t.Fatalf("unexpected default: %+v", got)
 	}
 }
