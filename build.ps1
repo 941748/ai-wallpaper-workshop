@@ -14,12 +14,13 @@ go test ./...
 Write-Host "[2/4] 构建客户端 (GUI 子系统, 无控制台窗口)..."
 New-Item -ItemType Directory -Force dist | Out-Null
 # 嵌入 Common Controls 6 manifest(walk 窗口库依赖, 缺失则窗口创建时 TTM_ADDTOOL 失败)
+# 同时嵌入程序图标(assets\appicon.ico, 内为多尺寸 PNG; 由 tools\png2ico.ps1 生成)
 $rsrc = Join-Path (go env GOPATH) 'bin\rsrc.exe'
 if (-not (Test-Path $rsrc)) {
     Write-Host "  安装 rsrc 工具..."
     go install github.com/akavel/rsrc@latest
 }
-& $rsrc -manifest app.manifest -arch amd64 -o rsrc_windows_amd64.syso
+& $rsrc -manifest app.manifest -ico assets\appicon.ico -arch amd64 -o rsrc_windows_amd64.syso
 go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\wallpaper.exe .
 
 Write-Host "[3/4] 构建云服务 (Linux 部署用 GOOS=linux / Windows 调试用默认)..."
