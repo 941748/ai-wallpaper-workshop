@@ -107,6 +107,11 @@ func (s *settings) build() error {
 	}
 	s.mw = mw
 	mw.SetTitle(config.AppNameCN + " — 设置")
+	// 标题栏/任务栏图标: 从 exe 资源加载(rsrc 嵌入的 RT_GROUP_ICON id=1)
+	if icon, err := walk.NewIconFromResourceId(1); err == nil {
+		_ = mw.SetIcon(icon)
+	}
+	mw.SetBackground(brushPageBg)
 	mw.SetSize(fitWorkArea(mw, walk.Size{Width: 980, Height: 680}))
 	mw.SetMinMaxSize(fitWorkArea(mw, walk.Size{Width: 860, Height: 560}), walk.Size{})
 	_ = mw.SetLayout(walk.NewVBoxLayout())
@@ -136,6 +141,7 @@ func newPage(tab *walk.TabWidget, title string) (*walk.TabPage, error) {
 		return nil, err
 	}
 	page.SetTitle(title)
+	page.SetBackground(brushPageBg)
 	if err := page.SetLayout(walk.NewVBoxLayout()); err != nil {
 		return nil, err
 	}
@@ -406,17 +412,104 @@ func (s *settings) buildSettingsPage(tab *walk.TabWidget) error {
 		return err
 	}
 
-	// ----- 本地模式(高级; 默认走云端) -----
-	s.directCheck, _ = walk.NewCheckBox(page)
+	// ----- 服务(本地模式; 默认走云端) -----
+	svcGroup, _ := walk.NewGroupBox(page)
+	svcGroup.SetTitle("服务")
+	svcGroup.SetBackground(brushWhite)
+	_ = svcGroup.SetLayout(walk.NewVBoxLayout())
+	s.directCheck, _ = walk.NewCheckBox(svcGroup)
 	s.directCheck.SetText("本地模式: 直连局域网 ComfyUI(高级, 默认关闭; 默认走云端)")
 	s.directCheck.SetChecked(s.cfg.DirectMode)
-	s.directRow, _ = walk.NewComposite(page)
+	s.directRow, _ = walk.NewComposite(svcGroup)
 	_ = s.directRow.SetLayout(walk.NewVBoxLayout())
 	s.directURL, _ = addLineRow(s.directRow, "ComfyUI 地址:", s.cfg.DirectURL, 420)
 	s.directTok, _ = addLineRow(s.directRow, "访问令牌(可选):", s.cfg.DirectToken, 420)
 	s.directRow.SetVisible(s.cfg.DirectMode)
 	s.directCheck.CheckedChanged().Attach(func() { s.directRow.SetVisible(s.directCheck.Checked()) })
 
+	// ----- 换图(用户唯一控制项): 开=按节律换图; 关=暂停, 到期自动恢复防遗忘 -----
+	chGroup, _ := walk.NewGroupBox(page)
+	chGroup.SetTitle("换图")
+	chGroup.SetBackground(brushWhite)
+	_ = chGroup.SetLayout(walk.NewVBoxLayout())
+	row1, _ := walk.NewComposite(chGroup)
+	_ = row1.SetLayout(walk.NewHBoxLayout())
+	s.autoCk, _ = walk.NewCheckBox(row1)
+	s.autoCk.SetText("自动换图")
+	s.autoCk.SetChecked(s.cfg.AutoChange)
+	lbl1, _ := walk.NewLabel(row1)
+	lbl1.SetText("  换图频率:")
+	s.intervalCB, _ = walk.NewComboBox(row1)
+	_ = s.intervalCB.SetModel([]string{"1 小时", "2 小时", "3 小时", "4 小时", "6 小时", "8 小时", "12 小时"})
+	_ = s.intervalCB.SetCurrentIndex(intervalIndex(s.cfg.IntervalHours))
+
+	row2, _ := walk.NewComposite(chGroup)
+	_ = row2.SetLayout(walk.NewHBoxLayout())
+	pauseLbl, _ := walk.NewLabel(row2)
+	pauseLbl.SetText("暂停时长(关闭自动换图时生效):")
+	s.pauseCB, _ = walk.NewComboBox(row2)
+	opts := s.pauseOptions()
+	labels := make([]string, len(opts))
+	for i, h := range opts {
+		labels[i] = policy.PauseLabel(h)
+	}
+	_ = s.pauseCB.SetModel(labels)
+	_ = s.pauseCB.SetCurrentIndex(s.pauseIndex(s.cfg.PauseHours))
+	s.pauseLB, _ = walk.NewLabel(row2)
+
+	// ----- 偏好回访(开关 + 周期) -----
+	askGroup, _ := walk.NewGroupBox(page)
+	askGroup.SetTitle("偏好回访")
+	askGroup.SetBackground(brushWhite)
+	_ = askGroup.SetLayout(walk.NewVBoxLayout())
+	askRow, _ := walk.NewComposite(askGroup)
+	_ = askRow.SetLayout(walk.NewHBoxLayout())
+	s.askCk, _ = walk.NewCheckBox(askRow)
+	s.askCk.SetText("接收偏好回访(偶尔确认是否合你心意, 帮我们更懂你)")
+	s.askCk.SetChecked(s.cfg.AskEnabled)
+	lbl2, _ := walk.NewLabel(askRow)
+	lbl2.SetText("  回访周期(天):")
+	s.askSpin, _ = walk.NewNumberEdit(askRow)
+	s.askSpin.SetDecimals(0)
+	s.askSpin.SetRange(1, 365)
+	s.askSpin.SetValue(float64(s.cfg.Satisfaction.IntervalDays))
+	s.askLbl, _ = walk.NewLabel(askGroup)
+	s.refreshAskLabel()
+
+	// ----- 软件更新 -----
+	upGroup, _ := walk.NewGroupBox(page)
+	upGroup.SetTitle("软件更新")
+	upGroup.SetBackground(brushWhite)
+	_ = upGroup.SetLayout(walk.NewVBoxLayout())
+	verRow, _ := walk.NewComposite(upGroup)
+	_ = verRow.SetLayout(walk.NewHBoxLayout())
+	s.versionLbl, _ = walk.NewLabel(verRow)
+	s.versionLbl.SetText("当前版本: " + update.CurrentVersion)
+	checkBtn, _ := walk.NewPushButton(verRow)
+	checkBtn.SetText("检查更新")
+	checkBtn.Clicked().Attach(func() { s.checkUpdate() })
+	s.updateLbl, _ = walk.NewLabel(verRow)
+	s.updateLbl.SetText("")
+
+	// ----- 设备同步(换机/重装领回画像) -----
+	syncGroup, _ := walk.NewGroupBox(page)
+	syncGroup.SetTitle("设备同步")
+	syncGroup.SetBackground(brushWhite)
+	_ = syncGroup.SetLayout(walk.NewVBoxLayout())
+	s.userLbl, _ = walk.NewLabel(syncGroup)
+	s.userLbl.SetText("匿名用户 ID: " + s.cfg.UserID + "   (零注册零登录)")
+	s.syncLbl, _ = walk.NewLabel(syncGroup)
+	s.syncLbl.SetText("同步状态: 正常(每轮出图自动同步)")
+	syncRow, _ := walk.NewComposite(syncGroup)
+	_ = syncRow.SetLayout(walk.NewHBoxLayout())
+	qrBtn, _ := walk.NewPushButton(syncRow)
+	qrBtn.SetText("生成配对二维码 (迁到新设备)")
+	qrBtn.Clicked().Attach(func() { s.createLink() })
+	redeemBtn, _ := walk.NewPushButton(syncRow)
+	redeemBtn.SetText("输入配对码 (从旧设备恢复)")
+	redeemBtn.Clicked().Attach(func() { s.redeemLink() })
+
+	// ----- 底部操作行 -----
 	btnRow, _ := walk.NewComposite(page)
 	_ = btnRow.SetLayout(walk.NewHBoxLayout())
 	saveBtn, _ := walk.NewPushButton(btnRow)
@@ -437,77 +530,14 @@ func (s *settings) buildSettingsPage(tab *walk.TabWidget) error {
 			})
 		}()
 	})
-	s.connLbl, _ = walk.NewLabel(page)
-
-	// ----- 换图(用户唯一控制项): 开=按节律换图; 关=暂停, 到期自动恢复防遗忘 -----
-	row1, _ := walk.NewComposite(page)
-	_ = row1.SetLayout(walk.NewHBoxLayout())
-	s.autoCk, _ = walk.NewCheckBox(row1)
-	s.autoCk.SetText("自动换图")
-	s.autoCk.SetChecked(s.cfg.AutoChange)
-	lbl1, _ := walk.NewLabel(row1)
-	lbl1.SetText("  换图频率:")
-	s.intervalCB, _ = walk.NewComboBox(row1)
-	_ = s.intervalCB.SetModel([]string{"1 小时", "2 小时", "3 小时", "4 小时", "6 小时", "8 小时", "12 小时"})
-	_ = s.intervalCB.SetCurrentIndex(intervalIndex(s.cfg.IntervalHours))
-
-	row2, _ := walk.NewComposite(page)
-	_ = row2.SetLayout(walk.NewHBoxLayout())
-	pauseLbl, _ := walk.NewLabel(row2)
-	pauseLbl.SetText("暂停时长(关闭自动换图时生效):")
-	s.pauseCB, _ = walk.NewComboBox(row2)
-	opts := s.pauseOptions()
-	labels := make([]string, len(opts))
-	for i, h := range opts {
-		labels[i] = policy.PauseLabel(h)
-	}
-	_ = s.pauseCB.SetModel(labels)
-	_ = s.pauseCB.SetCurrentIndex(s.pauseIndex(s.cfg.PauseHours))
-	s.pauseLB, _ = walk.NewLabel(row2)
-
-	// ----- 偏好回访(开关 + 周期) -----
-	askRow, _ := walk.NewComposite(page)
-	_ = askRow.SetLayout(walk.NewHBoxLayout())
-	s.askCk, _ = walk.NewCheckBox(askRow)
-	s.askCk.SetText("接收偏好回访(偶尔确认是否合你心意, 帮我们更懂你)")
-	s.askCk.SetChecked(s.cfg.AskEnabled)
-	lbl2, _ := walk.NewLabel(askRow)
-	lbl2.SetText("  回访周期(天):")
-	s.askSpin, _ = walk.NewNumberEdit(askRow)
-	s.askSpin.SetDecimals(0)
-	s.askSpin.SetRange(1, 365)
-	s.askSpin.SetValue(float64(s.cfg.Satisfaction.IntervalDays))
-	s.askLbl, _ = walk.NewLabel(page)
-	s.refreshAskLabel()
-
-	// ----- 软件更新 -----
-	verRow, _ := walk.NewComposite(page)
-	_ = verRow.SetLayout(walk.NewHBoxLayout())
-	s.versionLbl, _ = walk.NewLabel(verRow)
-	s.versionLbl.SetText("当前版本: " + update.CurrentVersion)
-	checkBtn, _ := walk.NewPushButton(verRow)
-	checkBtn.SetText("检查更新")
-	checkBtn.Clicked().Attach(func() { s.checkUpdate() })
-	s.updateLbl, _ = walk.NewLabel(verRow)
-	s.updateLbl.SetText("")
-
-	// ----- 设备同步(换机/重装领回画像) -----
-	s.userLbl, _ = walk.NewLabel(page)
-	s.userLbl.SetText("匿名用户 ID: " + s.cfg.UserID + "   (零注册零登录)")
-	s.syncLbl, _ = walk.NewLabel(page)
-	s.syncLbl.SetText("同步状态: 正常(每轮出图自动同步)")
-	syncRow, _ := walk.NewComposite(page)
-	_ = syncRow.SetLayout(walk.NewHBoxLayout())
-	qrBtn, _ := walk.NewPushButton(syncRow)
-	qrBtn.SetText("生成配对二维码 (迁到新设备)")
-	qrBtn.Clicked().Attach(func() { s.createLink() })
-	redeemBtn, _ := walk.NewPushButton(syncRow)
-	redeemBtn.SetText("输入配对码 (从旧设备恢复)")
-	redeemBtn.Clicked().Attach(func() { s.redeemLink() })
-
-	openBtn, _ := walk.NewPushButton(page)
-	openBtn.SetText("打开数据目录 (config/profile/日志/壁纸)")
+	s.connLbl, _ = walk.NewLabel(btnRow)
+	hsp, _ := walk.NewHSpacer(btnRow)
+	openBtn, _ := walk.NewPushButton(btnRow)
+	openBtn.SetText("打开数据目录")
 	openBtn.Clicked().Attach(func() { openFolder(s.dir) })
+	if bl, ok := btnRow.Layout().(*walk.BoxLayout); ok {
+		_ = bl.SetStretchFactor(hsp, 1)
+	}
 
 	s.autoCk.CheckedChanged().Attach(func() { s.updatePauseHint() })
 	s.updatePauseHint()

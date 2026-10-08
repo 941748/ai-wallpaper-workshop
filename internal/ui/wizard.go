@@ -110,10 +110,14 @@ func (w *wizard) build() error {
 	}
 	w.mw = mw
 	mw.SetTitle(config.AppNameCN + " — 初始化向导")
+	// 标题栏/任务栏图标: 从 exe 资源加载(rsrc 嵌入的 RT_GROUP_ICON id=1)
+	if icon, err := walk.NewIconFromResourceId(1); err == nil {
+		_ = mw.SetIcon(icon)
+	}
 	mw.SetSize(fitWorkArea(mw, walk.Size{Width: 1040, Height: 720}))
 	mw.SetMinMaxSize(fitWorkArea(mw, walk.Size{Width: 900, Height: 620}), walk.Size{})
 	_ = mw.SetLayout(walk.NewVBoxLayout())
-	mw.SetBackground(brushWhite)
+	mw.SetBackground(brushPageBg)
 
 	// 顶栏: 青绿渐变 + 产品名
 	header, err := walk.NewCustomWidgetPixels(mw, 0, func(canvas *walk.Canvas, update walk.Rectangle) error {

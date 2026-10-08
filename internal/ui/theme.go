@@ -28,6 +28,7 @@ var (
 	colWhite     = walk.RGB(255, 255, 255) // 白
 	colNavBg     = walk.RGB(237, 242, 241) // 左导航底(微绿灰)
 	colSeparator = walk.RGB(223, 228, 226) // 分隔线
+	colPageBg    = walk.RGB(245, 248, 247) // 页面底(浅灰绿, 衬托白色分组卡片)
 
 	// 自绘控件补充色
 	colAccentLight       = walk.RGB(226, 241, 239) // 悬停浅青底
@@ -54,6 +55,7 @@ var (
 	brushAccentDk        walk.Brush
 	brushNavBg           walk.Brush
 	brushWhite           walk.Brush
+	brushPageBg          walk.Brush
 	brushSeparator       walk.Brush
 	brushAccentLight     walk.Brush
 	brushChipBg          walk.Brush
@@ -78,6 +80,7 @@ func initTheme() {
 		brushAccentDk, _ = walk.NewSolidColorBrush(colAccentDk)
 		brushNavBg, _ = walk.NewSolidColorBrush(colNavBg)
 		brushWhite, _ = walk.NewSolidColorBrush(colWhite)
+		brushPageBg, _ = walk.NewSolidColorBrush(colPageBg)
 		brushSeparator, _ = walk.NewSolidColorBrush(colSeparator)
 		brushAccentLight, _ = walk.NewSolidColorBrush(colAccentLight)
 		brushChipBg, _ = walk.NewSolidColorBrush(colChipBg)

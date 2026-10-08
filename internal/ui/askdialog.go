@@ -23,6 +23,11 @@ func ShowAskDialog(req tick.AskRequest) tick.AskChoice {
 		return choice // 失败静默按稍后处理
 	}
 	dlg.SetTitle(config.AppNameCN + " — 偏好回访")
+	// 标题栏图标: 从 exe 资源加载(rsrc 嵌入的 RT_GROUP_ICON id=1)
+	if icon, err := walk.NewIconFromResourceId(1); err == nil {
+		_ = dlg.SetIcon(icon)
+	}
+	dlg.SetBackground(brushPageBg)
 	dlg.SetSize(walk.Size{Width: 440, Height: 400})
 	_ = dlg.SetLayout(walk.NewVBoxLayout())
 
