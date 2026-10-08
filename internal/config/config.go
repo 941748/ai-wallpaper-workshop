@@ -15,9 +15,9 @@ import (
 
 // 关键默认值
 const (
-	// DefaultCloudURL 默认云端服务地址: 开源版留空, 由用户在向导中填写(或勾选直连模式);
-	// 自部署后可改为自己的固定域名。
-	DefaultCloudURL     = ""
+	// DefaultCloudURL 默认云端服务地址(官方云端, 界面不展示);
+	// 自部署/更换服务商时修改此常量或用户 config.json 的 cloud_url 即可。
+	DefaultCloudURL     = "https://www.cybermesh.space"
 	DefaultIntervalHour = 1
 	DefaultAskDays      = 3 // 满意度回访默认周期(天)
 	TaskName            = "AIWallpaper"
@@ -133,6 +133,9 @@ func Load(dir string) (*Config, error) {
 	}
 	if cfg.IntervalHours <= 0 {
 		cfg.IntervalHours = DefaultIntervalHour
+	}
+	if cfg.CloudURL == "" {
+		cfg.CloudURL = DefaultCloudURL
 	}
 	if cfg.Satisfaction.IntervalDays <= 0 {
 		cfg.Satisfaction.IntervalDays = DefaultAskDays

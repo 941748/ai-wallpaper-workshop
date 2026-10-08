@@ -76,7 +76,6 @@ type wizard struct {
 	finalized bool // 是否已写过完成信号
 
 	// 步骤 0: 连接设置控件
-	urlEdit       *walk.LineEdit
 	directCheck   *walk.CheckBox
 	directURLEdit *walk.LineEdit
 	directTokEdit *walk.LineEdit
@@ -330,8 +329,7 @@ func (w *wizard) buildConnStep() {
 	cgl := walk.NewVBoxLayout()
 	cgl.SetSpacing(8)
 	_ = cloudGroup.SetLayout(cgl)
-	w.urlEdit, _ = addLineRow(cloudGroup, "服务地址:", w.cfg.CloudURL, 420)
-	themedLabel(cloudGroup, "客户端所有出图与大模型调用都经云端代理(自部署时填写你的服务地址); 本地调试可在下方勾选直连模式。", nil, colHint)
+	themedLabel(cloudGroup, "客户端所有出图与大模型调用都经云端代理, 服务地址由官方云端提供、默认即可; 本地调试可在下方勾选直连模式。", nil, colHint)
 
 	advGroup, _ := walk.NewGroupBox(w.content)
 	advGroup.SetTitle("调试模式 (高级, 默认关闭)")
@@ -396,7 +394,6 @@ func (w *wizard) collectConnConfig() *config.Config {
 		c.DirectToken = strings.TrimSpace(w.directTokEdit.Text())
 	} else {
 		c.DirectMode = false
-		c.CloudURL = strings.TrimSpace(w.urlEdit.Text())
 	}
 	return &c
 }
@@ -404,10 +401,6 @@ func (w *wizard) collectConnConfig() *config.Config {
 // testAndRegister 保存连接配置并匿名注册, 成功返回 true。
 func (w *wizard) testAndRegister() bool {
 	cfg := w.collectConnConfig()
-	if !cfg.DirectMode && cfg.CloudURL == "" {
-		showInfo(w.mw, "请填写云端服务地址。")
-		return false
-	}
 	if cfg.DirectMode && cfg.DirectURL == "" {
 		showInfo(w.mw, "调试模式需要填写 ComfyUI 地址。")
 		return false

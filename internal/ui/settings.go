@@ -49,8 +49,7 @@ type settings struct {
 	kwLB       *walk.ListBox
 	kwEdit     *walk.LineEdit
 
-	// 服务页
-	urlEdit     *walk.LineEdit
+	// 设置页
 	directCheck *walk.CheckBox
 	directURL   *walk.LineEdit
 	directTok   *walk.LineEdit
@@ -61,7 +60,6 @@ type settings struct {
 	pauseCB     *walk.ComboBox
 	pauseLB     *walk.Label
 	askCk       *walk.CheckBox
-	taskLbl     *walk.Label
 
 	// 历史页
 	histModel *wallpaperListModel
@@ -123,16 +121,10 @@ func (s *settings) build() error {
 	if err := s.buildProfilePage(tab); err != nil {
 		return err
 	}
-	if err := s.buildServicePage(tab); err != nil {
-		return err
-	}
 	if err := s.buildHistoryPage(tab); err != nil {
 		return err
 	}
-	if err := s.buildSyncPage(tab); err != nil {
-		return err
-	}
-	if err := s.buildUpdatePage(tab); err != nil {
+	if err := s.buildSettingsPage(tab); err != nil {
 		return err
 	}
 	return nil
@@ -406,15 +398,17 @@ func (s *settings) saveProfileEdits() {
 
 // ---------- 服务与调度页 ----------
 
-func (s *settings) buildServicePage(tab *walk.TabWidget) error {
-	page, err := newPage(tab, "服务与调度")
+// ---------- 设置页(服务/换图/回访/更新/同步 合并) ----------
+
+func (s *settings) buildSettingsPage(tab *walk.TabWidget) error {
+	page, err := newPage(tab, "设置")
 	if err != nil {
 		return err
 	}
-	s.urlEdit, _ = addLineRow(page, "云端服务地址:", s.cfg.CloudURL, 420)
 
+	// ----- 本地模式(高级; 默认走云端) -----
 	s.directCheck, _ = walk.NewCheckBox(page)
-	s.directCheck.SetText("调试模式: 直连局域网 ComfyUI(高级, 默认关闭)")
+	s.directCheck.SetText("本地模式: 直连局域网 ComfyUI(高级, 默认关闭; 默认走云端)")
 	s.directCheck.SetChecked(s.cfg.DirectMode)
 	s.directRow, _ = walk.NewComposite(page)
 	_ = s.directRow.SetLayout(walk.NewVBoxLayout())
@@ -426,7 +420,7 @@ func (s *settings) buildServicePage(tab *walk.TabWidget) error {
 	btnRow, _ := walk.NewComposite(page)
 	_ = btnRow.SetLayout(walk.NewHBoxLayout())
 	saveBtn, _ := walk.NewPushButton(btnRow)
-	saveBtn.SetText("保存并修复任务")
+	saveBtn.SetText("保存设置")
 	saveBtn.Clicked().Attach(func() { s.saveService() })
 	testBtn, _ := walk.NewPushButton(btnRow)
 	testBtn.SetText("测试连接")
@@ -445,7 +439,7 @@ func (s *settings) buildServicePage(tab *walk.TabWidget) error {
 	})
 	s.connLbl, _ = walk.NewLabel(page)
 
-	// 自动换图(用户唯一控制项): 开=按节律换图; 关=暂停, 到期自动恢复防遗忘
+	// ----- 换图(用户唯一控制项): 开=按节律换图; 关=暂停, 到期自动恢复防遗忘 -----
 	row1, _ := walk.NewComposite(page)
 	_ = row1.SetLayout(walk.NewHBoxLayout())
 	s.autoCk, _ = walk.NewCheckBox(row1)
@@ -471,43 +465,52 @@ func (s *settings) buildServicePage(tab *walk.TabWidget) error {
 	_ = s.pauseCB.SetCurrentIndex(s.pauseIndex(s.cfg.PauseHours))
 	s.pauseLB, _ = walk.NewLabel(row2)
 
-	askRow2, _ := walk.NewComposite(page)
-	_ = askRow2.SetLayout(walk.NewHBoxLayout())
-	s.askCk, _ = walk.NewCheckBox(askRow2)
+	// ----- 偏好回访(开关 + 周期) -----
+	askRow, _ := walk.NewComposite(page)
+	_ = askRow.SetLayout(walk.NewHBoxLayout())
+	s.askCk, _ = walk.NewCheckBox(askRow)
 	s.askCk.SetText("接收偏好回访(偶尔确认是否合你心意, 帮我们更懂你)")
 	s.askCk.SetChecked(s.cfg.AskEnabled)
+	lbl2, _ := walk.NewLabel(askRow)
+	lbl2.SetText("  回访周期(天):")
+	s.askSpin, _ = walk.NewNumberEdit(askRow)
+	s.askSpin.SetDecimals(0)
+	s.askSpin.SetRange(1, 365)
+	s.askSpin.SetValue(float64(s.cfg.Satisfaction.IntervalDays))
+	s.askLbl, _ = walk.NewLabel(page)
+	s.refreshAskLabel()
+
+	// ----- 软件更新 -----
+	verRow, _ := walk.NewComposite(page)
+	_ = verRow.SetLayout(walk.NewHBoxLayout())
+	s.versionLbl, _ = walk.NewLabel(verRow)
+	s.versionLbl.SetText("当前版本: " + update.CurrentVersion)
+	checkBtn, _ := walk.NewPushButton(verRow)
+	checkBtn.SetText("检查更新")
+	checkBtn.Clicked().Attach(func() { s.checkUpdate() })
+	s.updateLbl, _ = walk.NewLabel(verRow)
+	s.updateLbl.SetText("")
+
+	// ----- 设备同步(换机/重装领回画像) -----
+	s.userLbl, _ = walk.NewLabel(page)
+	s.userLbl.SetText("匿名用户 ID: " + s.cfg.UserID + "   (零注册零登录)")
+	s.syncLbl, _ = walk.NewLabel(page)
+	s.syncLbl.SetText("同步状态: 正常(每轮出图自动同步)")
+	syncRow, _ := walk.NewComposite(page)
+	_ = syncRow.SetLayout(walk.NewHBoxLayout())
+	qrBtn, _ := walk.NewPushButton(syncRow)
+	qrBtn.SetText("生成配对二维码 (迁到新设备)")
+	qrBtn.Clicked().Attach(func() { s.createLink() })
+	redeemBtn, _ := walk.NewPushButton(syncRow)
+	redeemBtn.SetText("输入配对码 (从旧设备恢复)")
+	redeemBtn.Clicked().Attach(func() { s.redeemLink() })
+
+	openBtn, _ := walk.NewPushButton(page)
+	openBtn.SetText("打开数据目录 (config/profile/日志/壁纸)")
+	openBtn.Clicked().Attach(func() { openFolder(s.dir) })
 
 	s.autoCk.CheckedChanged().Attach(func() { s.updatePauseHint() })
 	s.updatePauseHint()
-
-	// 任务状态
-	taskRow, _ := walk.NewComposite(page)
-	_ = taskRow.SetLayout(walk.NewHBoxLayout())
-	s.taskLbl, _ = walk.NewLabel(taskRow)
-	s.refreshTaskState()
-	refreshBtn, _ := walk.NewPushButton(taskRow)
-	refreshBtn.SetText("刷新状态")
-	refreshBtn.Clicked().Attach(func() { s.refreshTaskState() })
-	runBtn, _ := walk.NewPushButton(taskRow)
-	runBtn.SetText("立即换一张")
-	runBtn.Clicked().Attach(func() {
-		if err := scheduler.RunNow(); err != nil {
-			showError(s.mw, "%v", err)
-		} else {
-			showInfo(s.mw, "已触发一次换图, 稍后桌面壁纸会自动刷新。")
-		}
-	})
-	delBtn, _ := walk.NewPushButton(taskRow)
-	delBtn.SetText("删除任务")
-	delBtn.Clicked().Attach(func() {
-		if walk.MsgBox(s.mw, config.AppNameCN, "删除后不再自动换壁纸, 确认删除?",
-			walk.MsgBoxYesNo|walk.MsgBoxIconWarning) == walk.DlgCmdYes {
-			if err := scheduler.Delete(); err != nil {
-				showError(s.mw, "%v", err)
-			}
-			s.refreshTaskState()
-		}
-	})
 	return nil
 }
 
@@ -577,7 +580,6 @@ func (s *settings) updatePauseHint() {
 
 func (s *settings) collectServiceConfig() *config.Config {
 	c := *s.cfg
-	c.CloudURL = strings.TrimSpace(s.urlEdit.Text())
 	c.DirectMode = s.directCheck.Checked()
 	c.DirectURL = strings.TrimSpace(s.directURL.Text())
 	c.DirectToken = strings.TrimSpace(s.directTok.Text())
@@ -598,10 +600,16 @@ func (s *settings) collectServiceConfig() *config.Config {
 func (s *settings) saveService() {
 	cfg := s.collectServiceConfig()
 	*s.cfg = *cfg
+	// 回访周期变化时从现在起算(后续满意仍沿记忆曲线自动上调)
+	if days := int(s.askSpin.Value()); days != s.cfg.Satisfaction.IntervalDays {
+		s.cfg.Satisfaction.IntervalDays = days
+		s.cfg.Satisfaction.NextAskAt = time.Now().AddDate(0, 0, days).Format(time.RFC3339)
+	}
 	if err := s.cfg.Save(s.dir); err != nil {
 		showError(s.mw, "保存失败: %v", err)
 		return
 	}
+	s.refreshAskLabel()
 	s.be, s.cc = makeBackend(s.cfg)
 	exe, err := os.Executable()
 	if err == nil {
@@ -611,26 +619,18 @@ func (s *settings) saveService() {
 				showError(s.mw, "复制程序失败: %v", err)
 			}
 		}
-		// 计划任务固定每小时(tick 内部按用户频率节流; 频率改动即时生效)
+		// 计划任务固定每小时(tick 内部节流): 静默保障, 用户无需参与
 		if err := scheduler.Register(dst, 1, s.cfg.PhaseMinutes); err != nil {
-			showError(s.mw, "任务注册失败: %v", err)
+			s.st.Log("settings: 任务注册失败: %v", err)
 		} else {
 			s.cfg.TaskTickHours = 1
 			_ = s.cfg.Save(s.dir)
-			showInfo(s.mw, "设置已保存, 计划任务已修复。")
 		}
 	}
-	s.refreshTaskState()
+	showInfo(s.mw, "设置已保存。")
 }
 
-func (s *settings) refreshTaskState() {
-	state, err := scheduler.QueryState()
-	if err != nil || state == "" {
-		s.taskLbl.SetText("计划任务: 未注册(点击\"保存并修复任务\"注册)")
-		return
-	}
-	s.taskLbl.SetText("计划任务: " + state)
-}
+// removed: refreshTaskState (计划任务管理已从 UI 移除, 后台自动维护)
 
 // ---------- 历史页 ----------
 
@@ -755,31 +755,7 @@ func (s *settings) reapplySelected() {
 
 // ---------- 同步页 ----------
 
-func (s *settings) buildSyncPage(tab *walk.TabWidget) error {
-	page, err := newPage(tab, "同步")
-	if err != nil {
-		return err
-	}
-	s.userLbl, _ = walk.NewLabel(page)
-	s.userLbl.SetText("匿名用户 ID: " + s.cfg.UserID + "   (零注册零登录)")
-	s.syncLbl, _ = walk.NewLabel(page)
-	s.syncLbl.SetText("同步状态: 正常(每轮出图自动同步)")
-
-	btnRow, _ := walk.NewComposite(page)
-	_ = btnRow.SetLayout(walk.NewHBoxLayout())
-	qrBtn, _ := walk.NewPushButton(btnRow)
-	qrBtn.SetText("生成配对二维码 (迁到新设备)")
-	qrBtn.Clicked().Attach(func() { s.createLink() })
-	redeemBtn, _ := walk.NewPushButton(btnRow)
-	redeemBtn.SetText("输入配对码 (从旧设备恢复)")
-	redeemBtn.Clicked().Attach(func() { s.redeemLink() })
-
-	hint, _ := walk.NewLabel(page)
-	hint.SetText("说明: 换机/重装时, 在旧设备生成二维码,\n" +
-		"用手机扫码打开中转页(或直接读取配对码), 在新设备输入 6 位配对码即可领回同一画像;\n" +
-		"无需注册账号, 云端数据不会清除。")
-	return nil
-}
+// removed: buildSyncPage (已并入设置页)
 
 func (s *settings) createLink() {
 	if s.cc == nil {
@@ -834,51 +810,7 @@ func (s *settings) redeemLink() {
 
 // ---------- 更新与回访页 ----------
 
-func (s *settings) buildUpdatePage(tab *walk.TabWidget) error {
-	page, err := newPage(tab, "更新与回访")
-	if err != nil {
-		return err
-	}
-	s.versionLbl, _ = walk.NewLabel(page)
-	s.versionLbl.SetText("当前版本: " + update.CurrentVersion)
-
-	btnRow, _ := walk.NewComposite(page)
-	_ = btnRow.SetLayout(walk.NewHBoxLayout())
-	checkBtn, _ := walk.NewPushButton(btnRow)
-	checkBtn.SetText("检查更新")
-	checkBtn.Clicked().Attach(func() { s.checkUpdate() })
-	s.updateLbl, _ = walk.NewLabel(btnRow)
-	s.updateLbl.SetText("")
-
-	askRow, _ := walk.NewComposite(page)
-	_ = askRow.SetLayout(walk.NewHBoxLayout())
-	s.askLbl, _ = walk.NewLabel(askRow)
-	s.refreshAskLabel()
-	lbl, _ := walk.NewLabel(askRow)
-	lbl.SetText("  回访周期(天):")
-	s.askSpin, _ = walk.NewNumberEdit(askRow)
-	s.askSpin.SetDecimals(0)
-	s.askSpin.SetRange(1, 365)
-	s.askSpin.SetValue(float64(s.cfg.Satisfaction.IntervalDays))
-	saveBtn, _ := walk.NewPushButton(askRow)
-	saveBtn.SetText("保存")
-	saveBtn.Clicked().Attach(func() {
-		s.cfg.Satisfaction.IntervalDays = int(s.askSpin.Value())
-		// 手动周期直接生效(从现在起算), 后续满意仍沿曲线阶梯上调
-		s.cfg.Satisfaction.NextAskAt = time.Now().AddDate(0, 0, s.cfg.Satisfaction.IntervalDays).Format(time.RFC3339)
-		if err := s.cfg.Save(s.dir); err != nil {
-			showError(s.mw, "保存失败: %v", err)
-			return
-		}
-		s.refreshAskLabel()
-		showInfo(s.mw, "回访周期已保存。")
-	})
-
-	openBtn, _ := walk.NewPushButton(page)
-	openBtn.SetText("打开数据目录 (config/profile/日志/壁纸)")
-	openBtn.Clicked().Attach(func() { openFolder(s.dir) })
-	return nil
-}
+// removed: buildUpdatePage (已并入设置页)
 
 func (s *settings) refreshAskLabel() {
 	next := s.cfg.Satisfaction.NextAskTime()
