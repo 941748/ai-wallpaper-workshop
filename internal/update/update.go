@@ -21,7 +21,7 @@ import (
 )
 
 // CurrentVersion 当前客户端版本(每次发版递增, 与 Release tag 对齐)。
-const CurrentVersion = "1.0.2"
+const CurrentVersion = "1.0.3"
 
 // CompareVersions 比较语义化版本: a<b 返回 -1, a==b 返回 0, a>b 返回 1。
 func CompareVersions(a, b string) int {
