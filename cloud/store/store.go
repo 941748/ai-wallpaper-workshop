@@ -98,21 +98,6 @@ CREATE TABLE IF NOT EXISTS jobs (
   updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, priority, created_at);
-CREATE TABLE IF NOT EXISTS pregen (
-  user_id         TEXT PRIMARY KEY,
-  profile_version INTEGER NOT NULL,
-  job_id          TEXT,
-  ready           INTEGER NOT NULL DEFAULT 0,
-  positive        TEXT,
-  negative        TEXT,
-  combo           TEXT,
-  seed            INTEGER,
-  workflow_id     TEXT,
-  width           INTEGER,
-  height          INTEGER,
-  image_path      TEXT,
-  updated_at      TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS link_tickets (
   code       TEXT PRIMARY KEY,
   user_id    TEXT NOT NULL,
@@ -133,7 +118,46 @@ CREATE TABLE IF NOT EXISTS site_events (
 );
 CREATE INDEX IF NOT EXISTS idx_site_events ON site_events(kind, ts);
 `
-	_, err := s.db.Exec(schema)
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	return s.createPregenTable()
+}
+
+// createPregenTable 建(或确保)新版 pregen 表: 以 job_id 为主键, 支持每用户多单并存
+// (补池"一次出多张"); 检测到旧版主键(user_id, 每用户单行)时重建。表内容仅为待提货
+// 短周期缓冲, 重建后客户端下轮自动重新补池, 无实质损失。
+// 注意: 索引必须在表结构确认为新版后创建(旧表无 created_at 列)。
+func (s *Store) createPregenTable() error {
+	const ddl = `CREATE TABLE IF NOT EXISTS pregen (
+  job_id          TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL,
+  profile_version INTEGER NOT NULL,
+  ready           INTEGER NOT NULL DEFAULT 0,
+  positive        TEXT,
+  negative        TEXT,
+  combo           TEXT,
+  seed            INTEGER,
+  workflow_id     TEXT,
+  width           INTEGER,
+  height          INTEGER,
+  image_path      TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+)`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return err
+	}
+	var pkCol string
+	if err := s.db.QueryRow(`SELECT name FROM pragma_table_info('pregen') WHERE pk>0 LIMIT 1`).Scan(&pkCol); err == nil && pkCol != "" && pkCol != "job_id" {
+		if _, err := s.db.Exec(`DROP TABLE pregen`); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(ddl); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_pregen_user ON pregen(user_id, ready, created_at)`)
 	return err
 }
 
@@ -423,7 +447,10 @@ func (s *Store) PurgeJobs(before time.Time) error {
 
 // ---------- pregen ----------
 
-// Pregen 预生成状态。
+// maxPregenPerUser 每用户保留的预生成条数上限(防御异常积累; 正常节奏由客户端补池与提货删除控制)。
+const maxPregenPerUser = 6
+
+// Pregen 预生成状态(一次预生成=一行, 以 job_id 唯一)。
 type Pregen struct {
 	UserID         string
 	ProfileVersion int
@@ -439,25 +466,12 @@ type Pregen struct {
 	ImagePath      string
 }
 
-// UpsertPregen 覆盖式写入预生成请求(旧成品作废)。
-func (s *Store) UpsertPregen(p Pregen) error {
-	_, err := s.db.Exec(`INSERT INTO pregen(user_id, profile_version, job_id, ready, positive, negative, combo, seed, workflow_id, width, height, image_path, updated_at)
-VALUES(?,?,?,0,?,?,?,?,?,?,?, '', ?)
-ON CONFLICT(user_id) DO UPDATE SET profile_version=excluded.profile_version, job_id=excluded.job_id,
-ready=0, positive=excluded.positive, negative=excluded.negative, combo=excluded.combo, seed=excluded.seed,
-workflow_id=excluded.workflow_id, width=excluded.width, height=excluded.height, image_path='', updated_at=excluded.updated_at`,
-		p.UserID, p.ProfileVersion, p.JobID, p.Positive, p.Negative, p.Combo, p.Seed, p.WorkflowID,
-		p.Width, p.Height, time.Now().Format(timeFmt))
-	return err
-}
+const pregenCols = `job_id, user_id, profile_version, ready, positive, negative, COALESCE(combo,''), seed, workflow_id, width, height, COALESCE(image_path,'')`
 
-// GetPregen 读取预生成状态。
-func (s *Store) GetPregen(userID string) (*Pregen, error) {
-	row := s.db.QueryRow(`SELECT user_id, profile_version, COALESCE(job_id,''), ready, positive, negative, COALESCE(combo,''), seed, workflow_id, width, height, COALESCE(image_path,'')
-FROM pregen WHERE user_id=?`, userID)
+func scanPregen(row *sql.Row) (*Pregen, error) {
 	var p Pregen
 	var ready int
-	if err := row.Scan(&p.UserID, &p.ProfileVersion, &p.JobID, &ready, &p.Positive, &p.Negative,
+	if err := row.Scan(&p.JobID, &p.UserID, &p.ProfileVersion, &ready, &p.Positive, &p.Negative,
 		&p.Combo, &p.Seed, &p.WorkflowID, &p.Width, &p.Height, &p.ImagePath); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -468,11 +482,99 @@ FROM pregen WHERE user_id=?`, userID)
 	return &p, nil
 }
 
-// SetPregenReady 预生成完成。
-func (s *Store) SetPregenReady(userID, imagePath string) error {
-	_, err := s.db.Exec(`UPDATE pregen SET ready=1, image_path=?, updated_at=? WHERE user_id=?`,
-		imagePath, time.Now().Format(timeFmt), userID)
+// InsertPregen 写入一条预生成请求(每单一行, 不覆盖已有单)。
+func (s *Store) InsertPregen(p Pregen) error {
+	now := time.Now().Format(timeFmt)
+	_, err := s.db.Exec(`INSERT INTO pregen(job_id, user_id, profile_version, ready, positive, negative, combo, seed, workflow_id, width, height, image_path, created_at, updated_at)
+VALUES(?,?,?,0,?,?,?,?,?,?,?, '', ?, ?)`,
+		p.JobID, p.UserID, p.ProfileVersion, p.Positive, p.Negative, p.Combo, p.Seed, p.WorkflowID,
+		p.Width, p.Height, now, now)
+	if err != nil {
+		return err
+	}
+	// 每用户上限: 超出时清理最旧(异常积累不影响正常滚动)
+	_, _ = s.db.Exec(`DELETE FROM pregen WHERE user_id=? AND job_id NOT IN (
+		SELECT job_id FROM pregen WHERE user_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?)`,
+		p.UserID, p.UserID, maxPregenPerUser)
+	return nil
+}
+
+// PeekPregenReady 取该用户最早就绪的一条(profileVersion>0 时按画像版本过滤), 不删除。
+func (s *Store) PeekPregenReady(userID string, profileVersion int) (*Pregen, error) {
+	q := `SELECT ` + pregenCols + ` FROM pregen WHERE user_id=? AND ready=1`
+	args := []any{userID}
+	if profileVersion > 0 {
+		q += ` AND profile_version=?`
+		args = append(args, profileVersion)
+	}
+	q += ` ORDER BY created_at ASC, rowid ASC LIMIT 1`
+	return scanPregen(s.db.QueryRow(q, args...))
+}
+
+// PeekPregenByJob 查指定单状态(校验归属, 不删除)。
+func (s *Store) PeekPregenByJob(userID, jobID string) (*Pregen, error) {
+	return scanPregen(s.db.QueryRow(`SELECT `+pregenCols+` FROM pregen WHERE user_id=? AND job_id=?`, userID, jobID))
+}
+
+// PopPregenReady 原子取走该用户"当前画像版本(ready 行中最大版本)最早就绪"的一条, 老客户端无 job_id 路径。
+// 老客户端提货不带版本参数, 取最大版本可避免弹到改偏好前残留的旧版本成品。
+func (s *Store) PopPregenReady(userID string) (*Pregen, error) {
+	return s.popPregen(userID, "")
+}
+
+// PopPregenByJob 原子取走指定单(校验归属), 新版客户端按 job_id 提货。
+func (s *Store) PopPregenByJob(userID, jobID string) (*Pregen, error) {
+	return s.popPregen(userID, jobID)
+}
+
+func (s *Store) popPregen(userID, jobID string) (*Pregen, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := `SELECT ` + pregenCols + ` FROM pregen WHERE user_id=? AND ready=1`
+	args := []any{userID}
+	if jobID != "" {
+		q += ` AND job_id=?`
+		args = append(args, jobID)
+	} else {
+		q += ` AND profile_version=(SELECT COALESCE(MAX(profile_version),0) FROM pregen p2 WHERE p2.user_id=? AND p2.ready=1)`
+		args = append(args, userID)
+	}
+	q += ` ORDER BY created_at ASC, rowid ASC LIMIT 1`
+	p, err := scanPregen(tx.QueryRow(q, args...))
+	if err != nil || p == nil {
+		return p, err
+	}
+	if _, err := tx.Exec(`DELETE FROM pregen WHERE job_id=?`, p.JobID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// SetPregenReady 预生成完成(按 job_id 定位)。
+func (s *Store) SetPregenReady(jobID, imagePath string) error {
+	_, err := s.db.Exec(`UPDATE pregen SET ready=1, image_path=?, updated_at=? WHERE job_id=?`,
+		imagePath, time.Now().Format(timeFmt), jobID)
 	return err
+}
+
+// CountPregens 该用户当前预生成条数(测试/诊断)。
+func (s *Store) CountPregens(userID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pregen WHERE user_id=?`, userID).Scan(&n)
+	return n, err
+}
+
+// CountReadyPregens 该用户已就绪的预生成条数(测试/诊断)。
+func (s *Store) CountReadyPregens(userID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pregen WHERE user_id=? AND ready=1`, userID).Scan(&n)
+	return n, err
 }
 
 // ---------- link tickets ----------

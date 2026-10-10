@@ -373,19 +373,26 @@ type PregenInfo struct {
 	Height         int               `json:"height"`
 }
 
-// PregenFetch 取预生成结果(无则 ready=false; 画像版本过期同样 ready=false)。
-func (c *Client) PregenFetch(ctx context.Context, profileVersion int) (*PregenInfo, error) {
+// PregenFetch 取预生成结果(无则 ready=false); jobID 非空时按单精确查询(补池多单场景)。
+func (c *Client) PregenFetch(ctx context.Context, profileVersion int, jobID string) (*PregenInfo, error) {
 	var out PregenInfo
 	path := fmt.Sprintf("/pregen?profile_version=%d", profileVersion)
+	if jobID != "" {
+		path += "&job_id=" + jobID
+	}
 	if err := c.doJSON(ctx, c.meta, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// PregenImage 下载预生成成品图。
-func (c *Client) PregenImage(ctx context.Context) ([]byte, error) {
-	return c.doRaw(ctx, c.long, http.MethodGet, "/pregen/image")
+// PregenImage 下载预生成成品图; jobID 非空时按单提货(服务端提走即删)。
+func (c *Client) PregenImage(ctx context.Context, jobID string) ([]byte, error) {
+	path := "/pregen/image"
+	if jobID != "" {
+		path += "?job_id=" + jobID
+	}
+	return c.doRaw(ctx, c.long, http.MethodGet, path)
 }
 
 // ---------- 运营策略 ----------

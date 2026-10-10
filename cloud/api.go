@@ -458,7 +458,7 @@ func (a *API) handlePregenSubmit(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = a.st.UpsertPregen(store.Pregen{
+	_ = a.st.InsertPregen(store.Pregen{
 		UserID: u.UserID, ProfileVersion: req.ProfileVersion, JobID: jobID,
 		Positive: dec.Positive, Negative: dec.Negative, Combo: comboJSON,
 		Seed: dec.Seed, WorkflowID: dec.WorkflowID, Width: dec.Width, Height: dec.Height,
@@ -473,8 +473,15 @@ func (a *API) handlePregenFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pv, _ := strconv.Atoi(r.URL.Query().Get("profile_version"))
-	p, err := a.st.GetPregen(u.UserID)
-	if err != nil || p == nil || !p.Ready || p.ProfileVersion != pv {
+	// job_id 可选: 新版客户端按单精确查询(补池多单); 缺省时返回"当前版本最早就绪"一条(兼容老客户端)。
+	var p *store.Pregen
+	var err error
+	if jobID := r.URL.Query().Get("job_id"); jobID != "" {
+		p, err = a.st.PeekPregenByJob(u.UserID, jobID)
+	} else {
+		p, err = a.st.PeekPregenReady(u.UserID, pv)
+	}
+	if err != nil || p == nil || !p.Ready {
 		writeOK(w, map[string]any{"ready": false, "profile_version": pv})
 		return
 	}
@@ -483,7 +490,7 @@ func (a *API) handlePregenFetch(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(p.Combo), &combo)
 	}
 	writeOK(w, map[string]any{
-		"ready": true, "profile_version": p.ProfileVersion,
+		"ready": true, "profile_version": p.ProfileVersion, "job_id": p.JobID,
 		"positive": p.Positive, "negative": p.Negative, "combo": combo,
 		"seed": p.Seed, "workflow_id": p.WorkflowID, "width": p.Width, "height": p.Height,
 	})
@@ -494,7 +501,14 @@ func (a *API) handlePregenImage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, err := a.st.GetPregen(u.UserID)
+	// job_id 可选: 新版客户端按单提货(提走即删); 缺省时提"当前版本最早就绪"一条(兼容老客户端)。
+	var p *store.Pregen
+	var err error
+	if jobID := r.URL.Query().Get("job_id"); jobID != "" {
+		p, err = a.st.PopPregenByJob(u.UserID, jobID)
+	} else {
+		p, err = a.st.PopPregenReady(u.UserID)
+	}
 	if err != nil || p == nil || !p.Ready || p.ImagePath == "" {
 		writeFail(w, http.StatusNotFound, "暂无预生成成品")
 		return

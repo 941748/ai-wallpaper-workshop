@@ -87,7 +87,7 @@ func (q *queue) process(ctx context.Context, job *store.Job) {
 		// 公共探针池: 存到 probes/<id>.png
 		path = filepath.Join(q.dataDir, "probes", job.Combo+".png")
 	case "pregen":
-		path = filepath.Join(q.dataDir, "pregen", job.UserID+".png")
+		path = filepath.Join(q.dataDir, "pregen", job.JobID+".png")
 	default:
 		path = filepath.Join(q.dataDir, "images", job.JobID+".png")
 	}
@@ -107,7 +107,7 @@ func (q *queue) process(ctx context.Context, job *store.Job) {
 	_ = q.st.SetJobStatus(job.JobID, "done", "", path)
 
 	if job.Kind == "pregen" {
-		_ = q.st.SetPregenReady(job.UserID, path)
+		_ = q.st.SetPregenReady(job.JobID, path)
 	}
 	q.logf("任务完成 job=%s kind=%s -> %s", job.JobID, job.Kind, path)
 }

@@ -70,15 +70,27 @@ func TestCleanVersionAndPending(t *testing.T) {
 	if n := Count(dir); n != 1 {
 		t.Fatalf("count=%d want 1", n)
 	}
-	if err := SavePending(dir, Pending{JobID: "j1", ProfileVersion: 1, Since: "t"}); err != nil {
+	if err := SavePendings(dir, []Pending{{JobID: "j1", ProfileVersion: 1, Since: "t"}}); err != nil {
 		t.Fatal(err)
 	}
-	if p := LoadPending(dir); p == nil || p.JobID != "j1" {
-		t.Fatalf("pending: %+v", p)
+	if ps := LoadPendings(dir); len(ps) != 1 || ps[0].JobID != "j1" {
+		t.Fatalf("pendings: %+v", ps)
 	}
-	ClearPending(dir)
-	if p := LoadPending(dir); p != nil {
-		t.Fatal("pending should be cleared")
+	// 兼容旧版单对象格式(升级前遗留文件)
+	if err := os.WriteFile(pendPath(dir), []byte(`{"job_id":"old1","profile_version":1,"since":"t"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ps := LoadPendings(dir); len(ps) != 1 || ps[0].JobID != "old1" {
+		t.Fatalf("legacy pending: %+v", ps)
+	}
+	if err := SavePendings(dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	if ps := LoadPendings(dir); ps != nil {
+		t.Fatal("pendings should be cleared")
+	}
+	if _, err := os.Stat(pendPath(dir)); !os.IsNotExist(err) {
+		t.Fatal("pending file should be removed")
 	}
 }
 

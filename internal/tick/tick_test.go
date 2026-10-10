@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ type mockCloud struct {
 	nextCalls     int
 	pregenSubmits int
 	pregenFetches int
+	pregenSeq     int
 	forceShake    bool
 	prompts       []cloud.PromptRecord
 	signalsGot    [][]signals.Event
@@ -101,7 +103,8 @@ func (m *mockCloud) handler() http.Handler {
 		defer m.mu.Unlock()
 		if r.Method == http.MethodPost {
 			m.pregenSubmits++
-			writeEnv(w, map[string]any{"queued": true, "job_id": "pg-test"})
+			m.pregenSeq++
+			writeEnv(w, map[string]any{"queued": true, "job_id": "pg-" + strconv.Itoa(m.pregenSeq)})
 			return
 		}
 		m.pregenFetches++
@@ -235,15 +238,15 @@ func TestRunOnceCloudHappyPath(t *testing.T) {
 	if b := img.Bounds(); b.Dx() != 1920 || b.Dy() != 1080 {
 		t.Fatalf("wallpaper not fitted to screen: %v", b)
 	}
-	// 云端 LLM 被调用 1 次, 上报 1 条, 预约了下一轮预生成
+	// 云端 LLM 被调用 1 次, 上报 1 条, 备用池按目标一次补齐 3 单预生成
 	if m.nextCalls != 1 {
 		t.Fatalf("nextCalls=%d", m.nextCalls)
 	}
 	if len(m.prompts) != 1 || m.prompts[0].Source != "cloud" || !m.prompts[0].Success {
 		t.Fatalf("prompt report wrong: %+v", m.prompts)
 	}
-	if m.pregenSubmits != 1 {
-		t.Fatalf("pregenSubmits=%d", m.pregenSubmits)
+	if m.pregenSubmits != 3 {
+		t.Fatalf("pregenSubmits=%d want 3", m.pregenSubmits)
 	}
 	// 历史写入 1 条
 	hraw, err := os.ReadFile(filepath.Join(te.dir, "prompt_history.json"))
@@ -257,14 +260,17 @@ func TestRunOnceCloudHappyPath(t *testing.T) {
 }
 
 func TestRunOncePoolFetchDelivers(t *testing.T) {
-	// 在途补池单 + 云端已就绪 → 本轮提货入池; 次轮换图走池, 池空后补新单
+	// 在途补池单 + 云端已就绪 → 本轮全部提回池(一次可提多张); 次轮换图优先走池
 	m := &mockCloud{pngData: gradientPNG(t, 1344, 768), pregenReady: true}
 	m.srv = httptest.NewServer(m.handler())
 	defer m.srv.Close()
 
 	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)}
 	setupClient(t, m.srv.URL, te)
-	if err := pool.SavePending(te.dir, pool.Pending{JobID: "pg-x", ProfileVersion: 1, Since: te.now.Format(time.RFC3339)}); err != nil {
+	if err := pool.SavePendings(te.dir, []pool.Pending{
+		{JobID: "pg-x1", ProfileVersion: 1, Since: te.now.Format(time.RFC3339)},
+		{JobID: "pg-x2", ProfileVersion: 1, Since: te.now.Format(time.RFC3339)},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := RunOnce(context.Background(), te.env(m.srv.URL, m)); err != nil {
@@ -273,17 +279,21 @@ func TestRunOncePoolFetchDelivers(t *testing.T) {
 	if te.wpPath == "" {
 		t.Fatal("wallpaper not set")
 	}
-	if m.pregenFetches != 1 {
-		t.Fatalf("pregenFetches=%d", m.pregenFetches)
+	// 首轮: 池空实时出图; 补池把两张在途全提入池, 再按缺额补 1 单
+	if m.pregenFetches != 2 {
+		t.Fatalf("pregenFetches=%d want 2", m.pregenFetches)
 	}
-	if pool.Count(te.dir) != 1 {
-		t.Fatalf("pool count=%d want 1", pool.Count(te.dir))
+	if pool.Count(te.dir) != 2 {
+		t.Fatalf("pool count=%d want 2", pool.Count(te.dir))
 	}
-	if pool.LoadPending(te.dir) != nil {
-		t.Fatal("pending should be cleared after delivery")
+	if len(pool.LoadPendings(te.dir)) != 1 {
+		t.Fatalf("pending=%d want 1 (缺额新单)", len(pool.LoadPendings(te.dir)))
+	}
+	if m.pregenSubmits != 1 {
+		t.Fatalf("pregenSubmits=%d want 1", m.pregenSubmits)
 	}
 
-	// 第二轮: 池有图 → 换图走池(推进到 15:00 活跃时段); 池空后补池下新单
+	// 第二轮: 池有图 → 换图走池; 在途新单就绪再提回
 	te.now = te.now.Add(5 * time.Hour)
 	if err := RunOnce(context.Background(), te.env(m.srv.URL, m)); err != nil {
 		t.Fatal(err)
@@ -291,11 +301,9 @@ func TestRunOncePoolFetchDelivers(t *testing.T) {
 	if got := m.prompts[len(m.prompts)-1].Source; got != "pool" {
 		t.Fatalf("second round source=%s want pool", got)
 	}
-	if m.pregenSubmits != 1 {
-		t.Fatalf("pregenSubmits=%d want 1", m.pregenSubmits)
-	}
-	if pool.Count(te.dir) != 0 {
-		t.Fatalf("pool should be consumed, count=%d", pool.Count(te.dir))
+	// 池 2 换走 1 = 1; 在途新单提回 = 2
+	if pool.Count(te.dir) != 2 {
+		t.Fatalf("pool count=%d want 2", pool.Count(te.dir))
 	}
 }
 

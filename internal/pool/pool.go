@@ -112,35 +112,46 @@ func CleanVersion(root string, version int) int {
 	return removed
 }
 
-// ---------- 在途补池单 ----------
+// ---------- 在途补池单(支持一次补池多单) ----------
 
-// LoadPending 读取在途补池单; 无则返回 nil。
-func LoadPending(root string) *Pending {
+// LoadPendings 读取全部在途补池单; 兼容旧版单对象格式。
+func LoadPendings(root string) []Pending {
 	raw, err := os.ReadFile(pendPath(root))
 	if err != nil {
 		return nil
 	}
-	var p Pending
-	if json.Unmarshal(raw, &p) != nil || p.JobID == "" {
-		return nil
+	var list []Pending
+	if json.Unmarshal(raw, &list) == nil {
+		out := make([]Pending, 0, len(list))
+		for _, p := range list {
+			if p.JobID != "" {
+				out = append(out, p)
+			}
+		}
+		return out
 	}
-	return &p
+	var one Pending // 兼容旧版单对象格式
+	if json.Unmarshal(raw, &one) == nil && one.JobID != "" {
+		return []Pending{one}
+	}
+	return nil
 }
 
-// SavePending 记录在途补池单。
-func SavePending(root string, p Pending) error {
+// SavePendings 覆盖写入在途补池单; 空列表清除文件。
+func SavePendings(root string, ps []Pending) error {
+	if len(ps) == 0 {
+		_ = os.Remove(pendPath(root))
+		return nil
+	}
 	if err := os.MkdirAll(poolDir(root), 0o755); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(p, "", "  ")
+	raw, err := json.MarshalIndent(ps, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(pendPath(root), raw, 0o644)
 }
-
-// ClearPending 清除在途补池单。
-func ClearPending(root string) { _ = os.Remove(pendPath(root)) }
 
 func loadEntries(root string) []Entry {
 	raw, err := os.ReadFile(metaPath(root))

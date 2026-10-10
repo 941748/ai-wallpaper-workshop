@@ -110,7 +110,7 @@ func newTestServer(t *testing.T, llmBase string, withLLM bool) *testServer {
 		logf: func(string, ...any) {}, idleDelay: time.Millisecond}
 	api := &API{st: st, llm: llmClient, reg: reg, q: q, dataDir: data,
 		version: "test", logf: func(string, ...any) {},
-		genHour: 6, genDay: 40, llmHour: 8, llmDay: 60}
+		genHour: 12, genDay: 60, llmHour: 16, llmDay: 90}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go q.Run(ctx)

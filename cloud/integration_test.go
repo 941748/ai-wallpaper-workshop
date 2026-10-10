@@ -84,24 +84,22 @@ func TestClientTickAgainstRealCloud(t *testing.T) {
 	}
 
 	// 预生成已下单
-	if p, _ := ts.st.GetPregen(userID); p == nil {
+	if n, _ := ts.st.CountPregens(userID); n == 0 {
 		t.Fatal("pregen not submitted")
 	}
-	// 等待预生成就绪(idle 队列, 测试中延迟 1ms)
-	deadline := time.Now().Add(10 * time.Second)
-	pregenReady := false
+	// 等待 3 张预生成全部就绪(idle 队列, 测试中延迟 1ms; worker 每 2s 消化一单)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		if p, _ := ts.st.GetPregen(userID); p != nil && p.Ready {
-			pregenReady = true
+		if n, _ := ts.st.CountReadyPregens(userID); n >= 3 {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if !pregenReady {
-		t.Fatal("pregen not ready")
+	if n, _ := ts.st.CountReadyPregens(userID); n < 3 {
+		t.Fatalf("pregen not all ready, ready=%d", n)
 	}
 
-	// 第二轮: 现取出图 + 在途预生成提货入本地备用池(12:00 已出活跃时段, 推进到 11:00 下一小时)
+	// 第二轮: 现取出图 + 在途预生成全部提回本地备用池(一次可提多张)
 	now = now.Add(1 * time.Hour)
 	wpPath = ""
 	if err := tick.RunOnce(context.Background(), env); err != nil {
@@ -114,10 +112,10 @@ func TestClientTickAgainstRealCloud(t *testing.T) {
 	if prompts[0].Source != "cloud" {
 		t.Fatalf("round2 should be realtime, got source=%s", prompts[0].Source)
 	}
-	if pool.Count(clientDir) != 1 {
-		t.Fatalf("round2: pool count=%d want 1", pool.Count(clientDir))
+	if pool.Count(clientDir) != 3 {
+		t.Fatalf("round2: pool count=%d want 3", pool.Count(clientDir))
 	}
-	if pool.LoadPending(clientDir) != nil {
+	if len(pool.LoadPendings(clientDir)) != 0 {
 		t.Fatal("round2: pending should be cleared after delivery")
 	}
 
@@ -134,8 +132,8 @@ func TestClientTickAgainstRealCloud(t *testing.T) {
 	if prompts[0].Source != "pool" {
 		t.Fatalf("round2b should hit pool, got source=%s", prompts[0].Source)
 	}
-	if pool.Count(clientDir) != 0 {
-		t.Fatalf("round2b: pool should be consumed, count=%d", pool.Count(clientDir))
+	if pool.Count(clientDir) != 2 {
+		t.Fatalf("round2b: pool count=%d want 2 (3-1 命中消耗)", pool.Count(clientDir))
 	}
 
 	// 第三轮: 满意度回访"换个风格"到期(注意与 env.Now 用同一时间基准)

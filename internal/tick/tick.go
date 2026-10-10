@@ -466,33 +466,75 @@ func changeWindow(env Env, cfg *config.Config, pol policy.Policy, now time.Time,
 	return true, ""
 }
 
-// replenishPool 补池: 本地备用池(含在途)不足目标时补货, 每轮最多 1 张(天然限流);
+// maxPoolSubmitPerTick 单轮补池下单上限(默认目标 3 张; 策略调大时多轮自然补齐, 避免挤占云端)。
+const maxPoolSubmitPerTick = 3
+
+// replenishPool 补池: 本地备用池(含在途)不足目标时一次补齐缺额——单轮至多 maxPoolSubmitPerTick 单,
+// 云端 idle 队列在普通出图空闲后逐张完成; 在途单逐单查询, 就绪的当轮全部提回池中。
 // 静默期照常执行, 保证断网/出图拥挤时仍有成品可换; 储备充足则延缓申请避免拥堵。
 func replenishPool(ctx context.Context, env Env, st *store.Store, cc *cloud.Client, cfg *config.Config, pol policy.Policy, profile *config.Profile, history []prompt.HistoryEntry, sw, sh int) {
 	if n := pool.CleanVersion(env.Dir, cfg.ProfileVer); n > 0 {
 		st.Log("tick: 清理失效备用池 %d 张", n)
 	}
-	pend := pool.LoadPending(env.Dir)
-	if pend != nil && pend.ProfileVersion != cfg.ProfileVer {
-		pool.ClearPending(env.Dir)
-		pend = nil
-	}
-	if pend != nil {
-		if t, err := time.Parse(time.RFC3339, pend.Since); err == nil && env.Now().Sub(t) > 24*time.Hour {
-			pool.ClearPending(env.Dir)
-			pend = nil
-			st.Log("tick: 补池在途超时, 已放弃重试")
+	dirty := false
+	// 在途单清理: 画像版本过期 / 超过 24h 未完成
+	pendings := pool.LoadPendings(env.Dir)
+	kept := make([]pool.Pending, 0, len(pendings))
+	for _, p := range pendings {
+		if p.ProfileVersion != cfg.ProfileVer {
+			dirty = true
+			continue
 		}
+		if t, err := time.Parse(time.RFC3339, p.Since); err == nil && env.Now().Sub(t) > 24*time.Hour {
+			st.Log("tick: 补池在途超时, 已放弃重试")
+			dirty = true
+			continue
+		}
+		kept = append(kept, p)
 	}
-	depth := pool.Count(env.Dir)
-	inFlight := 0
-	if pend != nil {
-		inFlight = 1
+	pendings = kept
+
+	// 提货: 遍历在途单, 就绪的逐一提回池中(一次可提多张)
+	rest := make([]pool.Pending, 0, len(pendings))
+	for _, p := range pendings {
+		info, err := cc.PregenFetch(ctx, cfg.ProfileVer, p.JobID)
+		if err != nil || info == nil || !info.Ready {
+			rest = append(rest, p)
+			continue
+		}
+		img, err := cc.PregenImage(ctx, p.JobID)
+		if err != nil || desktop.Inspect(img) != nil {
+			st.Log("tick: 补池提回失败(job=%s), 下轮重试", p.JobID)
+			rest = append(rest, p)
+			continue
+		}
+		if err := pool.Add(env.Dir, pool.Entry{
+			ProfileVersion: cfg.ProfileVer,
+			Positive:       info.Positive,
+			Negative:       info.Negative,
+			Combo:          info.Combo,
+			Seed:           info.Seed,
+			WorkflowID:     info.WorkflowID,
+			Width:          info.Width,
+			Height:         info.Height,
+			CreatedAt:      env.Now().Format(time.RFC3339),
+		}, img); err != nil {
+			st.Log("tick: 补池入池失败: %v", err)
+			rest = append(rest, p)
+			continue
+		}
+		dirty = true
+		st.Log("tick: 补池成功(池 %d/%d)", pool.Count(env.Dir), pol.PoolTarget)
 	}
-	if depth+inFlight >= pol.PoolTarget {
-		return // 储备充足: 延缓出图申请
+	pendings = rest
+
+	// 下单: 不足目标时补齐缺额(单轮上限; 云端 idle 队列自动等出图机空闲)
+	need := pol.PoolTarget - pool.Count(env.Dir) - len(pendings)
+	if need > maxPoolSubmitPerTick {
+		need = maxPoolSubmitPerTick
 	}
-	if pend == nil {
+	submitted := 0
+	for i := 0; i < need; i++ {
 		jobID, err := cc.PregenSubmit(ctx, cloud.PregenReq{
 			ProfileVersion: cfg.ProfileVer,
 			Profile:        profile.Weights,
@@ -505,39 +547,20 @@ func replenishPool(ctx context.Context, env Env, st *store.Store, cc *cloud.Clie
 		})
 		if err != nil {
 			st.Log("tick: 补池下单失败: %v", err)
-			return
+			break
 		}
-		_ = pool.SavePending(env.Dir, pool.Pending{
+		pendings = append(pendings, pool.Pending{
 			JobID:          jobID,
 			ProfileVersion: cfg.ProfileVer,
 			Since:          env.Now().Format(time.RFC3339),
 		})
-		st.Log("tick: 补池下单(池 %d/%d)", depth, pol.PoolTarget)
-		return
+		dirty = true
+		submitted++
 	}
-	// 在途: 查询就绪则提货入池
-	p, err := cc.PregenFetch(ctx, cfg.ProfileVer)
-	if err != nil || !p.Ready {
-		return
+	if submitted > 0 {
+		st.Log("tick: 补池下单 %d 张(池 %d/%d, 在途 %d)", submitted, pool.Count(env.Dir), pol.PoolTarget, len(pendings))
 	}
-	img, err := cc.PregenImage(ctx)
-	if err != nil || desktop.Inspect(img) != nil {
-		return // 下轮重试
+	if dirty {
+		_ = pool.SavePendings(env.Dir, pendings)
 	}
-	if err := pool.Add(env.Dir, pool.Entry{
-		ProfileVersion: cfg.ProfileVer,
-		Positive:       p.Positive,
-		Negative:       p.Negative,
-		Combo:          p.Combo,
-		Seed:           p.Seed,
-		WorkflowID:     p.WorkflowID,
-		Width:          p.Width,
-		Height:         p.Height,
-		CreatedAt:      env.Now().Format(time.RFC3339),
-	}, img); err != nil {
-		st.Log("tick: 补池入池失败: %v", err)
-		return
-	}
-	pool.ClearPending(env.Dir)
-	st.Log("tick: 补池成功(池 %d/%d)", pool.Count(env.Dir), pol.PoolTarget)
 }
