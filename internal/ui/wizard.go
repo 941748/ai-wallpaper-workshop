@@ -377,10 +377,13 @@ func (w *wizard) runConnTest() {
 	go func() {
 		cfg := w.collectConnConfig()
 		err := testConnection(cfg)
+		if err != nil {
+			w.st.Log("向导: 连接测试失败: %v", err)
+		}
 		w.mw.Synchronize(func() {
 			w.busy = false
 			if err != nil {
-				w.connStatusLbl.SetText("连接失败: " + err.Error())
+				w.connStatusLbl.SetText("连接失败: " + friendlyErrText(err) + ", 请稍后重试")
 				w.connStatusLbl.SetTextColor(colRed)
 			} else {
 				w.connStatusLbl.SetText("连接成功 ✓ 云端服务可用, 配额正常")
@@ -427,7 +430,7 @@ func (w *wizard) testAndRegister() bool {
 	w.busy = false
 	if err != nil {
 		w.st.Log("testAndRegister 失败: %v", err)
-		showError(w.mw, "%v", err)
+		showError(w.mw, "暂时无法连接服务(%s), 请稍后重试。", friendlyErrText(err))
 		w.btnNext.SetEnabled(true)
 		return false
 	}
@@ -831,12 +834,13 @@ func (w *wizard) genFirstWallpaper(force bool) {
 		history, _ := w.st.LoadHistory()
 		data, spec, src, err := generateWallpaper(ctx, w.cfg, w.cc, w.be, w.profile, history, force)
 		if err != nil {
+			w.st.Log("向导: 生成失败: %v", err)
 			w.mw.Synchronize(func() {
 				if seq != w.genSeq {
 					return // 已导航离开, 回调过期
 				}
 				w.busy = false
-				w.setStatus("生成失败: "+err.Error(), colRed)
+				w.setStatus("生成失败: "+friendlyErrText(err)+", 可点\"重试\", 或跳过稍后自动生成", colRed)
 				w.stepDone = true
 				w.btnExtra.SetText("重试")
 				w.btnExtra.SetEnabled(true)
@@ -849,6 +853,9 @@ func (w *wizard) genFirstWallpaper(force bool) {
 			err = desktop.SetWallpaper(path)
 			w.st.SetCurrent(path)
 		}
+		if err != nil {
+			w.st.Log("向导: 壁纸应用失败: %v", err)
+		}
 		_ = w.st.AppendHistory(prompt.HistoryEntry{
 			At: time.Now(), Combo: spec.Combo, Positive: spec.Positive,
 			Negative: spec.Negative, Seed: spec.Seed, Source: src,
@@ -859,7 +866,7 @@ func (w *wizard) genFirstWallpaper(force bool) {
 			}
 			w.busy = false
 			if err != nil {
-				w.setStatus("壁纸应用失败: "+err.Error(), colRed)
+				w.setStatus("壁纸应用失败, 请重试或跳过", colRed)
 				w.stepDone = true
 				w.btnExtra.SetText("重试")
 				w.btnExtra.SetEnabled(true)
@@ -906,19 +913,22 @@ func (w *wizard) buildRegisterStep() {
 func (w *wizard) registerTask() {
 	exe, err := os.Executable()
 	if err != nil {
-		w.setStatus("无法定位程序路径: "+err.Error(), colRed)
+		w.st.Log("向导: 定位程序路径失败: %v", err)
+		w.setStatus("程序安装失败, 请重试", colRed)
 		return
 	}
 	dst := filepath.Join(w.st.BinDir(), "wallpaper.exe")
 	if !samePath(exe, dst) {
 		if err := copyFile(exe, dst); err != nil {
-			w.setStatus("复制程序失败: "+err.Error(), colRed)
+			w.st.Log("向导: 复制程序失败: %v", err)
+			w.setStatus("程序安装失败, 请重试", colRed)
 			return
 		}
 	}
 	w.cfg.PhaseMinutes = phaseFromUser(w.cfg.UserID)
 	if err := scheduler.Register(dst, w.cfg.IntervalHours, w.cfg.PhaseMinutes); err != nil {
-		w.setStatus("注册失败: "+err.Error(), colRed)
+		w.st.Log("向导: 计划任务注册失败: %v", err)
+		w.setStatus("计划任务注册失败, 请点击\"重试注册\"", colRed)
 		w.enableNext("重试注册")
 		return
 	}

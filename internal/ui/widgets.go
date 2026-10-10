@@ -9,6 +9,7 @@ import (
 	"image/draw"
 	"image/png"
 	"os/exec"
+	"strings"
 
 	"github.com/lxn/walk"
 
@@ -23,6 +24,43 @@ var (
 	colLike    = color.RGBA{46, 160, 67, 255}
 	colDislike = color.RGBA{200, 60, 60, 255}
 )
+
+// friendlyErrText 将底层错误转为面向用户的简短提示: 含地址/路径等技术细节的错误不外露
+// (如 ComfyUI/云端地址、URL、网络栈原文); 已是友好文案的错误(如 "云端未就绪")原样返回。
+// 完整错误应由调用方写入日志(runtime.log)便于诊断。
+func friendlyErrText(err error) string {
+	if err == nil {
+		return "未知错误"
+	}
+	msg := err.Error()
+	if !looksTechnical(msg) {
+		return msg
+	}
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "timeout") || strings.Contains(low, "deadline"):
+		return "网络连接超时"
+	case strings.Contains(low, "refused") || strings.Contains(low, "unreachable") || strings.Contains(low, "no route"):
+		return "服务暂时不可达"
+	case strings.Contains(low, "no such host") || strings.Contains(low, "dns"):
+		return "网络解析失败"
+	case strings.Contains(low, "eof") || strings.Contains(low, "reset"):
+		return "连接被中断"
+	default:
+		return "暂时无法连接"
+	}
+}
+
+// looksTechnical 判断错误文本是否含 URL/路径/网络栈等不宜直接展示的技术细节。
+func looksTechnical(s string) bool {
+	low := strings.ToLower(s)
+	for _, k := range []string{"://", "http", "dial ", "tcp", "connect", "deadline", "no such host", "eof", "\\"} {
+		if strings.Contains(low, k) {
+			return true
+		}
+	}
+	return false
+}
 
 // decodePNG 解码 PNG 字节。
 func decodePNG(data []byte) (image.Image, error) {
