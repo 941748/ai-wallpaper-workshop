@@ -1,5 +1,7 @@
 # AI 壁纸工坊
 
+[中文](README.md) | [English](README.en.md)
+
 > 每小时,桌面自己变好看。AI 为你一个人出图、自动换壁纸的 Windows 工具。
 
 <p align="center">
@@ -14,6 +16,20 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 
 零注册、零登录、无托盘、无常驻进程——关掉窗口,系统里就没有它的进程。
 
+**当前版本: v1.0.3** · 官网 [cybermesh.space](https://www.cybermesh.space) · 客户端约 10 MB 单文件。
+
+## 下载
+
+| 渠道 | 地址 | 说明 |
+| --- | --- | --- |
+| 官网 | https://www.cybermesh.space | 点「下载 Windows 版客户端」即可 |
+| Gitee Release(国内推荐) | https://gitee.com/QQ941748/ai-wallpaper-workshop/releases | 下载最新版本的 `AIWallpaper.exe` |
+| GitHub Release(备用) | https://github.com/941748/ai-wallpaper-workshop/releases | 同上, 海外访问更快 |
+
+- 系统要求: Windows 10 / 11(64 位)。
+- 下载后双击 `AIWallpaper.exe` 进入初始化向导; 走完向导即开始自动换图。
+- **已装用户无需手动升级**: 客户端每次换图时会静默检查更新, 自动下载校验并换装。
+
 ## 特性
 
 - **无感偏好学习**: 五维问卷(风格 / 题材 / 色调 / 情绪 / 构图)+ 探针图点选建立画像;
@@ -22,6 +38,7 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 - **云端 LLM 规划 + 静默降级**: LLM 结合画像、近 10 轮记录与漂移事件规划下一张;
   不可达/超时时自动回退本地加权采样引擎, 用户无感。
 - **节日与节气语境**: 二十四节气与主要节日临近时, 画面氛围含蓄呼应(如母亲节以康乃馨色柔光致意), 只渲染氛围、不做文字横幅; 可一键关闭。
+- **本地备用池, 断网也能换**: 本机始终储备最多 3 张已生成壁纸, 池子消耗后**按缺额一次补足**(最多一轮 3 张); 断网或出图拥挤时照样秒换。
 - **预生成池**: 出图机空闲时提前生成下一轮, 命中时换壁纸仅需十余秒(省去现场出图的约 30 秒)。
 - **不打扰**: 安静时段、全屏应用、锁屏统统跳过; 满意度回访走记忆曲线(3→7→15→30→60→90 天封顶), 时点更少但永不消失。
 - **隐私友好**: 匿名 token, 零注册; 画像与历史全部留在本机; 出站调用统一走你自托管的云服务。
@@ -62,7 +79,8 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 
 ### 偏好是怎么"学"到的
 
-1. **问卷三态**: 五维 100+ 词条, 点选"喜欢 / 中立 / 讨厌", 映射为画像权重(0.9 / 0.3 / 0.05)。
+1. **问卷三态**: 五维共 74 个词条(风格 22 / 题材 36 / 色调 6 / 情绪 5 / 构图 5),
+   点选"喜欢 / 中立 / 讨厌", 映射为画像权重(0.9 / 0.3 / 0.05)。
 2. **探针校准(可选)**: 12 张平衡组合探针图点选喜好, 推理出更精细的初始权重。
 3. **漂移检测**: 只采纳真实用户行为(重跑向导、重新应用某张壁纸、调权重、回访选择),
    同向证据积累后微调画像; 不依赖"壁纸存活时长"之类的推测信号, 避免打扰与误判。
@@ -75,7 +93,7 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 (提示词由本地引擎生成, 无需 LLM)。
 
 1. 准备 ComfyUI 与模型(见下节「ComfyUI 准备清单」)。
-2. 构建或下载客户端(见「构建」)。
+2. 构建或下载客户端(见「下载」与「构建」)。
 3. 双击运行 → 向导勾选直连 → 填 `http://127.0.0.1:8188` → 走完向导。
 
 ### 方式二: 云端模式(推荐, 无显卡设备也能用)
@@ -104,6 +122,9 @@ go test ./...     # 全部单元/集成测试(含跨模块端到端: 真实 tick
 go vet ./...
 go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\wallpaper.exe .
 ```
+
+> 命名说明: 源码构建产物为 `dist\wallpaper.exe`; **对外分发时重命名为 `AIWallpaper.exe`**
+> (即用户在官网 / Release 下载、以及安装后位于 `%LOCALAPPDATA%\AIWallpaper\bin\` 的文件名)。
 
 ## 项目结构
 
@@ -134,6 +155,7 @@ wallpaper/
 │   ├── workflows.go              # 出图工作流注册表(白名单)
 │   ├── llm/client.go             # OpenAI 兼容 LLM 客户端(默认小米 MiMo)
 │   └── store/                    # SQLite: users/prompt_records/signals/jobs/pregen/...
+├── site/                         # 官网静态页(推广与客户端下载)
 └── docs/screenshots/             # README 截图
 ```
 
@@ -142,8 +164,8 @@ wallpaper/
 | 运行方式 | 行为 |
 | --- | --- |
 | 双击运行(无参数) | 首次 → 初始化向导; 之后 → 设置面板。**关闭窗口 = 进程立即退出** |
-| `wallpaper.exe --tick` | 计划任务每小时触发: 无窗口静默出图换壁纸后退出 |
-| `wallpaper.exe --apply-update ...` | 内部换装助手(静默自更新用, 普通用户无需关心) |
+| `AIWallpaper.exe --tick` | 计划任务每小时触发: 无窗口静默出图换壁纸后退出 |
+| `AIWallpaper.exe --apply-update ...` | 内部换装助手(静默自更新用, 普通用户无需关心) |
 
 设置面板页签: 偏好(权重调节/重新初始化) | 服务与调度(地址/测试连接/间隔/任务注册与删除/立即换一张) |
 历史(缩略图/重新应用/打开目录) | 同步(匿名 user_id/扫码配对新设备) | 更新与回访(版本/更新检查/回访周期)。
@@ -160,7 +182,7 @@ prompt_history.json  最近 200 条出图组合(近 30 条去重)
 cloud_queue.json     离线补传队列(最多重试 7 天)
 signals.json         待上报的漂移事件
 probes\ wallpapers\  探针缓存 / 壁纸留档(保留最近 30 张, 排除当前使用中)
-bin\wallpaper.exe    向导注册计划任务时复制的正式副本
+bin\AIWallpaper.exe  向导注册计划任务时复制的正式副本
 logs\runtime.log     运行日志(1MB × 3 份轮转)
 ```
 
@@ -210,6 +232,7 @@ logs\runtime.log     运行日志(1MB × 3 份轮转)
 | `AW_COMFY_BASE` | `http://127.0.0.1:8188` | 出图机 ComfyUI 地址(内网) |
 | `AW_COMFY_TOKEN` | 空 | 访问 ComfyUI 的 Bearer 令牌(可选) |
 | `AW_ADMIN_TOKEN` | 空 | 管理看板口令; 为空时看板关闭(404) |
+| `AW_SITE` | `/opt/aiwallpaper/site` | 官网静态页目录(内置官网托管) |
 | `AW_QUOTA_GEN_HOUR` / `AW_QUOTA_GEN_DAY` | `6` / `40` | 每用户出图配额(超出返回 429) |
 | `AW_QUOTA_LLM_HOUR` / `AW_QUOTA_LLM_DAY` | `8` / `60` | 每用户 LLM 调用配额 |
 
@@ -260,27 +283,42 @@ server {
 ```
 
 > 提示: 云服务不需要 WebSocket; 客户端全链路为 HTTP 轮询, 反代无需额外配置。
-> 配对中转页与更新包下载走同一域名(`/d/{code}`、`/releases/`)。
+> 配对中转页与更新包下载走同一域名(`/d/{code}`、`/releases/`); 官网由云服务内置托管(`AW_SITE`)。
 
 ### 管理看板
 
 浏览器访问 `https://<你的域名>/admin?token=<AW_ADMIN_TOKEN>`:
-查看全部用户(今日 LLM/出图用量、禁用状态)、最近出图记录、漂移事件、任务队列状态。
+查看全部用户(今日 LLM/出图用量、禁用状态)、最近出图记录、漂移事件、任务队列状态、官网访问统计(PV/UV/下载)。
 
 ## 客户端版本发布(静默自更新)
 
-1. 构建新客户端, 版本号在代码中维护; 产物改名为 `wallpaper-<version>.exe`。
-2. 计算 sha256 与大小, 连同发布说明写入 `clouddata/releases/manifest.json`:
+1. 递增代码中的版本号(`internal/update/update.go` 的 `CurrentVersion`), 构建新客户端,
+   产物重命名为 `AIWallpaper-<version>.exe`。
+2. 计算 sha256 与大小, 连同发布说明写入服务端 `releases/manifest.json`:
 
    ```json
-   {"version":"0.2.0","file":"wallpaper-0.2.0.exe","sha256":"<64位hex>","size":10485760,
-    "notes":"修复若干问题"}
+   {
+     "version": "1.0.3",
+     "file": "AIWallpaper-1.0.3.exe",
+     "sha256": "<64 位 hex>",
+     "size": 10723328,
+     "notes": "v1.0.3: 题材扩充; 备用池一次补满; 出图品质升级",
+     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.0.3/AIWallpaper.exe"
+   }
    ```
 
-3. 把 exe 放进 `clouddata/releases/`。**无需其他动作**: 每个 tick 尾部客户端会查询
-   `/api/v1/client/latest`, 有新版本即静默下载 → sha256 校验 → 助手进程
+   - `file`: 相对服务端 `releases/` 目录的文件名(默认下载源)。
+   - `url`(可选): **下载源覆盖**。填写后所有客户端(含旧版)立即改从该地址下载,
+     无需升级客户端代码——用于切换国内 CDN(如 Gitee 直链)、临时回退备用源或灰度测试。
+     留空则用 `<scheme>://<host>/releases/<file>` 的默认地址。
+3. 把 exe 放进服务端 `releases/` 目录。**无需其他动作**: 每个 tick 尾部客户端会查询
+   `/api/v1/client/latest`, 有新版本即静默下载 → sha256 + 大小校验 → 助手进程
    (`--apply-update`)在 tick 退出后原子换装, 下次 tick 生效。
    任一步失败保留旧版、记日志、下轮重试; 自更新位于换壁纸之后, 绝不中断主线。
+
+> **双库 + 官网一致性纪律**: 每次发布新客户端, Gitee Release、GitHub Release(含附件)、
+> 官网(下载按钮 / 版本徽标 / 页脚)、服务端 `manifest.json` 四处版本必须一致;
+> 每次源码推送, Gitee 与 GitHub 双仓的 main 分支与 tag 必须同步。
 
 ## 数据与隐私
 
@@ -289,7 +327,7 @@ server {
 - 生成图仅在本机落盘(壁纸留档 30 张)与云端队列暂存(预生成, 取走后定期清理)。
 - 跨设备同步: 旧设备设置页展示 6 位配对码(5 分钟有效, 一次性), 新设备输入即领回
   `user_id + token + 画像`。
-- 更新包仅从自有云端 HTTPS 下载并做 sha256 校验, 不执行任何其他来源文件。
+- 更新包仅从 manifest 指定的 HTTPS 地址下载并做 sha256 + 大小校验, 不执行任何其他来源文件。
 
 ## FAQ
 
