@@ -520,14 +520,17 @@ func (s *settings) buildSettingsPage(tab *walk.TabWidget) error {
 	testBtn.Clicked().Attach(func() {
 		s.connLbl.SetText("测试中...")
 		go func() {
-			err := testConnection(s.collectServiceConfig())
+			renderOK, err := testConnection(s.collectServiceConfig())
 			if err != nil {
 				s.st.Log("settings: 测试连接失败: %v", err)
 			}
 			s.mw.Synchronize(func() {
-				if err != nil {
+				switch {
+				case err != nil:
 					s.connLbl.SetText("连接失败: " + friendlyErrText(err) + ", 请稍后重试")
-				} else {
+				case !renderOK:
+					s.connLbl.SetText("连接成功 ✓ 当前出图排队较多, 将自动无感补图")
+				default:
 					s.connLbl.SetText("连接成功 ✓")
 				}
 			})

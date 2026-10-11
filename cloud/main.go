@@ -63,6 +63,8 @@ func main() {
 		llmHour:    envInt("AW_QUOTA_LLM_HOUR", 8),
 		llmDay:     envInt("AW_QUOTA_LLM_DAY", 60),
 	}
+	// 空闲主动预生成: 队列 worker 空闲分支周期调用, 为活跃用户保持 ready 库存
+	q.idleHook = api.proactivePregen
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

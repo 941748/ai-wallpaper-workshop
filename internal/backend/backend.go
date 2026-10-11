@@ -22,7 +22,9 @@ type JobID string
 
 // ImageBackend 出图后端接口。
 // Submit 提交任务返回 JobID; Wait 等待完成并返回成品图字节(PNG)。
+// Reachable 探测出图链路是否可用(云端=出图机在线, 直连=ComfyUI 可达), 供向导在首张壁纸前门禁。
 type ImageBackend interface {
 	Submit(ctx context.Context, p GenParams) (JobID, error)
 	Wait(ctx context.Context, id JobID) ([]byte, error)
+	Reachable(ctx context.Context) bool
 }

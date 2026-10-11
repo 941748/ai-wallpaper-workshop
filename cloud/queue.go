@@ -21,6 +21,7 @@ type queue struct {
 	lastNorm  time.Time
 	lastPool  time.Time     // 上次探针池检查
 	idleDelay time.Duration // 默认 20s; 测试可调小
+	idleHook  func()        // 空闲周期钩子(主动预生成调度器), 可为 nil
 }
 
 // Run 工作循环(单 worker, 顺序消化 4090)。
@@ -54,6 +55,9 @@ func (q *queue) tick(ctx context.Context) {
 	if time.Since(q.lastPool) > time.Minute {
 		q.lastPool = time.Now()
 		q.ensureProbePool()
+		if q.idleHook != nil {
+			q.idleHook() // 主动预生成: 为活跃用户保持 ready 库存
+		}
 	}
 	// 空闲才跑 idle(预生成/probe 池)
 	delay := q.idleDelay

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"wallpaper/assets"
@@ -20,6 +21,47 @@ type Comfy struct {
 	Base string // 例 http://127.0.0.1:8188 或内网映射地址
 	Token string
 	HTTP  *http.Client
+
+	// 出图机在线探测缓存(避免 /health 高频打爆出图机)
+	mu     sync.Mutex
+	pingAt time.Time
+	pingOK bool
+}
+
+// 出图机探测: 单次短超时 + 结果缓存 TTL。
+const (
+	comfyPingTimeout = 2 * time.Second
+	comfyPingTTL     = 8 * time.Second
+)
+
+// Reachable 探测出图机是否在线(GET /queue, 2s 超时), 结果缓存 8s。
+// 供 /health 暴露 render_ok, 让客户端在首张壁纸前就能感知出图链路可用性。
+func (c *Comfy) Reachable(ctx context.Context) bool {
+	c.mu.Lock()
+	if time.Since(c.pingAt) < comfyPingTTL {
+		ok := c.pingOK
+		c.mu.Unlock()
+		return ok
+	}
+	c.mu.Unlock()
+
+	pctx, cancel := context.WithTimeout(ctx, comfyPingTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(pctx, http.MethodGet, c.Base+"/queue", nil)
+	ok := false
+	if err == nil {
+		c.auth(req)
+		hc := &http.Client{Timeout: comfyPingTimeout}
+		resp, err := hc.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			ok = resp.StatusCode == http.StatusOK
+		}
+	}
+	c.mu.Lock()
+	c.pingAt, c.pingOK = time.Now(), ok
+	c.mu.Unlock()
+	return ok
 }
 
 // NewComfy 创建代理客户端。

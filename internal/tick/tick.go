@@ -528,6 +528,39 @@ func replenishPool(ctx context.Context, env Env, st *store.Store, cc *cloud.Clie
 	}
 	pendings = rest
 
+	// 提服务端主动预生成: 云端空闲调度器代下的 ready 图(本地无在途单), 有则秒提入池,
+	// 使本轮无需现场等待; 提走即删, 不会与自己在途单重复。
+	for pool.Count(env.Dir) < pol.PoolTarget {
+		info, err := cc.PregenFetch(ctx, cfg.ProfileVer, "")
+		if err != nil || info == nil || !info.Ready || info.JobID == "" {
+			break
+		}
+		if info.ProfileVersion != cfg.ProfileVer {
+			break // 版本不符(改偏好前残留), 留给 CleanVersion 清理, 不提
+		}
+		img, err := cc.PregenImage(ctx, info.JobID)
+		if err != nil || desktop.Inspect(img) != nil {
+			st.Log("tick: 主动预生成提回失败(job=%s), 下轮重试", info.JobID)
+			break
+		}
+		if err := pool.Add(env.Dir, pool.Entry{
+			ProfileVersion: info.ProfileVersion,
+			Positive:       info.Positive,
+			Negative:       info.Negative,
+			Combo:          info.Combo,
+			Seed:           info.Seed,
+			WorkflowID:     info.WorkflowID,
+			Width:          info.Width,
+			Height:         info.Height,
+			CreatedAt:      env.Now().Format(time.RFC3339),
+		}, img); err != nil {
+			st.Log("tick: 主动预生成入池失败: %v", err)
+			break
+		}
+		dirty = true
+		st.Log("tick: 提主动预生成入池(池 %d/%d)", pool.Count(env.Dir), pol.PoolTarget)
+	}
+
 	// 下单: 不足目标时补齐缺额(单轮上限; 云端 idle 队列自动等出图机空闲)
 	need := pol.PoolTarget - pool.Count(env.Dir) - len(pendings)
 	if need > maxPoolSubmitPerTick {

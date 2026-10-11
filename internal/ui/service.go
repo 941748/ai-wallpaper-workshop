@@ -58,29 +58,32 @@ func ensureRegistered(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// testConnection 连通性测试(含配额预检); 直连模式测 ComfyUI。
-func testConnection(cfg *config.Config) error {
-	if cfg.DirectMode && cfg.DirectURL != "" {
+// testConnection 连通性测试: 云主站+配额由 err 表达, 并探测出图链路是否可用(renderOK)。
+// 直连模式直接 ping ComfyUI; 云端模式读 /health 的 render_ok(服务端探测出图机)。
+func testConnection(cfg *config.Config) (renderOK bool, err error) {
+	if cfg.DirectMode {
 		c := comfyui.New(cfg.DirectURL, cfg.DirectToken)
 		if c.BaseURL == "" {
-			return fmt.Errorf("请填写 ComfyUI 地址")
+			return false, fmt.Errorf("请填写 ComfyUI 地址")
 		}
-		return nil
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		return c.Reachable(ctx), nil
 	}
 	c := cloud.New(cfg.CloudURL, cfg.UserID, cfg.Token, hostName())
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	h, err := c.Health(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !h.OK {
-		return fmt.Errorf("云端未就绪")
+		return false, fmt.Errorf("云端未就绪")
 	}
 	if !h.QuotaOK {
-		return fmt.Errorf("云端配额已用尽")
+		return false, fmt.Errorf("云端配额已用尽")
 	}
-	return nil
+	return h.RenderOK, nil
 }
 
 // acquireProbeImages 获取一组探针图: 优先云端公共池(秒开), 失败/不足则现场出图。

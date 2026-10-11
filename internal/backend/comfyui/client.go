@@ -115,6 +115,23 @@ func (c *Client) Wait(ctx context.Context, id backend.JobID) ([]byte, error) {
 	}
 }
 
+// Reachable 实现 backend.ImageBackend: 直连探测 ComfyUI 是否在线(GET /queue, 2s 短超时)。
+func (c *Client) Reachable(ctx context.Context) bool {
+	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(pctx, http.MethodGet, c.BaseURL+"/queue", nil)
+	if err != nil {
+		return false
+	}
+	c.auth(req)
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 // tryFetch 查询一次 history; 完成时下载图片返回 (img, true, nil)。
 func (c *Client) tryFetch(ctx context.Context, id backend.JobID) ([]byte, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/history/"+url.PathEscape(string(id)), nil)

@@ -173,6 +173,7 @@ func (c *Client) Register(ctx context.Context, device string) (*RegisterResp, er
 type HealthResp struct {
 	OK            bool   `json:"ok"`
 	QuotaOK       bool   `json:"quota_ok"`
+	RenderOK      bool   `json:"render_ok"` // 出图机是否在线(服务端探测)
 	ServerVersion string `json:"server_version"`
 }
 
@@ -334,6 +335,12 @@ func (b *Backend) Wait(ctx context.Context, id backend.JobID) ([]byte, error) {
 	}
 }
 
+// Reachable 实现 backend.ImageBackend: 经云端 /health 的 render_ok 感知出图机是否在线。
+func (b *Backend) Reachable(ctx context.Context) bool {
+	h, err := b.C.Health(ctx)
+	return err == nil && h.RenderOK
+}
+
 // ---------- 空闲预生成 ----------
 
 // PregenReq 预约下一轮空闲预生成。
@@ -364,6 +371,7 @@ func (c *Client) PregenSubmit(ctx context.Context, req PregenReq) (string, error
 type PregenInfo struct {
 	Ready          bool              `json:"ready"`
 	ProfileVersion int               `json:"profile_version"`
+	JobID          string            `json:"job_id"` // 就绪单 ID(提货用)
 	Positive       string            `json:"positive"`
 	Negative       string            `json:"negative"`
 	Combo          map[string]string `json:"combo,omitempty"`

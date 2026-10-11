@@ -178,7 +178,9 @@ func addLineRow(parent walk.Container, label, initial string, width int) (*walk.
 	return le, nil
 }
 
-// clearChildren 清空并释放容器内所有子控件(用于分步重建向导内容)。
+// clearChildren 清空并销毁容器内所有子控件(用于分步重建向导内容)。
+// 注意: 必须用 Dispose 真正销毁子窗。若用 SetParent(nil), walk 会把子窗样式改为
+// WS_POPUP 并 win.SetParent(hWnd,0), 子窗被孤儿化成桌面顶层窗浮在屏幕上形成杂窗。
 func clearChildren(c walk.Container) {
 	if c == nil {
 		return
@@ -186,7 +188,7 @@ func clearChildren(c walk.Container) {
 	children := c.Children()
 	for children.Len() > 0 {
 		child := children.At(children.Len() - 1)
-		child.SetParent(nil) // 置空父级并释放
+		child.Dispose() // 销毁子窗; Container 会连带释放其后代
 	}
 }
 

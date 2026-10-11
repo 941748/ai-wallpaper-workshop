@@ -46,6 +46,7 @@ type wizard struct {
 	progress   *walk.ProgressBar
 	busy       bool
 	stepDone   bool // 当前步骤前置条件是否完成(允许进入下一步)
+	renderOK   bool // 出图链路是否可用(步骤 0 探测; 步骤 2 首张壁纸门禁)
 
 	nav *navSidebar
 
@@ -313,8 +314,12 @@ func (w *wizard) onExtra() {
 		w.startCalibration()
 	case 2:
 		if w.stepDone && !w.busy {
-			_ = signals.Append(w.dir, signals.Event{Type: signals.TypeStyleReject, Detail: "初始化首张壁纸: 换一张"})
-			w.genFirstWallpaper(w.firstOK) // 已有成品才需要"换个风格"
+			if w.firstOK {
+				_ = signals.Append(w.dir, signals.Event{Type: signals.TypeStyleReject, Detail: "初始化首张壁纸: 换一张"})
+				w.genFirstWallpaper(true) // 已有成品: 换个风格
+				return
+			}
+			w.retryFirstWallpaper() // 尚无成品: 重探出图链路后重试/跳过
 		}
 	}
 }
@@ -376,17 +381,23 @@ func (w *wizard) runConnTest() {
 	w.connStatusLbl.SetTextColor(colHint)
 	go func() {
 		cfg := w.collectConnConfig()
-		err := testConnection(cfg)
+		renderOK, err := testConnection(cfg)
 		if err != nil {
 			w.st.Log("向导: 连接测试失败: %v", err)
 		}
 		w.mw.Synchronize(func() {
 			w.busy = false
-			if err != nil {
+			w.renderOK = renderOK
+			switch {
+			case err != nil:
 				w.connStatusLbl.SetText("连接失败: " + friendlyErrText(err) + ", 请稍后重试")
 				w.connStatusLbl.SetTextColor(colRed)
-			} else {
-				w.connStatusLbl.SetText("连接成功 ✓ 云端服务可用, 配额正常")
+			case !renderOK:
+				// 不暴露"出图机离线": 以排队/繁忙表述, 并告知首张将自动无感补图
+				w.connStatusLbl.SetText("连接成功 ✓ 当前出图排队较多, 首张壁纸将稍后自动无感补图")
+				w.connStatusLbl.SetTextColor(colHint)
+			default:
+				w.connStatusLbl.SetText("连接成功 ✓ 云端服务可用, 出图服务就绪, 配额正常")
 				w.connStatusLbl.SetTextColor(colGreen)
 			}
 		})
@@ -440,6 +451,10 @@ func (w *wizard) testAndRegister() bool {
 		return false
 	}
 	w.be, w.cc = makeBackend(w.cfg)
+	// 记录出图链路可用性, 供步骤 2 首张壁纸门禁(不可用则跳过现场出图)
+	pctx, pcancel := context.WithTimeout(context.Background(), 3*time.Second)
+	w.renderOK = w.be.Reachable(pctx)
+	pcancel()
 	return true
 }
 
@@ -799,6 +814,15 @@ func (w *wizard) buildFirstWallpaperStep() {
 	w.firstOK = false
 	w.btnExtra.SetText("换一张")
 	w.btnExtra.SetEnabled(false)
+	// 出图链路不可用(出图机离线/繁忙): 不现场出图, 提示稍后自动无感补图并允许跳过
+	if !w.renderOK {
+		w.setStatus(msgRenderBusy, colHint)
+		w.stepDone = true
+		w.btnExtra.SetText("重试")
+		w.btnExtra.SetEnabled(true)
+		w.enableNext("跳过(稍后自动补图)")
+		return
+	}
 	w.setStatus("正在生成第一张壁纸...", colHint)
 	w.genFirstWallpaper(false)
 }
@@ -818,7 +842,14 @@ func (w *wizard) buildPreviewView() {
 	w.firstPreview = preview
 }
 
+// firstWallpaperTimeout 首张壁纸现场出图上限: 单张典型 30-45s, 留排队/慢卡余量到 90s; 超时即跳过稍后补。
+const firstWallpaperTimeout = 90 * time.Second
+
+// msgRenderBusy 出图链路不可用(出图机离线/繁忙/超时)时对用户的统一文案; 不暴露技术原因。
+const msgRenderBusy = "系统繁忙, 初始化完成后会自动无感补图"
+
 // genFirstWallpaper 生成并应用壁纸; force=true 时排除最近主风格值("换一张")。
+// 优先提服务端主动预生成的 ready 图(秒出); 无则现场出图(90s 上限)。
 func (w *wizard) genFirstWallpaper(force bool) {
 	if w.busy {
 		return
@@ -826,25 +857,22 @@ func (w *wizard) genFirstWallpaper(force bool) {
 	w.busy = true
 	w.btnNext.SetEnabled(false)
 	w.btnExtra.SetEnabled(false)
-	w.setStatus("正在生成壁纸(约 30 秒)...", colHint)
+	w.setStatus("正在准备第一张壁纸...", colHint)
 	seq := w.genSeq
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
-		defer cancel()
-		history, _ := w.st.LoadHistory()
-		data, spec, src, err := generateWallpaper(ctx, w.cfg, w.cc, w.be, w.profile, history, force)
-		if err != nil {
-			w.st.Log("向导: 生成失败: %v", err)
+		data, spec, src := w.firstWallpaperPayload(force)
+		if data == nil {
+			// 出图链路不可用或超时: 统一"繁忙"文案, 自动跳过(不暴露技术原因)
 			w.mw.Synchronize(func() {
 				if seq != w.genSeq {
 					return // 已导航离开, 回调过期
 				}
 				w.busy = false
-				w.setStatus("生成失败: "+friendlyErrText(err)+", 可点\"重试\", 或跳过稍后自动生成", colRed)
+				w.setStatus(msgRenderBusy, colHint)
 				w.stepDone = true
 				w.btnExtra.SetText("重试")
 				w.btnExtra.SetEnabled(true)
-				w.enableNext("跳过(稍后自动生成)")
+				w.enableNext("跳过(稍后自动补图)")
 			})
 			return
 		}
@@ -866,14 +894,14 @@ func (w *wizard) genFirstWallpaper(force bool) {
 			}
 			w.busy = false
 			if err != nil {
-				w.setStatus("壁纸应用失败, 请重试或跳过", colRed)
+				w.setStatus(msgRenderBusy, colHint)
 				w.stepDone = true
 				w.btnExtra.SetText("重试")
 				w.btnExtra.SetEnabled(true)
-				w.enableNext("跳过(稍后自动生成)")
+				w.enableNext("跳过(稍后自动补图)")
 				return
 			}
-			if bmp, err := scaleCard(data, 480, 270); err == nil {
+			if bmp, berr := scaleCard(data, 480, 270); berr == nil {
 				w.firstPreviewBm = bmp
 				w.firstPreview.SetImage(bmp)
 			}
@@ -883,6 +911,63 @@ func (w *wizard) genFirstWallpaper(force bool) {
 			w.btnExtra.SetText("换一张")
 			w.btnExtra.SetEnabled(true)
 			w.enableNext("喜欢, 就用这张")
+		})
+	}()
+}
+
+// firstWallpaperPayload 取首张壁纸字节: 先提服务端 ready 预生成(秒出), 无则现场出图(90s)。
+// 返回 nil 表示当前不可出图(链路不可用/超时), 调用方按"繁忙稍后补"处理。
+func (w *wizard) firstWallpaperPayload(force bool) ([]byte, prompt.Spec, string) {
+	// 1) 服务端主动预生成 ready 图: 有则秒提, 避免现场等待
+	if w.cc != nil && !force {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		info, err := w.cc.PregenFetch(ctx, w.cfg.ProfileVer, "")
+		if err == nil && info != nil && info.Ready && info.JobID != "" {
+			img, ierr := w.cc.PregenImage(ctx, info.JobID)
+			cancel()
+			if ierr == nil && len(img) > 0 {
+				return img, prompt.Spec{Positive: info.Positive, Negative: info.Negative, Combo: info.Combo, Seed: info.Seed}, "pregen"
+			}
+			return nil, prompt.Spec{}, ""
+		}
+		cancel()
+	}
+	// 2) 现场出图(90s 上限)
+	ctx, cancel := context.WithTimeout(context.Background(), firstWallpaperTimeout)
+	defer cancel()
+	history, _ := w.st.LoadHistory()
+	data, spec, src, err := generateWallpaper(ctx, w.cfg, w.cc, w.be, w.profile, history, force)
+	if err != nil {
+		w.st.Log("向导: 生成失败: %v", err)
+		return nil, prompt.Spec{}, ""
+	}
+	return data, spec, src
+}
+
+// retryFirstWallpaper 尚无成品时重试: 重新探测出图链路, 可用则现场出图, 否则维持"繁忙稍后补图"。
+func (w *wizard) retryFirstWallpaper() {
+	if w.busy {
+		return
+	}
+	w.busy = true
+	w.btnExtra.SetEnabled(false)
+	w.setStatus("正在重试...", colHint)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ok := w.be.Reachable(ctx)
+		cancel()
+		w.mw.Synchronize(func() {
+			w.busy = false
+			w.renderOK = ok
+			if !ok {
+				w.setStatus(msgRenderBusy, colHint)
+				w.stepDone = true
+				w.btnExtra.SetText("重试")
+				w.btnExtra.SetEnabled(true)
+				w.enableNext("跳过(稍后自动补图)")
+				return
+			}
+			w.genFirstWallpaper(false)
 		})
 	}()
 }

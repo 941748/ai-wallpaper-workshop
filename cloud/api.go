@@ -175,13 +175,14 @@ func (a *API) authUser(r *http.Request) *store.User {
 	return u
 }
 
-// requireUser 未认证时直接回 401。
+// requireUser 未认证时直接回 401; 同时刷新活跃时间(供空闲预生成调度器判定 24h 活跃)。
 func (a *API) requireUser(w http.ResponseWriter, r *http.Request) (*store.User, bool) {
 	u := a.authUser(r)
 	if u == nil {
 		writeFail(w, http.StatusUnauthorized, "未授权的令牌")
 		return nil, false
 	}
+	_ = a.st.TouchUser(u.UserID)
 	return u, true
 }
 
@@ -231,7 +232,14 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if u := a.authUser(r); u != nil {
 		quotaOK = a.checkQuota(u, "gen") && a.checkQuota(u, "llm")
 	}
-	writeOK(w, map[string]any{"ok": true, "quota_ok": quotaOK, "server_version": a.version})
+	// 出图机可达性(服务端短超时探测+缓存): 客户端据此在首张壁纸前感知出图链路。
+	renderOK := false
+	if a.q != nil && a.q.comfy != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		renderOK = a.q.comfy.Reachable(ctx)
+		cancel()
+	}
+	writeOK(w, map[string]any{"ok": true, "quota_ok": quotaOK, "render_ok": renderOK, "server_version": a.version})
 }
 
 // ---------- 提示词决策 ----------
@@ -248,6 +256,7 @@ func (a *API) handleNext(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	a.saveProfileSnapshot(u.UserID, req)
 	if !a.checkQuota(u, "llm") {
 		quotaFail(w)
 		return
@@ -434,6 +443,47 @@ func (a *API) handlePregenSubmit(w http.ResponseWriter, r *http.Request) {
 		quotaFail(w)
 		return
 	}
+	a.saveProfileSnapshot(u.UserID, req)
+	jobID := a.submitPregenOrder(u, req)
+	if jobID == "" {
+		writeFail(w, http.StatusInternalServerError, "预生成排队失败")
+		return
+	}
+	writeOK(w, map[string]any{"queued": true, "job_id": jobID})
+}
+
+// saveProfileSnapshot 持久化客户端随行画像快照(供空闲预生成调度器在客户端离线时仍能代下单)。
+func (a *API) saveProfileSnapshot(userID string, req nextReq) {
+	if req.ProfileVersion <= 0 && len(req.Profile) == 0 {
+		return
+	}
+	snap := store.ProfileSnapshot{
+		UserID: userID, ProfileVersion: req.ProfileVersion,
+		ScreenW: req.ScreenW, ScreenH: req.ScreenH,
+	}
+	if len(req.Profile) > 0 {
+		if b, err := json.Marshal(req.Profile); err == nil {
+			snap.Profile = string(b)
+		}
+	}
+	if len(req.Disliked) > 0 {
+		if b, err := json.Marshal(req.Disliked); err == nil {
+			snap.Disliked = string(b)
+		}
+	}
+	if len(req.CustomKeywords) > 0 {
+		if b, err := json.Marshal(req.CustomKeywords); err == nil {
+			snap.Custom = string(b)
+		}
+	}
+	if err := a.st.SaveProfileSnapshot(snap); err != nil {
+		a.logf("画像快照保存失败 user=%s: %v", userID, err)
+	}
+}
+
+// submitPregenOrder 预生成下单公共路径(配额计数+LLM 规划+idle 排队+登记), 返回 job_id(空=失败)。
+// 客户端主动补池与云端空闲主动预生成共用, 保证两者语义与配额记账一致。
+func (a *API) submitPregenOrder(u *store.User, req nextReq) string {
 	_ = a.st.BumpUsage(u.UserID, "llm")
 	_ = a.st.BumpUsage(u.UserID, "gen")
 
@@ -455,8 +505,8 @@ func (a *API) handlePregenSubmit(w http.ResponseWriter, r *http.Request) {
 		Positive: dec.Positive, Negative: dec.Negative, Combo: comboJSON,
 		Width: dec.Width, Height: dec.Height, Seed: dec.Seed, WorkflowID: dec.WorkflowID,
 	}); err != nil {
-		writeFail(w, http.StatusInternalServerError, err.Error())
-		return
+		a.logf("预生成排队失败 user=%s: %v", u.UserID, err)
+		return ""
 	}
 	_ = a.st.InsertPregen(store.Pregen{
 		UserID: u.UserID, ProfileVersion: req.ProfileVersion, JobID: jobID,
@@ -464,7 +514,57 @@ func (a *API) handlePregenSubmit(w http.ResponseWriter, r *http.Request) {
 		Seed: dec.Seed, WorkflowID: dec.WorkflowID, Width: dec.Width, Height: dec.Height,
 	})
 	a.logf("预生成下单 user=%s job=%s pv=%d", u.UserID, jobID, req.ProfileVersion)
-	writeOK(w, map[string]any{"queued": true, "job_id": jobID})
+	return jobID
+}
+
+// 空闲主动预生成参数: 每用户 ready 目标 / 活跃窗口 / 单次调度上限。
+const (
+	proactiveReadyTarget  = 2
+	proactiveActiveWindow = 24 * time.Hour
+	proactiveMaxPerTick   = 4
+)
+
+// proactivePregen 空闲调度器: 为近 24h 活跃用户在云端主动保持 proactiveReadyTarget 张
+// ready 预生成图(不依赖客户端先下单), 使客户端下次唤醒可"秒提"而无需现场等待。
+// 由队列 worker 空闲分支周期调用; 复用客户端下单同一路径, 因此同样计入用户配额。
+func (a *API) proactivePregen() {
+	users, err := a.st.ListActiveUsers(time.Now().Add(-proactiveActiveWindow))
+	if err != nil {
+		a.logf("主动预生成: 活跃用户查询失败: %v", err)
+		return
+	}
+	submitted := 0
+	for _, uid := range users {
+		if submitted >= proactiveMaxPerTick {
+			return
+		}
+		snap, err := a.st.LoadProfileSnapshot(uid)
+		if err != nil || snap == nil || snap.ProfileVersion <= 0 {
+			continue // 尚无画像(如刚注册未走完向导), 不代下单
+		}
+		ready, _ := a.st.CountPregenReady(uid, snap.ProfileVersion)
+		pending, _ := a.st.CountPregenPending(uid)
+		if proactiveReadyTarget-ready-pending <= 0 {
+			continue
+		}
+		u, err := a.st.UserByID(uid)
+		if err != nil || u == nil || u.Disabled {
+			continue
+		}
+		if !a.checkQuota(u, "llm") || !a.checkQuota(u, "gen") {
+			continue // 配额不足不代下, 避免挤占用户自用额度
+		}
+		req := nextReq{
+			ProfileVersion: snap.ProfileVersion,
+			ScreenW:        snap.ScreenW, ScreenH: snap.ScreenH,
+		}
+		_ = json.Unmarshal([]byte(snap.Profile), &req.Profile)
+		_ = json.Unmarshal([]byte(snap.Disliked), &req.Disliked)
+		_ = json.Unmarshal([]byte(snap.Custom), &req.CustomKeywords)
+		if a.submitPregenOrder(u, req) != "" {
+			submitted++
+		}
+	}
 }
 
 func (a *API) handlePregenFetch(w http.ResponseWriter, r *http.Request) {

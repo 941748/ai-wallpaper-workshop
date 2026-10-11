@@ -36,6 +36,9 @@ type mockCloud struct {
 	prompts       []cloud.PromptRecord
 	signalsGot    [][]signals.Event
 	pregenReady   bool
+	proactiveReady   bool // 云端主动预生成 ready(无 job_id 拉取路径)
+	proactiveFetches int
+	proactiveSeq     int
 	pngData       []byte
 	nextFail      bool
 	srv           *httptest.Server
@@ -107,13 +110,31 @@ func (m *mockCloud) handler() http.Handler {
 			writeEnv(w, map[string]any{"queued": true, "job_id": "pg-" + strconv.Itoa(m.pregenSeq)})
 			return
 		}
-		m.pregenFetches++
-		writeEnv(w, map[string]any{
-			"ready": m.pregenReady, "profile_version": 1,
-			"positive": "pregen positive", "negative": "",
-			"combo": map[string]string{taxonomy.DimStyle: "ink"}, "seed": 7,
-			"workflow_id": "wf-pre", "width": 1344, "height": 768,
-		})
+		// 无 job_id = 客户端提服务端主动预生成; 有 job_id = 按单查自己在途单
+		if jobID := r.URL.Query().Get("job_id"); jobID == "" {
+			m.proactiveFetches++
+			if !m.proactiveReady {
+				writeEnv(w, map[string]any{"ready": false, "profile_version": 1})
+				return
+			}
+			m.proactiveSeq++
+			writeEnv(w, map[string]any{
+				"ready": true, "profile_version": 1, "job_id": "pa-" + strconv.Itoa(m.proactiveSeq),
+				"positive": "proactive positive", "negative": "",
+				"combo": map[string]string{taxonomy.DimStyle: "ink"}, "seed": 9,
+				"workflow_id": "wf-pre", "width": 1344, "height": 768,
+			})
+			return
+		} else {
+			m.pregenFetches++
+			writeEnv(w, map[string]any{
+				"ready": m.pregenReady, "profile_version": 1, "job_id": jobID,
+				"positive": "pregen positive", "negative": "",
+				"combo": map[string]string{taxonomy.DimStyle: "ink"}, "seed": 7,
+				"workflow_id": "wf-pre", "width": 1344, "height": 768,
+			})
+			return
+		}
 	})
 	mux.HandleFunc("/api/v1/pregen/image", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(m.pngData)
@@ -304,6 +325,28 @@ func TestRunOncePoolFetchDelivers(t *testing.T) {
 	// 池 2 换走 1 = 1; 在途新单提回 = 2
 	if pool.Count(te.dir) != 2 {
 		t.Fatalf("pool count=%d want 2", pool.Count(te.dir))
+	}
+}
+
+func TestRunOnceProactivePregenPull(t *testing.T) {
+	// 云端主动预生成 ready: 本轮秒提入池填满目标, 无需再下单(消除现场等待)
+	m := &mockCloud{pngData: gradientPNG(t, 1344, 768), proactiveReady: true}
+	m.srv = httptest.NewServer(m.handler())
+	defer m.srv.Close()
+
+	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)}
+	setupClient(t, m.srv.URL, te)
+	if err := RunOnce(context.Background(), te.env(m.srv.URL, m)); err != nil {
+		t.Fatal(err)
+	}
+	if m.proactiveFetches != 3 {
+		t.Fatalf("proactiveFetches=%d want 3 (补满目标)", m.proactiveFetches)
+	}
+	if pool.Count(te.dir) != 3 {
+		t.Fatalf("pool count=%d want 3", pool.Count(te.dir))
+	}
+	if m.pregenSubmits != 0 {
+		t.Fatalf("pregenSubmits=%d want 0 (池已满无需下单)", m.pregenSubmits)
 	}
 }
 

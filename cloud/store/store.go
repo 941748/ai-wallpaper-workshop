@@ -121,7 +121,41 @@ CREATE INDEX IF NOT EXISTS idx_site_events ON site_events(kind, ts);
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
 	}
+	if err := s.ensureUserLastActive(); err != nil {
+		return err
+	}
+	if err := s.createProfileSnapshotTable(); err != nil {
+		return err
+	}
 	return s.createPregenTable()
+}
+
+// ensureUserLastActive 为旧库补 last_active 列(活跃窗口判定用); 新库已含则跳过。
+func (s *Store) ensureUserLastActive() error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='last_active'`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`ALTER TABLE users ADD COLUMN last_active TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// createProfileSnapshotTable 画像快照表: 服务端空闲主动预生成所需的最近画像。
+func (s *Store) createProfileSnapshotTable() error {
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS user_profiles(
+  user_id         TEXT PRIMARY KEY,
+  profile_version INTEGER NOT NULL,
+  profile         TEXT,
+  disliked        TEXT,
+  custom          TEXT,
+  screen_w        INTEGER NOT NULL DEFAULT 0,
+  screen_h        INTEGER NOT NULL DEFAULT 0,
+  updated_at      TEXT NOT NULL
+)`)
+	return err
 }
 
 // createPregenTable 建(或确保)新版 pregen 表: 以 job_id 为主键, 支持每用户多单并存
@@ -202,6 +236,70 @@ func (s *Store) queryUser(q string, arg any) (*User, error) {
 	}
 	u.Disabled = disabled != 0
 	return &u, nil
+}
+
+// TouchUser 刷新用户活跃时间(每次认证请求调用)。
+func (s *Store) TouchUser(userID string) error {
+	_, err := s.db.Exec(`UPDATE users SET last_active=? WHERE user_id=?`,
+		time.Now().Format(timeFmt), userID)
+	return err
+}
+
+// ListActiveUsers 返回 last_active >= since 且未禁用的用户 ID(空闲主动预生成用)。
+func (s *Store) ListActiveUsers(since time.Time) ([]string, error) {
+	rows, err := s.db.Query(`SELECT user_id FROM users WHERE disabled=0 AND last_active >= ?
+ORDER BY last_active DESC`, since.Format(timeFmt))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ProfileSnapshot 用户最近一次随行画像快照(服务端主动预生成用)。
+type ProfileSnapshot struct {
+	UserID         string
+	ProfileVersion int
+	Profile        string // JSON map[string]float64
+	Disliked       string // JSON []string
+	Custom         string // JSON []string
+	ScreenW        int
+	ScreenH        int
+}
+
+// SaveProfileSnapshot upsert 画像快照。
+func (s *Store) SaveProfileSnapshot(p ProfileSnapshot) error {
+	_, err := s.db.Exec(`INSERT INTO user_profiles
+(user_id, profile_version, profile, disliked, custom, screen_w, screen_h, updated_at)
+VALUES(?,?,?,?,?,?,?,?)
+ON CONFLICT(user_id) DO UPDATE SET profile_version=excluded.profile_version, profile=excluded.profile,
+ disliked=excluded.disliked, custom=excluded.custom, screen_w=excluded.screen_w,
+ screen_h=excluded.screen_h, updated_at=excluded.updated_at`,
+		p.UserID, p.ProfileVersion, p.Profile, p.Disliked, p.Custom,
+		p.ScreenW, p.ScreenH, time.Now().Format(timeFmt))
+	return err
+}
+
+// LoadProfileSnapshot 读取画像快照(无则返回 nil)。
+func (s *Store) LoadProfileSnapshot(userID string) (*ProfileSnapshot, error) {
+	row := s.db.QueryRow(`SELECT user_id, profile_version, COALESCE(profile,''), COALESCE(disliked,''),
+COALESCE(custom,''), screen_w, screen_h FROM user_profiles WHERE user_id=?`, userID)
+	var p ProfileSnapshot
+	if err := row.Scan(&p.UserID, &p.ProfileVersion, &p.Profile, &p.Disliked, &p.Custom, &p.ScreenW, &p.ScreenH); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &p, nil
 }
 
 // AddDevice 记录设备。
@@ -567,6 +665,21 @@ func (s *Store) SetPregenReady(jobID, imagePath string) error {
 func (s *Store) CountPregens(userID string) (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM pregen WHERE user_id=?`, userID).Scan(&n)
+	return n, err
+}
+
+// CountPregenReady 该用户指定画像版本已就绪待提的预生成数。
+func (s *Store) CountPregenReady(userID string, profileVersion int) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pregen WHERE user_id=? AND ready=1 AND profile_version=?`,
+		userID, profileVersion).Scan(&n)
+	return n, err
+}
+
+// CountPregenPending 该用户在途(未就绪)预生成单数。
+func (s *Store) CountPregenPending(userID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pregen WHERE user_id=? AND ready=0`, userID).Scan(&n)
 	return n, err
 }
 
