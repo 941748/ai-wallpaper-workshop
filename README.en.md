@@ -16,7 +16,7 @@ ComfyUI (Z-Image Turbo) renders the image → it is fitted to your screen's phys
 
 No sign-up, no login, no tray icon, no resident process — close the window and there is no process left in the system.
 
-**Current version: v1.0.5** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~10 MB single file.
+**Current version: v1.0.6** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~10 MB single file.
 
 ## Download
 
@@ -32,7 +32,7 @@ No sign-up, no login, no tray icon, no resident process — close the window and
 
 ## Features
 
-- **Effortless preference learning**: a five-dimension questionnaire (style / subject / palette / mood / composition) plus probe-image picks build your profile;
+- **Effortless preference learning**: a five-dimension questionnaire (style / subject / palette / mood / composition, with one-click style packs) builds your profile;
   afterwards it detects preference drift from your natural actions (re-running the wizard, re-applying a past wallpaper, satisfaction check-ins) and quietly refines the profile.
 - **Hourly automatic refresh**: the scheduled task launches a process that lives for seconds — it renders, swaps, and exits, with nothing running in the background.
 - **Cloud LLM planning + silent fallback**: the LLM plans the next image from your profile, the last 10 rounds, and drift events;
@@ -46,7 +46,7 @@ No sign-up, no login, no tray icon, no resident process — close the window and
 
 ## Screenshots
 
-Five-step wizard: connect to the service → preference questionnaire (five-dimension tri-state chips, with one-click recommend / probe calibration) → first wallpaper → register the hourly task → done.
+Five-step wizard: connect to the service → preference questionnaire (five-dimension tri-state chips, with one-click style packs) → first wallpaper → register the hourly task → done.
 
 <p align="center">
   <img src="docs/screenshots/wizard-connect.png" width="49%" />
@@ -70,7 +70,7 @@ Five-step wizard: connect to the service → preference questionnaire (five-dime
 │  Cloud service (Go + SQLite single binary, self-hosted)        │
 │  Anonymous signup / quota / rate limit   LLM planning (default │
 │  Render queue normal / idle              Xiaomi MiMo; any      │
-│  Pre-gen pool / probe pool / silent update  OpenAI-compatible) │
+│  Pre-gen pool / silent update             OpenAI-compatible) │
 └─────────────────────────┬─────────────────────────────────────┘
                   LAN HTTP (render machine)
 ┌─────────────────────────▼─────────────────────────────────────┐
@@ -80,10 +80,9 @@ Five-step wizard: connect to the service → preference questionnaire (five-dime
 
 ### How preferences are "learned"
 
-1. **Tri-state questionnaire**: 76 tags across five dimensions (style 22 / subject 38 / palette 6 / mood 5 / composition 5),
-   picked as "like / neutral / dislike" and mapped to profile weights (0.9 / 0.3 / 0.05).
-2. **Probe calibration (optional)**: pick preferences over 12 balanced-combination probe images to infer finer initial weights.
-3. **Drift detection**: only real user actions are adopted (re-running the wizard, re-applying a wallpaper, adjusting weights, check-in choices);
+1. **Tri-state questionnaire**: 86 tags across five dimensions (style 22 / subject 38 / palette 6 / mood 10 / composition 10),
+   picked as "like / neutral / dislike" and mapped to profile weights (0.9 / 0.3 / 0.05); style packs can be checked in one click.
+2. **Drift detection**: only real user actions are adopted (re-running the wizard, re-applying a wallpaper, adjusting weights, check-in choices);
    the profile is refined once same-direction evidence accumulates. It never relies on guessed signals like "how long a wallpaper survived", avoiding intrusion and misjudgement.
 
 ## Quick start
@@ -138,14 +137,13 @@ wallpaper/
 ├── internal/
 │   ├── config/                   # config & profile read/write (%LOCALAPPDATA%\AIWallpaper)
 │   ├── taxonomy/                 # 5-dimension attribute dictionary (style/subject/palette/mood/composition)
-│   ├── probe/                    # probe balanced-combination design + pick → profile inference
 │   ├── prompt/                   # local prompt engine (weighted sampling/exploration/dedup/negative)
 │   ├── backend/                  # ImageBackend interface + comfyui direct / runninghub reserved
 │   ├── desktop/                  # resolution probe/scale-crop/wallpaper swap/quiet detection/low priority
 │   ├── scheduler/                # scheduled-task XML generation + schtasks register/delete/run-now
 │   ├── store/                    # data dir/file lock/log rotation/wallpaper archive cleanup
 │   ├── signals/                  # drift-event collection (reconfig/re-pick/weight change/check-in)
-│   ├── cloud/                    # cloud client (signup/get prompt/report/retry queue/probe pool)
+│   ├── cloud/                    # cloud client (signup/get prompt/report/retry queue)
 │   ├── update/                   # silent self-update (version check/download verify/helper swap)
 │   ├── tick/                     # --tick full orchestration (incl. satisfaction check-in & self-update)
 │   └── ui/                       # walk native windows: wizard/settings/check-in dialog
@@ -183,7 +181,7 @@ profile.json         preference profile (5-dimension weights + negative fragment
 prompt_history.json  last 200 render combinations (last 30 deduplicated)
 cloud_queue.json     offline retry queue (retried for up to 7 days)
 signals.json         drift events pending upload
-probes\ wallpapers\  probe cache / wallpaper archive (keeps the last 30, excluding the one in use)
+wallpapers\         wallpaper archive (keeps the last 30, excluding the one in use)
 bin\AIWallpaper.exe  the official copy made when the wizard registers the scheduled task
 logs\runtime.log     runtime log (1 MB × 3, rotated)
 ```
@@ -227,7 +225,7 @@ The cloud service forwards rendering over the HTTP API; on the ComfyUI side you 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `AW_ADDR` | `:8707` | Listen address |
-| `AW_DATA` | `./clouddata` | Data directory (db/probe pool/finished images/pre-gen/update packages) |
+| `AW_DATA` | `./clouddata` | Data directory (db/finished images/pre-gen/update packages) |
 | `AW_LLM_BASE` | `https://token-plan-cn.xiaomimimo.com/v1` | OpenAI-compatible LLM endpoint (default Xiaomi MiMo; any compatible service works) |
 | `AW_LLM_KEY` | empty | LLM key (**server-side only**; if empty, prompts fall back to the local engine and images still render) |
 | `AW_LLM_MODEL` | `mimo-v2.6-flash` | Model name |
@@ -300,12 +298,12 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
    ```json
    {
-     "version": "1.0.5",
-     "file": "AIWallpaper-1.0.5.exe",
+     "version": "1.0.6",
+     "file": "AIWallpaper-1.0.6.exe",
      "sha256": "<64-hex>",
-     "size": 10828800,
-     "notes": "v1.0.5: streamlined 4-step wizard with silent task registration; brand-new frameless UI; desktop/start-menu shortcuts and one-click uninstall; probe calibration moved to Settings",
-     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.0.5/AIWallpaper.exe"
+     "size": 10790400,
+     "notes": "v1.0.6: probe mechanism removed for simpler preferences and faster rendering; fixed-size windows with close-button fix; dictionary expanded to 86 tags; healing pack pre-checked at wizard init",
+     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.0.6/AIWallpaper.exe"
    }
    ```
 
