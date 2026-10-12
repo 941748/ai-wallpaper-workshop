@@ -328,7 +328,9 @@ func TestFullClientLifecycle(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("pregen submit %d: %s", resp.StatusCode, raw)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	// 30s 上限: 成功路径 ready 即 break 不变慢; CI(windows-latest) 慢机器上
+	// 队列 worker 调度可达 10s+, 原 10s 会 flaky 超时(见 v1.0.5 首发 CI 失败)。
+	deadline := time.Now().Add(30 * time.Second)
 	ready := false
 	for time.Now().Before(deadline) {
 		_, praw := ts.do(t, "GET", "/api/v1/pregen?profile_version=2", token, nil)
