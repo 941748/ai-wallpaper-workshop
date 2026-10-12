@@ -293,9 +293,6 @@ server {
 
 ## 客户端版本发布(静默自更新)
 
-> **完整发版与双端同步流程(含核验清单与踩坑记录)见 [docs/RELEASE.md](docs/RELEASE.md)**;
-> 服务端部署用 `tools/server-deploy.py`(paramiko 单连接, 内置限速重试/备份回滚)。
-
 1. 递增代码中的版本号(`internal/version/version.go` 的 `Version`, 客户端与云服务共用), 构建新客户端,
    产物重命名为 `AIWallpaper-<version>.exe`。
 2. 计算 sha256 与大小, 连同发布说明写入服务端 `releases/manifest.json`:
@@ -319,10 +316,6 @@ server {
    `/api/v1/client/latest`, 有新版本即静默下载 → sha256 + 大小校验 → 助手进程
    (`--apply-update`)在 tick 退出后原子换装, 下次 tick 生效。
    任一步失败保留旧版、记日志、下轮重试; 自更新位于换壁纸之后, 绝不中断主线。
-
-> **双库 + 官网一致性纪律**: 每次发布新客户端, Gitee Release、GitHub Release(含附件)、
-> 官网(下载按钮 / 版本徽标 / 页脚)、服务端 `manifest.json` 四处版本必须一致;
-> 每次源码推送, Gitee 与 GitHub 双仓的 main 分支与 tag 必须同步。
 
 ## 数据与隐私
 

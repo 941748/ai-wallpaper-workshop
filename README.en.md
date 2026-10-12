@@ -294,9 +294,6 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
 ## Client releases (silent self-update)
 
-> **Full release & dual-remote sync procedure (verification checklist + known pitfalls) see [docs/RELEASE.md](docs/RELEASE.md)**;
-> server deployment uses `tools/server-deploy.py` (single paramiko connection, built-in rate-limit retries / backup rollback).
-
 1. Bump the version in code (`Version` in `internal/version/version.go`, shared by client and cloud server), build the new client,
    and rename the artifact to `AIWallpaper-<version>.exe`.
 2. Compute the sha256 and size, and write them together with the release notes into the server-side `releases/manifest.json`:
@@ -320,10 +317,6 @@ see all users (today's LLM/render usage, disabled state), recent render records,
    `/api/v1/client/latest`; if there is a new version it silently downloads → verifies sha256 + size → a helper process
    (`--apply-update`) atomically swaps it in after the tick exits, taking effect on the next tick.
    Any failed step keeps the old version, logs, and retries next round; self-update runs after the wallpaper swap and never interrupts the main line.
-
-> **Dual-repo + website consistency rule**: for every client release, the version must match across four places —
-> the Gitee Release, the GitHub Release (with attachment), the website (download button / version badge / footer), and the server-side `manifest.json`;
-> for every source push, the `main` branch and tags of both the Gitee and GitHub repos must stay in sync.
 
 ## Data & privacy
 
