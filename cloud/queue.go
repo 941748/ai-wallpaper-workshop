@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"wallpaper/internal/probe"
-
 	"wallpaper/cloud/store"
 )
 
@@ -19,7 +17,7 @@ type queue struct {
 	dataDir   string
 	logf      func(string, ...any)
 	lastNorm  time.Time
-	lastPool  time.Time     // 上次探针池检查
+	lastIdle  time.Time     // 上次空闲钩子(主动预生成)执行
 	idleDelay time.Duration // 默认 20s; 测试可调小
 	idleHook  func()        // 空闲周期钩子(主动预生成调度器), 可为 nil
 }
@@ -51,15 +49,14 @@ func (q *queue) tick(ctx context.Context) {
 		q.process(ctx, job)
 		return
 	}
-	// 空闲时段定期检查探针池(缺图/失败重排; 低开销, 每分钟至多一次)
-	if time.Since(q.lastPool) > time.Minute {
-		q.lastPool = time.Now()
-		q.ensureProbePool()
+	// 空闲时段周期性执行钩子(主动预生成调度; 低开销, 每分钟至多一次)
+	if time.Since(q.lastIdle) > time.Minute {
+		q.lastIdle = time.Now()
 		if q.idleHook != nil {
 			q.idleHook() // 主动预生成: 为活跃用户保持 ready 库存
 		}
 	}
-	// 空闲才跑 idle(预生成/probe 池)
+	// 空闲才跑 idle(预生成)
 	delay := q.idleDelay
 	if delay <= 0 {
 		delay = 20 * time.Second
@@ -87,9 +84,6 @@ func (q *queue) process(ctx context.Context, job *store.Job) {
 
 	var path string
 	switch job.Kind {
-	case "probe":
-		// 公共探针池: 存到 probes/<id>.png
-		path = filepath.Join(q.dataDir, "probes", job.Combo+".png")
 	case "pregen":
 		path = filepath.Join(q.dataDir, "pregen", job.JobID+".png")
 	default:
@@ -114,37 +108,4 @@ func (q *queue) process(ctx context.Context, job *store.Job) {
 		_ = q.st.SetPregenReady(job.JobID, path)
 	}
 	q.logf("任务完成 job=%s kind=%s -> %s", job.JobID, job.Kind, path)
-}
-
-// ensureProbePool 维护公共探针池: 缺哪张补哪张(低优先级, 空闲时段执行)。
-// 与服务端/客户端共用的 12 张平衡组合, 新用户可秒开。
-func (q *queue) ensureProbePool() {
-	combos := probe.BalancedCombos(probe.FirstCount)
-	for _, cb := range combos {
-		path := filepath.Join(q.dataDir, "probes", cb.ID+".png")
-		if _, err := os.Stat(path); err == nil {
-			continue
-		}
-		// 幂等任务 id(已存在则不重复建); 上次失败(如出图机离线)则重新排队
-		jobID := "probe-" + cb.ID
-		if existing, _ := q.st.Job(jobID); existing != nil {
-			if existing.Status == "failed" {
-				_ = q.st.SetJobStatus(jobID, "queued", "", "")
-			}
-			continue
-		}
-		_ = q.st.CreateJob(store.Job{
-			JobID:      jobID,
-			UserID:     "system",
-			Kind:       "probe",
-			Priority:   "idle",
-			Positive:   cb.Prompt(),
-			Negative:   "lowres, blurry, watermark, text",
-			Combo:      cb.ID,
-			Width:      1024,
-			Height:     768,
-			Seed:       cb.Seed,
-			WorkflowID: q.reg.Default().ID,
-		})
-	}
 }

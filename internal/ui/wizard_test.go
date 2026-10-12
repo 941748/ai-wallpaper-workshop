@@ -164,6 +164,32 @@ func TestAnswersFromProfile(t *testing.T) {
 	}
 }
 
+// TestApplyDefaultPack 全新用户(零勾选)进入问卷时应预勾默认风格包"治愈日常"。
+func TestApplyDefaultPack(t *testing.T) {
+	answers := answersFromProfile(config.NewProfile())
+	if n := surveyLikesIn(answers); n != 0 {
+		t.Fatalf("新画像应无喜欢项, got %d", n)
+	}
+	applyDefaultPack(answers)
+	var pack *presetPack
+	for i := range presetPacks {
+		if presetPacks[i].Name == defaultPackName {
+			pack = &presetPacks[i]
+		}
+	}
+	if pack == nil {
+		t.Fatalf("找不到默认风格包 %q", defaultPackName)
+	}
+	if n := surveyLikesIn(answers); n != len(pack.Keys) {
+		t.Errorf("预勾后喜欢项 = %d, want %d(默认包词条数)", n, len(pack.Keys))
+	}
+	for _, k := range pack.Keys {
+		if answers[k] != survey.Like {
+			t.Errorf("默认包词条 %s 应为 Like, got %v", k, answers[k])
+		}
+	}
+}
+
 // TestPhaseFromUser 校验相位分配: 落在 0~59 且同 ID 稳定。
 func TestPhaseFromUser(t *testing.T) {
 	p := phaseFromUser("u_abc123")

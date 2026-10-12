@@ -16,7 +16,7 @@ import (
 
 // 本文件仅保留 API 结构、路由注册与跨 handler 复用的基础工具;
 // 各领域 handler 按主题拆分至 handlers_site / handlers_user / handlers_prompt /
-// handlers_render / handlers_update / handlers_probe / scheduler / admin。
+// handlers_render / handlers_update / scheduler / admin。
 
 // API 云服务 HTTP 处理集合。
 type API struct {
@@ -54,8 +54,6 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/client/latest", a.handleClientLatest)
 	mux.HandleFunc("POST /api/v1/devices/link", a.handleLink)
 	mux.HandleFunc("GET /api/v1/profile/drift", a.handleDrift)
-	mux.HandleFunc("GET /api/v1/probes/sample", a.handleProbeSample)
-	mux.HandleFunc("GET /api/v1/probes/image", a.handleProbeImage)
 	mux.HandleFunc("GET /d/{code}", a.handleLinkPage)
 	mux.HandleFunc("GET /admin", a.handleAdmin)
 	// 客户端自更新分发

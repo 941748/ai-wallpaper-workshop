@@ -28,7 +28,7 @@ func main() {
 	logf := func(format string, args ...any) { log.Printf(format, args...) }
 
 	dataDir := env("AW_DATA", "./clouddata")
-	for _, sub := range []string{"probes", "images", "pregen", "releases"} {
+	for _, sub := range []string{"images", "pregen", "releases"} {
 		if err := os.MkdirAll(filepath.Join(dataDir, sub), 0o755); err != nil {
 			log.Fatalf("数据目录创建失败: %v", err)
 		}
@@ -40,6 +40,11 @@ func main() {
 	}
 	defer st.Close()
 
+	// 探针机制已退役: 清理存量 probe 任务, 避免残留任务被 worker 排队消费
+	if err := st.PurgeJobsByKind("probe"); err != nil {
+		logf("存量探针任务清理失败: %v", err)
+	}
+
 	reg := LoadRegistry(filepath.Join(dataDir, "workflows.json"))
 
 	llmClient := llm.New(env("AW_LLM_BASE", "https://token-plan-cn.xiaomimimo.com/v1"), env("AW_LLM_KEY", ""), env("AW_LLM_MODEL", "mimo-v2.6-flash"))
@@ -50,7 +55,6 @@ func main() {
 	comfy := NewComfy(env("AW_COMFY_BASE", "http://127.0.0.1:8188"), env("AW_COMFY_TOKEN", ""))
 
 	q := &queue{st: st, comfy: comfy, reg: reg, dataDir: dataDir, logf: logf}
-	q.ensureProbePool() // 公共探针池: 缺图自动排入空闲队列
 
 	api := &API{
 		st: st, llm: llmClient, reg: reg, q: q, dataDir: dataDir,

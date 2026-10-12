@@ -18,7 +18,6 @@ import (
 	"wallpaper/internal/desktop"
 	"wallpaper/internal/install"
 	"wallpaper/internal/policy"
-	"wallpaper/internal/probe"
 	"wallpaper/internal/scheduler"
 	"wallpaper/internal/signals"
 	"wallpaper/internal/store"
@@ -44,11 +43,11 @@ type settings struct {
 	curPath string
 
 	// 偏好页
-	summaryLbl *walk.Label
-	chips      *surveyChips
-	answers    map[string]survey.Attitude
-	kwLB       *walk.ListBox
-	kwEdit     *walk.LineEdit
+	chips       *surveyChips
+	answers     map[string]survey.Attitude
+	baseAnswers map[string]survey.Attitude // 关闭窗口时判断"未保存修改"的基线
+	kwLB        *walk.ListBox
+	kwEdit      *walk.LineEdit
 
 	// 设置页
 	directCheck *walk.CheckBox
@@ -113,12 +112,13 @@ func (s *settings) build() error {
 		_ = mw.SetIcon(icon)
 	}
 	mw.SetBackground(brushPageBg)
-	mw.SetSize(fitWorkArea(mw, walk.Size{Width: 980, Height: 680}))
-	mw.SetMinMaxSize(fitWorkArea(mw, walk.Size{Width: 860, Height: 560}), walk.Size{})
+	fixedSize := fitWorkArea(mw, walk.Size{Width: 980, Height: 680})
+	mw.SetSize(fixedSize)
+	mw.SetMinMaxSize(fixedSize, fixedSize) // 固定尺寸: 不允许拉伸宽高
 	_ = mw.SetLayout(walk.NewVBoxLayout())
 
 	// 顶栏: 无边框标题栏(拖动热区 + 右上角扁平 ✕)
-	if _, err := newTitleBar(mw, mw, config.AppNameCN, "设置", 48, func() { mw.Close() }); err != nil {
+	if _, err := newTitleBar(mw, mw, config.AppNameCN, "设置", 48, func() { s.confirmClose() }); err != nil {
 		return err
 	}
 
@@ -166,13 +166,18 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 		return err
 	}
 	profile, _ := config.LoadProfile(s.dir)
-	s.summaryLbl, _ = walk.NewLabel(page)
-	s.refreshSummary(profile)
 	hint, _ := walk.NewLabel(page)
-	hint.SetText("点选偏好(可多选): 点一下 = 喜欢 ✓, 再点 = 不喜欢 ✕, 再点 = 取消。\n" +
-		"· 风格、题材: 严格执行 —— 出图只在你勾选的范围内轮换;\n" +
-		"· 色调、氛围、构图: 次要参考 —— 不勾选则由系统自动变化;\n" +
-		"· 节日/节气氛围: 次要点缀 —— 见下方开关(仅画面氛围轻推, 不改你的画风)。")
+	hint.SetText("点一下 = 喜欢 ✓, 再点 = 不喜欢 ✕, 再点 = 取消; 改完点\"保存偏好\"生效。")
+
+	// 风格包(与初始化向导同一套预设, 一键勾选可多选叠加; 改动需点"保存偏好"落盘)
+	packRow, _ := walk.NewComposite(page)
+	_ = packRow.SetLayout(walk.NewHBoxLayout())
+	themedLabel(packRow, "风格包(一键勾选, 可多选):", nil, colBody)
+	for _, pack := range presetPacks {
+		btn, _ := walk.NewPushButton(packRow)
+		btn.SetText(pack.Name)
+		btn.Clicked().Attach(func() { s.applyPresetPack(pack.Keys) })
+	}
 
 	// 三态点选(与初始化向导同一交互: 维度标签 + 筹码网格)
 	s.answers = map[string]survey.Attitude{}
@@ -181,6 +186,7 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 			s.answers[config.Key(d.ID, v.ID)] = attitudeOfWeight(profile.Get(d.ID, v.ID))
 		}
 	}
+	s.baseAnswers = cloneSurvey(s.answers)
 	if s.chips, err = newSurveyChips(page, s.answers, nil); err != nil {
 		return err
 	}
@@ -214,10 +220,7 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 	_ = btnRow.SetLayout(walk.NewHBoxLayout())
 	saveBtn, _ := walk.NewPushButton(btnRow)
 	saveBtn.SetText("保存偏好")
-	saveBtn.Clicked().Attach(func() { s.saveProfileEdits() })
-	calibBtn, _ := walk.NewPushButton(btnRow)
-	calibBtn.SetText("图片探针校准")
-	calibBtn.Clicked().Attach(func() { s.runProbeCalibration() })
+	saveBtn.Clicked().Attach(func() { s.saveProfileEdits(false) })
 	reBtn, _ := walk.NewPushButton(btnRow)
 	reBtn.SetText("重新初始化向导")
 	reBtn.Clicked().Attach(func() {
@@ -231,7 +234,6 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 	saveAllBtn, _ := walk.NewPushButton(btnRow)
 	saveAllBtn.SetText("打开数据目录")
 	saveAllBtn.Clicked().Attach(func() { openFolder(s.dir) })
-	s.refreshSummary(profile)
 	return nil
 }
 
@@ -381,38 +383,37 @@ func (s *settings) saveKeywordMeta(detail string) {
 	_ = signals.Append(s.dir, signals.Event{Type: signals.TypeKeywordsAdjust, Detail: "自定义关键词: " + detail})
 }
 
-// refreshSummary 刷新偏好摘要标签(只罗列名称, 不显示权重数值)。
-func (s *settings) refreshSummary(profile *config.Profile) {
-	items := probe.Summarize(profile, 10)
-	var names []string
-	for _, it := range items {
-		// Summarize 返回 "名称 0.90" 形式: 去掉尾部权重数值
-		if i := strings.LastIndex(it, " "); i > 0 {
-			names = append(names, it[:i])
-		} else {
-			names = append(names, it)
+// applyPresetPack 风格包一键勾选: 包内词条勾为"喜欢", 不覆盖其他已勾项(可多选叠加);
+// 与向导 applyPresetPack 同语义, 改动需点"保存偏好"落盘。
+func (s *settings) applyPresetPack(keys []string) {
+	for _, key := range keys {
+		if _, ok := s.answers[key]; ok {
+			s.answers[key] = survey.Like
 		}
 	}
-	if len(names) == 0 {
-		s.summaryLbl.SetText("当前偏好: 暂无(多为中立)")
-	} else {
-		s.summaryLbl.SetText("当前偏好: " + strings.Join(names, " · "))
+	if s.chips != nil {
+		s.chips.refresh()
 	}
 }
 
-func (s *settings) saveProfileEdits() {
+// saveProfileEdits 保存偏好点选; quiet 时不弹"已保存"提示(关闭窗口流程用)。
+// 返回是否保存成功; 成功后基线前移(视为无未保存修改)。
+func (s *settings) saveProfileEdits(quiet bool) bool {
 	profile, _ := config.LoadProfile(s.dir)
 	// 三态点选 → 画像(喜欢 0.9 / 中立 0.3 / 不喜欢 0.05 + 避让清单)
 	survey.Apply(profile, s.answers)
 	if err := profile.Save(s.dir); err != nil {
 		showError(s.mw, "偏好保存失败: %v", err)
-		return
+		return false
 	}
 	s.cfg.ProfileVer++
 	_ = s.cfg.Save(s.dir)
 	_ = signals.Append(s.dir, signals.Event{Type: signals.TypeWeightAdjust, Detail: "设置页调整偏好"})
-	s.refreshSummary(profile)
-	showInfo(s.mw, "偏好已保存。出图将严格按你勾选的画风与题材生成。")
+	s.baseAnswers = cloneSurvey(s.answers)
+	if !quiet {
+		showInfo(s.mw, "偏好已保存。出图将严格按你勾选的画风与题材生成。")
+	}
+	return true
 }
 
 // ---------- 服务与调度页 ----------
@@ -529,7 +530,7 @@ func (s *settings) buildSettingsPage(tab *walk.TabWidget) error {
 	_ = btnRow.SetLayout(walk.NewHBoxLayout())
 	saveBtn, _ := walk.NewPushButton(btnRow)
 	saveBtn.SetText("保存设置")
-	saveBtn.Clicked().Attach(func() { s.saveService() })
+	saveBtn.Clicked().Attach(func() { s.saveService(false) })
 	testBtn, _ := walk.NewPushButton(btnRow)
 	testBtn.SetText("测试连接")
 	testBtn.Clicked().Attach(func() {
@@ -655,7 +656,9 @@ func (s *settings) collectServiceConfig() *config.Config {
 	return &c
 }
 
-func (s *settings) saveService() {
+// saveService 保存服务/调度表单; quiet 时不弹"已保存"提示(关闭窗口流程用)。
+// 返回是否保存成功。
+func (s *settings) saveService(quiet bool) bool {
 	cfg := s.collectServiceConfig()
 	*s.cfg = *cfg
 	// 回访周期变化时从现在起算(后续满意仍沿记忆曲线自动上调)
@@ -665,7 +668,7 @@ func (s *settings) saveService() {
 	}
 	if err := s.cfg.Save(s.dir); err != nil {
 		showError(s.mw, "保存失败: %v", err)
-		return
+		return false
 	}
 	s.refreshAskLabel()
 	s.be, s.cc = makeBackend(s.cfg)
@@ -679,7 +682,60 @@ func (s *settings) saveService() {
 			_ = s.cfg.Save(s.dir)
 		}
 	}
-	showInfo(s.mw, "设置已保存。")
+	if !quiet {
+		showInfo(s.mw, "设置已保存。")
+	}
+	return true
+}
+
+// serviceDirty 服务/调度页表单与已保存配置的差异(即"未保存修改")。
+// 只比用户可编辑且由 saveService 落盘的字段; PauseUntil 为保存时按当前时间推导的动态值, 不参与比对。
+func (s *settings) serviceDirty() bool {
+	c := s.collectServiceConfig()
+	cur := s.cfg
+	if c.DirectMode != cur.DirectMode || c.DirectURL != cur.DirectURL || c.DirectToken != cur.DirectToken ||
+		c.IntervalHours != cur.IntervalHours || c.AskEnabled != cur.AskEnabled || c.AutoChange != cur.AutoChange {
+		return true
+	}
+	if int(s.askSpin.Value()) != cur.Satisfaction.IntervalDays {
+		return true
+	}
+	if !c.AutoChange && c.PauseHours != cur.PauseHours {
+		return true
+	}
+	return false
+}
+
+// confirmClose 标题栏 ✕ 关闭: 有未保存修改(偏好点选/服务表单)则询问,
+// 选"是"保存后退出, "否"放弃修改退出, "取消"留在设置页; 无修改直接关闭退出。
+func (s *settings) confirmClose() {
+	profileDirty := s.answers != nil && !surveyEqual(s.answers, s.baseAnswers)
+	svcDirty := s.serviceDirty()
+	if profileDirty || svcDirty {
+		var what []string
+		if profileDirty {
+			what = append(what, "偏好勾选")
+		}
+		if svcDirty {
+			what = append(what, "服务与调度设置")
+		}
+		msg := "有未保存的修改: " + strings.Join(what, "、") + "\n保存后退出吗?\n\n" +
+			"是 = 保存并退出\n否 = 放弃修改直接退出\n取消 = 留在设置页"
+		switch walk.MsgBox(s.mw, config.AppNameCN, msg, walk.MsgBoxYesNoCancel|walk.MsgBoxIconQuestion) {
+		case walk.DlgCmdYes:
+			if profileDirty && !s.saveProfileEdits(true) {
+				return // 保存失败: 留在设置页让用户处理
+			}
+			if svcDirty && !s.saveService(true) {
+				return
+			}
+		case walk.DlgCmdNo:
+			// 放弃修改直接退出
+		default:
+			return // 取消: 留在设置页
+		}
+	}
+	s.mw.Close()
 }
 
 // removed: refreshTaskState (计划任务管理已从 UI 移除, 后台自动维护)

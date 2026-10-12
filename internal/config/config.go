@@ -112,9 +112,11 @@ func DefaultDir() string {
 	return filepath.Join(la, "AIWallpaper")
 }
 
-// EnsureSubdirs 创建数据子目录(probes/wallpapers/bin/logs)。
+// EnsureSubdirs 创建数据子目录(wallpapers/bin/logs); 顺带清理已退役的探针缓存目录。
 func EnsureSubdirs(dir string) error {
-	for _, sub := range []string{"probes", "wallpapers", "bin", "logs"} {
+	// 探针机制已退役(2026-10), 旧版遗留的 probes 缓存不再需要
+	_ = os.RemoveAll(filepath.Join(dir, "probes"))
+	for _, sub := range []string{"wallpapers", "bin", "logs"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			return err
 		}

@@ -1,6 +1,6 @@
 // Package taxonomy 定义 5 维偏好属性词典。
 // 每个维度的每个值附英文提示词片段(用于 SDXL / Z-Image)与可选负面片段;
-// 探针图组合、画像权重、提示词拼装均以本词典为准。
+// 画像权重、提示词拼装均以本词典为准。
 package taxonomy
 
 // Value 一个属性值。
@@ -127,6 +127,11 @@ var Dimensions = []Dimension{
 			{ID: "cozy", NameCN: "温馨", Prompt: "cozy warm atmosphere, intimate and welcoming mood"},
 			{ID: "mysterious", NameCN: "神秘", Prompt: "mysterious atmosphere, enigmatic and ethereal mood"},
 			{ID: "vibrant", NameCN: "活力", Prompt: "vibrant energetic atmosphere, lively and dynamic mood"},
+			{ID: "dreamy", NameCN: "梦幻", Prompt: "dreamy ethereal atmosphere, soft glow, surreal floating light, gentle fantasy mood"},
+			{ID: "healing", NameCN: "治愈", Prompt: "gentle comforting atmosphere, soft warm light, heartfelt calm joy, soothing mood"},
+			{ID: "melancholy", NameCN: "忧郁", Prompt: "melancholic wistful mood, quiet blue sorrow, bittersweet rain atmosphere"},
+			{ID: "solitude", NameCN: "孤寂", Prompt: "solitary contemplative mood, lone stillness, quiet introspection"},
+			{ID: "passionate", NameCN: "热烈", Prompt: "passionate intense mood, fiery dramatic energy, bold emotion"},
 		},
 	},
 	{
@@ -137,6 +142,11 @@ var Dimensions = []Dimension{
 			{ID: "centered", NameCN: "居中式极简", Prompt: "centered minimalist composition, symmetrical balance"},
 			{ID: "thirds", NameCN: "三分法", Prompt: "rule of thirds composition, balanced subject placement"},
 			{ID: "silhouette", NameCN: "剪影", Prompt: "dramatic silhouette against glowing sky, backlit subject"},
+			{ID: "closeup", NameCN: "人物特写", Prompt: "portrait close-up, face detail, shallow depth of field"},
+			{ID: "aerial", NameCN: "俯瞰航拍", Prompt: "aerial top-down view, bird's-eye perspective"},
+			{ID: "depth", NameCN: "纵深层次", Prompt: "layered depth composition, foreground midground background layers, immersive perspective"},
+			{ID: "framing", NameCN: "前景框架", Prompt: "natural frame composition, foreground framing element"},
+			{ID: "lowangle", NameCN: "仰视", Prompt: "low-angle worm's-eye view, towering upward perspective"},
 		},
 	},
 }

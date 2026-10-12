@@ -495,7 +495,7 @@ WHERE user_id=? AND hour=?`, userID, hour).Scan(&llm, &gen)
 type Job struct {
 	JobID      string
 	UserID     string
-	Kind       string // gen | pregen | probe
+	Kind       string // gen | pregen
 	Priority   string // normal | idle
 	Status     string // queued | running | done | failed
 	Error      string
@@ -578,6 +578,13 @@ func (s *Store) SetJobStatus(id, status, errMsg, imagePath string) error {
 func (s *Store) PurgeJobs(before time.Time) error {
 	_, err := s.db.Exec(`DELETE FROM jobs WHERE status IN ('done','failed') AND updated_at < ?`,
 		before.Format(timeFmt))
+	return err
+}
+
+// PurgeJobsByKind 删除指定类型的全部任务(含 queued/running)。
+// 用于机制退役后的存量清理(如探针池遗留的 probe 任务, 避免残留任务被 worker 消费)。
+func (s *Store) PurgeJobsByKind(kind string) error {
+	_, err := s.db.Exec(`DELETE FROM jobs WHERE kind = ?`, kind)
 	return err
 }
 

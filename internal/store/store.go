@@ -116,9 +116,6 @@ func rotate(path string, backups int) {
 // WallpapersDir 壁纸目录。
 func (s *Store) WallpapersDir() string { return filepath.Join(s.Dir, "wallpapers") }
 
-// ProbesDir 探针图目录。
-func (s *Store) ProbesDir() string { return filepath.Join(s.Dir, "probes") }
-
 // BinDir 程序副本目录(计划任务指向)。
 func (s *Store) BinDir() string { return filepath.Join(s.Dir, "bin") }
 

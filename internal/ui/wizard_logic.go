@@ -121,6 +121,24 @@ var presetPacks = []presetPack{
 	}},
 }
 
+// defaultPackName 初始化默认风格包: 全新用户进入问卷时无任何勾选, 预勾该包避免从零点选。
+const defaultPackName = "治愈日常"
+
+// applyDefaultPack 将默认风格包内词条勾为"喜欢"。仅在问卷无任何勾选(全新用户)时调用。
+func applyDefaultPack(answers map[string]survey.Attitude) {
+	for _, p := range presetPacks {
+		if p.Name != defaultPackName {
+			continue
+		}
+		for _, k := range p.Keys {
+			if _, ok := answers[k]; ok {
+				answers[k] = survey.Like
+			}
+		}
+		return
+	}
+}
+
 // surveyLikesIn 统计勾选为"喜欢"的项数。
 func surveyLikesIn(answers map[string]survey.Attitude) int {
 	n := 0

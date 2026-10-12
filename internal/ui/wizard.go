@@ -109,8 +109,9 @@ func (w *wizard) build() error {
 	if icon, err := walk.NewIconFromResourceId(2); err == nil {
 		_ = mw.SetIcon(icon)
 	}
-	mw.SetSize(fitWorkArea(mw, walk.Size{Width: 1040, Height: 720}))
-	mw.SetMinMaxSize(fitWorkArea(mw, walk.Size{Width: 900, Height: 620}), walk.Size{})
+	fixedSize := fitWorkArea(mw, walk.Size{Width: 1040, Height: 720})
+	mw.SetSize(fixedSize)
+	mw.SetMinMaxSize(fixedSize, fixedSize) // 固定尺寸: 不允许拉伸宽高
 	_ = mw.SetLayout(walk.NewVBoxLayout())
 	mw.SetBackground(brushPageBg)
 
@@ -197,7 +198,7 @@ func (w *wizard) build() error {
 	return nil
 }
 
-// navClick 左侧导航跳转: 仅允许返回已解锁步骤(探针校准中锁定)。
+// navClick 左侧导航跳转: 仅允许返回已解锁步骤。
 func (w *wizard) navClick(n int) {
 	if n == w.step || n > w.maxReached {
 		return
@@ -478,6 +479,10 @@ func (w *wizard) ensureSurveyAnswers() {
 		w.profile, _ = config.LoadProfile(w.dir)
 	}
 	w.surveyAnswers = answersFromProfile(w.profile)
+	if surveyLikesIn(w.surveyAnswers) == 0 {
+		// 全新用户无任何勾选: 预勾默认风格包"治愈日常", 可再自行调整或清空
+		applyDefaultPack(w.surveyAnswers)
+	}
 }
 
 // updateSurveyCount 刷新汇总条: 计数 + 每维前 2 个喜欢项的"重点出图"摘要。

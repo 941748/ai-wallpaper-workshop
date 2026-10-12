@@ -14,15 +14,7 @@ import (
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
 	"wallpaper/internal/desktop"
-	"wallpaper/internal/probe"
 	"wallpaper/internal/prompt"
-	"wallpaper/internal/taxonomy"
-)
-
-// 探针出图尺寸(固定 1024x768)。
-const (
-	probeW = 1024
-	probeH = 768
 )
 
 // makeBackend 依据配置返回出图后端(cloud 默认 / comfyui-direct 调试)与云客户端(直连时 nil)。
@@ -84,65 +76,6 @@ func testConnection(cfg *config.Config) (renderOK bool, err error) {
 		return false, fmt.Errorf("云端配额已用尽")
 	}
 	return h.RenderOK, nil
-}
-
-// acquireProbeImages 获取一组探针图: 优先云端公共池(秒开), 失败/不足则现场出图。
-// progress 回调(done,total) 供 UI 刷新。
-func acquireProbeImages(ctx context.Context, cfg *config.Config, cc *cloud.Client, be backend.ImageBackend,
-	combos []probe.Combo, progress func(done, total int)) map[string][]byte {
-
-	images := map[string][]byte{}
-	total := len(combos)
-
-	// 1) 云端公共探针池(仅首轮有池; 精炼轮组合个性化, 直接现场生成)
-	if cc != nil && len(combos) > 0 && combos[0].Kind == probe.FirstRound {
-		items, err := cc.ProbesSample(ctx, total)
-		if err == nil {
-			byID := map[string]cloud.ProbeItem{}
-			for _, it := range items {
-				byID[it.ID] = it
-			}
-			for i, cb := range combos {
-				if it, ok := byID[cb.ID]; ok && it.URL != "" {
-					if data, err := cc.ProbesImage(ctx, it.URL); err == nil && desktop.Inspect(data) == nil {
-						images[cb.ID] = data
-					}
-				}
-				progress(i+1, total)
-			}
-			if len(images) == total {
-				return images
-			}
-		}
-	}
-
-	// 2) 现场生成兜底
-	for i, cb := range combos {
-		if _, ok := images[cb.ID]; ok {
-			continue
-		}
-		data, err := generateCombo(ctx, be, cb)
-		if err == nil && desktop.Inspect(data) == nil {
-			images[cb.ID] = data
-		}
-		progress(i+1, total)
-	}
-	return images
-}
-
-// generateCombo 现场生成一张探针图(1024x768)。
-func generateCombo(ctx context.Context, be backend.ImageBackend, cb probe.Combo) ([]byte, error) {
-	id, err := be.Submit(ctx, backend.GenParams{
-		Positive: cb.Prompt(),
-		Negative: taxonomy.BaseNegative,
-		Width:    probeW,
-		Height:   probeH,
-		Seed:     cb.Seed,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return be.Wait(ctx, id)
 }
 
 // generateWallpaper 生成首张/立即换一张壁纸(云端 LLM 优先, 本地引擎兜底), 返回适配屏幕后的 PNG、提示词规格与来源(cloud|local)。

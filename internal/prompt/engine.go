@@ -212,7 +212,7 @@ func comboKey(values map[string]string) string {
 }
 
 func seedOf(values map[string]string) int64 {
-	// 复用 probe 的确定性种子算法(fnv64a)
+	// 确定性种子(fnv64a): 同一组合在任何端出图一致
 	h := uint64(14695981039346656037)
 	for _, d := range taxonomy.Dimensions {
 		for _, b := range []byte(d.ID + "=" + values[d.ID] + ";") {

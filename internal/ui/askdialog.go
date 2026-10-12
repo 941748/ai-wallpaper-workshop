@@ -29,6 +29,7 @@ func ShowAskDialog(req tick.AskRequest) tick.AskChoice {
 	}
 	dlg.SetBackground(brushPageBg)
 	dlg.SetSize(walk.Size{Width: 440, Height: 440})
+	dlg.SetMinMaxSize(walk.Size{Width: 440, Height: 440}, walk.Size{Width: 440, Height: 440}) // 固定尺寸: 不允许拉伸
 	_ = dlg.SetLayout(walk.NewVBoxLayout())
 
 	// 顶栏: 无边框标题栏(拖动热区 + 右上角扁平 ✕; 关闭=“以后再说”)

@@ -58,20 +58,44 @@ func enableCustomFrame(form walk.Form) {
 	subclassFrame(hwnd)
 }
 
-// subclassFrame 子类化窗口过程: WM_NCCALCSIZE 时移除顶部标题栏区, 保留左右下拉伸边框。
+// subclassFrame 子类化窗口过程:
+//   - WM_NCCALCSIZE: 移除顶部标题栏区, 保留左右下拉伸边框;
+//   - WM_GETMINMAXINFO: 固定尺寸——walk 只写 PtMinTrackSize(下限), 把上限同步为下限,
+//     使拖拽与最大化都无法改变窗口尺寸(walk 的 maxSize 从未被消费, 实测能拉大);
+//   - WM_NCHITTEST: 边缘/边角的拉伸热区降级为客户区, 光标不再出现拉伸箭头。
 func subclassFrame(hwnd win.HWND) {
 	var orig uintptr
 	cb := windows.NewCallback(func(h uintptr, msg uint32, wp uintptr, lp unsafe.Pointer) uintptr {
-		if msg == win.WM_NCCALCSIZE && wp == 1 {
-			p := (*nccalcsizeParams)(lp)
-			top := p.rgrc[0].Top
-			ret := win.CallWindowProc(orig, win.HWND(h), msg, wp, uintptr(lp))
-			if ret != 0 {
-				return ret
+		switch msg {
+		case win.WM_NCCALCSIZE:
+			if wp == 1 {
+				p := (*nccalcsizeParams)(lp)
+				top := p.rgrc[0].Top
+				ret := win.CallWindowProc(orig, win.HWND(h), msg, wp, uintptr(lp))
+				if ret != 0 {
+					return ret
+				}
+				// 还原顶边 → 客户区上移到窗口顶端(去掉标题栏), 左右下边框保持默认(可拉伸)
+				p.rgrc[0].Top = top
+				return 0
 			}
-			// 还原顶边 → 客户区上移到窗口顶端(去掉标题栏), 左右下边框保持默认(可拉伸)
-			p.rgrc[0].Top = top
-			return 0
+		case win.WM_GETMINMAXINFO:
+			ret := win.CallWindowProc(orig, win.HWND(h), msg, wp, uintptr(lp))
+			if lp != nil {
+				mmi := (*win.MINMAXINFO)(lp)
+				mmi.PtMaxTrackSize = mmi.PtMinTrackSize // 跟踪上限 = 下限 → 不可拉伸
+				mmi.PtMaxSize = mmi.PtMinTrackSize       // 最大化尺寸也封顶 → Win+↑ 无效
+			}
+			return ret
+		case win.WM_NCHITTEST:
+			ret := win.CallWindowProc(orig, win.HWND(h), msg, wp, uintptr(lp))
+			switch int32(ret) {
+			case win.HTLEFT, win.HTRIGHT, win.HTTOP, win.HTTOPLEFT, win.HTTOPRIGHT,
+				win.HTBOTTOM, win.HTBOTTOMLEFT, win.HTBOTTOMRIGHT, win.HTBORDER:
+				// 固定尺寸窗口: 边缘不再提供拉伸交互(标题条拖动走 HTCAPTION 注入, 不受影响)
+				return uintptr(win.HTCLIENT)
+			}
+			return ret
 		}
 		return win.CallWindowProc(orig, win.HWND(h), msg, wp, uintptr(lp))
 	})
@@ -114,6 +138,26 @@ func (tb *titleBar) setSubtitle(s string) {
 	}
 }
 
+// closeRectNow ✕ 的命中/绘制区(物理像素): 按控件当前尺寸实时计算。
+// 不依赖上次绘制的快照——窗口拉伸/DPI 变化后, 若命中区停在旧宽度, 点 ✕ 会落空并
+// 误入拖动分支(实测: 拉伸后再点 ✕ 无反应)。
+func (tb *titleBar) closeRectNow() walk.Rectangle {
+	s := scaleFunc(tb.cw.DPI())
+	var rc win.RECT
+	if !win.GetClientRect(tb.cw.Handle(), &rc) {
+		return walk.Rectangle{}
+	}
+	w, h := int(rc.Right-rc.Left), int(rc.Bottom-rc.Top)
+	if w <= 0 || h <= 0 {
+		return walk.Rectangle{}
+	}
+	btnW := s(46)
+	if btnW > w {
+		btnW = w
+	}
+	return walk.Rectangle{X: w - btnW, Y: 0, Width: btnW, Height: h}
+}
+
 func (tb *titleBar) paint(canvas *walk.Canvas, update walk.Rectangle) error {
 	s := scaleFunc(tb.cw.DPI())
 	cw := clientWidthPx(tb.cw.Handle())
@@ -125,7 +169,11 @@ func (tb *titleBar) paint(canvas *walk.Canvas, update walk.Rectangle) error {
 
 	padX := s(22)
 	btnW := s(46)
-	tb.closeRect = walk.Rectangle{X: cw - btnW, Y: 0, Width: btnW, Height: h}
+	if r := tb.closeRectNow(); r.Width > 0 {
+		tb.closeRect = r
+	} else {
+		tb.closeRect = walk.Rectangle{X: cw - btnW, Y: 0, Width: btnW, Height: h}
+	}
 	textW := cw - btnW - padX
 	if textW < 0 {
 		textW = 0
@@ -147,7 +195,7 @@ func (tb *titleBar) paint(canvas *walk.Canvas, update walk.Rectangle) error {
 }
 
 func (tb *titleBar) inClose(x, y int) bool {
-	r := tb.closeRect
+	r := tb.closeRectNow() // 实时命中区: 窗口尺寸变化后仍准确
 	return r.Width > 0 && x >= r.X && x < r.X+r.Width && y >= r.Y && y < r.Y+r.Height
 }
 

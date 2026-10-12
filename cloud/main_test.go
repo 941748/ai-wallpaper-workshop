@@ -17,7 +17,6 @@ import (
 
 	"wallpaper/cloud/llm"
 	"wallpaper/cloud/store"
-	"wallpaper/internal/probe"
 )
 
 // ---------- mock ComfyUI ----------
@@ -88,7 +87,7 @@ type testServer struct {
 
 func newTestServer(t *testing.T, llmBase string, withLLM bool) *testServer {
 	data := t.TempDir()
-	for _, sub := range []string{"probes", "images", "pregen", "releases"} {
+	for _, sub := range []string{"images", "pregen", "releases"} {
 		if err := os.MkdirAll(data+"/"+sub, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -387,22 +386,6 @@ func TestFullClientLifecycle(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("used code should 404, got %d", resp.StatusCode)
 	}
-
-	// 探针池接口
-	resp, raw = ts.do(t, "GET", "/api/v1/probes/sample?count=12", "", nil)
-	if resp.StatusCode != 200 {
-		t.Fatalf("probe sample %d", resp.StatusCode)
-	}
-	var pSample struct {
-		Items []struct {
-			ID  string `json:"id"`
-			URL string `json:"url"`
-		} `json:"items"`
-	}
-	decodeData(t, raw, &pSample)
-	if len(pSample.Items) != 12 {
-		t.Fatalf("want 12 probe items, got %d", len(pSample.Items))
-	}
 }
 
 func waitJob(t *testing.T, ts *testServer, token, jobID string, timeout time.Duration) (string, string) {
@@ -567,36 +550,32 @@ func TestContextHints(t *testing.T) {
 	}
 }
 
-// ---------- 探针池 ----------
+// ---------- 存量任务清理 ----------
 
-func TestProbePoolRetriesFailed(t *testing.T) {
+// TestPurgeJobsByKind 探针机制退役: 启动清理应删掉存量 probe 任务(含 queued), 不影响其他类型。
+func TestPurgeJobsByKind(t *testing.T) {
 	data := t.TempDir()
-	if err := os.MkdirAll(data+"/probes", 0o755); err != nil {
-		t.Fatal(err)
-	}
 	st, err := store.Open(data + "/q.db")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = st.Close() }()
-	q := &queue{st: st, reg: DefaultRegistry(), dataDir: data, logf: func(string, ...any) {}}
-
-	q.ensureProbePool()
-	id := "probe-" + probe.BalancedCombos(probe.FirstCount)[0].ID
-	j, err := st.Job(id)
-	if err != nil || j == nil {
-		t.Fatalf("探针任务应已创建: %v", err)
+	if err := st.CreateJob(store.Job{JobID: "probe-p01", UserID: "system", Kind: "probe",
+		Priority: "idle", Positive: "x", Width: 1024, Height: 768, Seed: 1}); err != nil {
+		t.Fatal(err)
 	}
-	if j.Status != "queued" {
-		t.Fatalf("初始状态应为 queued, got %s", j.Status)
+	if err := st.CreateJob(store.Job{JobID: "gen-keep", UserID: "u", Kind: "gen",
+		Priority: "normal", Positive: "x", Width: 1024, Height: 768, Seed: 2}); err != nil {
+		t.Fatal(err)
 	}
-
-	// 模拟出图失败(如出图机离线)后重启补池: 应重新排为 queued
-	_ = st.SetJobStatus(id, "failed", "comfy down", "")
-	q.ensureProbePool()
-	j2, _ := st.Job(id)
-	if j2 == nil || j2.Status != "queued" {
-		t.Fatalf("失败探针任务应重新排队, got %+v", j2)
+	if err := st.PurgeJobsByKind("probe"); err != nil {
+		t.Fatal(err)
+	}
+	if j, _ := st.Job("probe-p01"); j != nil {
+		t.Fatalf("probe 任务应被清理, got %+v", j)
+	}
+	if j, _ := st.Job("gen-keep"); j == nil {
+		t.Fatal("其他类型任务不应被清理")
 	}
 }
 
