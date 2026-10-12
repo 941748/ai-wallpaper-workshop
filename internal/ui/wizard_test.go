@@ -68,8 +68,8 @@ func TestCycleAttitude(t *testing.T) {
 }
 
 func TestPresetPacksCoverAllDims(t *testing.T) {
-	if len(presetPacks) < 4 || len(presetPacks) > 6 {
-		t.Fatalf("风格包数量 %d 不符合预期(4~6)", len(presetPacks))
+	if len(presetPacks) < 4 || len(presetPacks) > 8 {
+		t.Fatalf("风格包数量 %d 不符合预期(4~8)", len(presetPacks))
 	}
 	for _, pack := range presetPacks {
 		dims := map[string]bool{}

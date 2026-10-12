@@ -79,6 +79,17 @@ var presetPacks = []presetPack{
 		config.Key(taxonomy.DimMood, "serene"),
 		config.Key(taxonomy.DimComposition, "wide"),
 	}},
+	{Name: "仙侠问道", Keys: []string{
+		config.Key(taxonomy.DimStyle, "ink"),
+		config.Key(taxonomy.DimStyle, "neochinese"),
+		config.Key(taxonomy.DimSubject, "xianxia"),
+		config.Key(taxonomy.DimSubject, "cloudsea"),
+		config.Key(taxonomy.DimPalette, "cool"),
+		config.Key(taxonomy.DimMood, "serene"),
+		config.Key(taxonomy.DimMood, "mysterious"),
+		config.Key(taxonomy.DimComposition, "wide"),
+		config.Key(taxonomy.DimComposition, "silhouette"),
+	}},
 	{Name: "治愈日常", Keys: []string{
 		config.Key(taxonomy.DimStyle, "film"),
 		config.Key(taxonomy.DimStyle, "watercolor"),
@@ -96,6 +107,17 @@ var presetPacks = []presetPack{
 		config.Key(taxonomy.DimPalette, "dark"),
 		config.Key(taxonomy.DimMood, "mysterious"),
 		config.Key(taxonomy.DimComposition, "centered"),
+	}},
+	{Name: "留白呼吸", Keys: []string{
+		config.Key(taxonomy.DimStyle, "minimal"),
+		config.Key(taxonomy.DimStyle, "neochinese"),
+		config.Key(taxonomy.DimSubject, "seasons"),
+		config.Key(taxonomy.DimSubject, "lake"),
+		config.Key(taxonomy.DimPalette, "morandi"),
+		config.Key(taxonomy.DimPalette, "pastel"),
+		config.Key(taxonomy.DimMood, "serene"),
+		config.Key(taxonomy.DimComposition, "centered"),
+		config.Key(taxonomy.DimComposition, "wide"),
 	}},
 }
 

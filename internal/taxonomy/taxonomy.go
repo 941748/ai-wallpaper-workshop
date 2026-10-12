@@ -93,6 +93,8 @@ var Dimensions = []Dimension{
 			{ID: "pet", NameCN: "宠物", Prompt: "adorable pet cat or dog, heartwarming animal portrait"},
 			{ID: "sport", NameCN: "运动", Prompt: "sports action scene, dynamic athlete in motion"},
 			{ID: "mythic", NameCN: "神话生物", Prompt: "mythical creature, dragon or phoenix, epic fantasy creature"},
+			{ID: "xianxia", NameCN: "仙侠意境", Prompt: "xianxia immortal fantasy, flowing-hanfu cultivator on misty sacred peaks, sword flight among celestial palaces, ethereal qi and glowing runes"},
+			{ID: "zhiguai", NameCN: "志异神怪", Prompt: "chinese ghost-folk dark fantasy, ancient temple in night rain, candlelit fox spirit, drifting mist and paper talismans, eerie classical atmosphere"},
 			{ID: "spaceship", NameCN: "太空飞船", Prompt: "spaceship, sci-fi starship, futuristic spacecraft"},
 			{ID: "train", NameCN: "火车飞机", Prompt: "train or airplane, transportation photography, travel scene"},
 			{ID: "oldstreet", NameCN: "老街巷", Prompt: "ancient alley, old street with lanterns, nostalgic townscape"},
