@@ -16,7 +16,7 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 
 零注册、零登录、无托盘、无常驻进程——关掉窗口,系统里就没有它的进程。
 
-**当前版本: v1.0.4** · 官网 [cybermesh.space](https://www.cybermesh.space) · 客户端约 10 MB 单文件。
+**当前版本: v1.0.5** · 官网 [cybermesh.space](https://www.cybermesh.space) · 客户端约 10 MB 单文件。
 
 ## 下载
 
@@ -108,7 +108,7 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 `golang.org/x/text`、`skip2/go-qrcode`、`modernc.org/sqlite`(纯 Go, 无 CGO)。
 
 ```powershell
-# 一键构建: 跑测试 → dist\wallpaper.exe(GUI 无窗口) + dist\aiwallpaper-cloud.exe
+# 一键构建: 跑测试 → dist\AIWallpaper.exe(GUI 无窗口) + dist\aiwallpaper-cloud.exe
 powershell -ExecutionPolicy Bypass -File build.ps1
 
 # 云服务部署到 Linux 服务器时, 构建 Linux 版二进制
@@ -120,11 +120,12 @@ $env:AW_BUILD_OS = "linux"; powershell -ExecutionPolicy Bypass -File build.ps1
 ```powershell
 go test ./...     # 全部单元/集成测试(含跨模块端到端: 真实 tick ↔ 真实云服务 ↔ mock ComfyUI/LLM)
 go vet ./...
-go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\wallpaper.exe .
+go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\AIWallpaper.exe .
 ```
 
-> 命名说明: 源码构建产物为 `dist\wallpaper.exe`; **对外分发时重命名为 `AIWallpaper.exe`**
+> 命名说明: 构建产物与对外分发名统一为 `AIWallpaper.exe`
 > (即用户在官网 / Release 下载、以及安装后位于 `%LOCALAPPDATA%\AIWallpaper\bin\` 的文件名)。
+> 旧版本安装名 `wallpaper.exe` 会在下次计划任务运行时自动迁移。
 
 ## 项目结构
 
@@ -292,18 +293,18 @@ server {
 
 ## 客户端版本发布(静默自更新)
 
-1. 递增代码中的版本号(`internal/update/update.go` 的 `CurrentVersion`), 构建新客户端,
+1. 递增代码中的版本号(`internal/version/version.go` 的 `Version`, 客户端与云服务共用), 构建新客户端,
    产物重命名为 `AIWallpaper-<version>.exe`。
 2. 计算 sha256 与大小, 连同发布说明写入服务端 `releases/manifest.json`:
 
    ```json
    {
-     "version": "1.0.4",
-     "file": "AIWallpaper-1.0.4.exe",
+     "version": "1.0.5",
+     "file": "AIWallpaper-1.0.5.exe",
      "sha256": "<64 位 hex>",
-     "size": 10730496,
-     "notes": "v1.0.4: 初始化向导杂窗修复; 出图繁忙自动无感补图; 云端空闲预备图唤醒即换",
-     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.0.4/AIWallpaper.exe"
+     "size": 10828800,
+     "notes": "v1.0.5: 初始化向导精简为 4 步(静默注册并入完成页); 全新无边框界面; 桌面/开始菜单快捷方式与一键卸载; 图片探针校准迁至设置页",
+     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.0.5/AIWallpaper.exe"
    }
    ```
 
@@ -342,8 +343,8 @@ server {
 ## 开发与验收
 
 - `go test ./...` 全绿(含跨模块端到端: 真实 tick ↔ 真实云服务 ↔ mock ComfyUI/LLM)
-- 双击 `dist\wallpaper.exe` 进入向导; 走完后壁纸立即更换、计划任务注册成功
-- 关窗后 `tasklist | findstr wallpaper` 无残留; `schtasks /Run /TN AIWallpaper` 静默换图、无窗口
+- 双击 `dist\AIWallpaper.exe` 进入向导; 走完后壁纸立即更换、计划任务注册成功
+- 关窗后 `tasklist | findstr /I AIWallpaper` 无残留; `schtasks /Run /TN AIWallpaper` 静默换图、无窗口
 - 断网运行: 保留旧壁纸、事件入补传队列, 恢复后自动补报
 - 满意度回访到期弹窗: 满意 → 周期递增; 换个风格 → 立即换图并重置; 稍后 → 顺延 3 天
 

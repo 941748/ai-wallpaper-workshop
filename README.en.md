@@ -16,7 +16,7 @@ ComfyUI (Z-Image Turbo) renders the image → it is fitted to your screen's phys
 
 No sign-up, no login, no tray icon, no resident process — close the window and there is no process left in the system.
 
-**Current version: v1.0.4** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~10 MB single file.
+**Current version: v1.0.5** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~10 MB single file.
 
 ## Download
 
@@ -109,7 +109,7 @@ Requirements: Go 1.22+ (windows/amd64). Dependencies are only `lxn/walk`, `golan
 `golang.org/x/text`, `skip2/go-qrcode`, `modernc.org/sqlite` (pure Go, no CGO).
 
 ```powershell
-# One-shot build: run tests → dist\wallpaper.exe (GUI, no console) + dist\aiwallpaper-cloud.exe
+# One-shot build: run tests → dist\AIWallpaper.exe (GUI, no console) + dist\aiwallpaper-cloud.exe
 powershell -ExecutionPolicy Bypass -File build.ps1
 
 # When deploying the cloud service to a Linux server, build the Linux binary
@@ -121,11 +121,12 @@ Day-to-day development:
 ```powershell
 go test ./...     # all unit/integration tests (incl. cross-module end-to-end: real tick ↔ real cloud ↔ mock ComfyUI/LLM)
 go vet ./...
-go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\wallpaper.exe .
+go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\AIWallpaper.exe .
 ```
 
-> Naming note: the build output from source is `dist\wallpaper.exe`; **it is renamed to `AIWallpaper.exe` for distribution**
+> Naming note: the build output and the distributed name are unified as `AIWallpaper.exe`
 > (the name users download from the website / Release, and the file that lives in `%LOCALAPPDATA%\AIWallpaper\bin\` after install).
+> An older install named `wallpaper.exe` is migrated automatically on the next scheduled-task run.
 
 ## Project layout
 
@@ -293,18 +294,18 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
 ## Client releases (silent self-update)
 
-1. Bump the version in code (`CurrentVersion` in `internal/update/update.go`), build the new client,
+1. Bump the version in code (`Version` in `internal/version/version.go`, shared by client and cloud server), build the new client,
    and rename the artifact to `AIWallpaper-<version>.exe`.
 2. Compute the sha256 and size, and write them together with the release notes into the server-side `releases/manifest.json`:
 
    ```json
    {
-     "version": "1.0.4",
-     "file": "AIWallpaper-1.0.4.exe",
+     "version": "1.0.5",
+     "file": "AIWallpaper-1.0.5.exe",
      "sha256": "<64-hex>",
-     "size": 10730496,
-     "notes": "v1.0.4: wizard stray-window fix; silent auto-refill when render is busy; idle pre-generation for instant wake-up swap",
-     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.0.4/AIWallpaper.exe"
+     "size": 10828800,
+     "notes": "v1.0.5: streamlined 4-step wizard with silent task registration; brand-new frameless UI; desktop/start-menu shortcuts and one-click uninstall; probe calibration moved to Settings",
+     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.0.5/AIWallpaper.exe"
    }
    ```
 
@@ -343,8 +344,8 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 ## Development & acceptance
 
 - `go test ./...` all green (incl. cross-module end-to-end: real tick ↔ real cloud ↔ mock ComfyUI/LLM)
-- Double-click `dist\wallpaper.exe` to enter the wizard; after finishing, the wallpaper changes immediately and the scheduled task is registered
-- After closing the window, `tasklist | findstr wallpaper` shows no leftover; `schtasks /Run /TN AIWallpaper` swaps silently with no window
+- Double-click `dist\AIWallpaper.exe` to enter the wizard; after finishing, the wallpaper changes immediately and the scheduled task is registered
+- After closing the window, `tasklist | findstr /I AIWallpaper` shows no leftover; `schtasks /Run /TN AIWallpaper` swaps silently with no window
 - Run offline: the old wallpaper is kept, events enter the retry queue, and are reported automatically once reconnected
 - Satisfaction check-in dialog on due: Satisfied → cycle increments; Change style → swaps immediately and resets; Later → postponed by 3 days
 
