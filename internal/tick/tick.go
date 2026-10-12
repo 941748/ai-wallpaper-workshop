@@ -129,7 +129,11 @@ func RunOnce(ctx context.Context, env Env) error {
 
 	// 安装名迁移: 旧 wallpaper.exe → 统一 AIWallpaper.exe(重指计划任务/快捷方式/卸载项, 清理旧名)。
 	// 运行中的旧 exe 无法删除: 改名为 .old, 由下次 tick 的 CleanupOldFiles 清理。
-	if exe := env.ExePath; exe != "" && !strings.EqualFold(filepath.Base(exe), install.ExeName) {
+	// installed 守卫: 仅当运行于安装目录(bin\)时才执行迁移/重注册/快捷方式/卸载项等系统级副作用——
+	// go test 等开发态进程的 exe 在 GOTMPDIR go-build 临时目录, 若不拦截会把计划任务/快捷方式
+	// 劫持到临时路径(go 清理后即死路径, 实测事故: 任务每小时 0x80070002)。
+	installed := env.ExePath != "" && filepath.Base(filepath.Dir(env.ExePath)) == "bin"
+	if exe := env.ExePath; installed && !strings.EqualFold(filepath.Base(exe), install.ExeName) {
 		binDir := filepath.Dir(exe)
 		dst := install.BinPath(binDir)
 		if err := install.CopyFile(exe, dst); err != nil {
@@ -147,8 +151,8 @@ func RunOnce(ctx context.Context, env Env) error {
 		}
 	}
 
-	// 计划任务节律修正(固定每小时; 补池与换图节流均由 tick 内部完成)
-	if cfg.TaskTickHours != taskTickHours {
+	// 计划任务节律修正(固定每小时; 补池与换图节流均由 tick 内部完成)。同 installed 守卫。
+	if installed && cfg.TaskTickHours != taskTickHours {
 		if err := scheduler.Register(env.ExePath, taskTickHours, cfg.PhaseMinutes); err == nil {
 			cfg.TaskTickHours = taskTickHours
 			_ = cfg.Save(env.Dir)
