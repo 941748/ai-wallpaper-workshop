@@ -46,7 +46,7 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 
 ## 截图
 
-五步向导: 连接服务 → 偏好问卷(五维三态筹码, 可一键勾选风格包) → 首张壁纸 → 注册每小时任务 → 完成。
+四步向导: 连接服务 → 偏好问卷(五维三态筹码, 可一键勾选风格包) → 首张壁纸 → 完成(每小时任务在完成页静默注册)。
 
 <p align="center">
   <img src="docs/screenshots/wizard-connect.png" width="49%" />

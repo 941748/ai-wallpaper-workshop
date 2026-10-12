@@ -46,7 +46,7 @@ No sign-up, no login, no tray icon, no resident process — close the window and
 
 ## Screenshots
 
-Five-step wizard: connect to the service → preference questionnaire (five-dimension tri-state chips, with one-click style packs) → first wallpaper → register the hourly task → done.
+Four-step wizard: connect to the service → preference questionnaire (five-dimension tri-state chips, with one-click style packs) → first wallpaper → done (the hourly task registers silently on the final step).
 
 <p align="center">
   <img src="docs/screenshots/wizard-connect.png" width="49%" />

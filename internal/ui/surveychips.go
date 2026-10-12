@@ -236,5 +236,5 @@ func cycleAttitude(a survey.Attitude) survey.Attitude {
 // currentDim 当前维度 ID。
 func (sc *surveyChips) currentDim() string { return taxonomy.Dimensions[sc.dimIdx].ID }
 
-// refresh 外部改动 answers 后重绘(一键推荐/清空本维/画像回填)。
+// refresh 外部改动 answers 后重绘(清空本维/风格包勾选/画像回填)。
 func (sc *surveyChips) refresh() { sc.cw.Invalidate() }
