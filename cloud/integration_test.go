@@ -57,7 +57,7 @@ func TestClientTickAgainstRealCloud(t *testing.T) {
 		Quiet:      func() bool { return false },
 		SetWP:      func(p string) error { wpPath = p; return nil },
 		ExePath:    filepath.Join(clientDir, "bin", "wallpaper.exe"), // 更新检查指向不存在文件, 无更新时不会用到
-		SelfUpdate: true,                                              // 顺带走一遍 /client/latest
+		SelfUpdate: true,                                             // 顺带走一遍 /client/latest
 	}
 
 	// 第一轮: 现取(LLM)出图

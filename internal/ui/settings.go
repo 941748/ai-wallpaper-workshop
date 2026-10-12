@@ -16,6 +16,7 @@ import (
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
 	"wallpaper/internal/desktop"
+	"wallpaper/internal/install"
 	"wallpaper/internal/policy"
 	"wallpaper/internal/probe"
 	"wallpaper/internal/scheduler"
@@ -116,6 +117,11 @@ func (s *settings) build() error {
 	mw.SetMinMaxSize(fitWorkArea(mw, walk.Size{Width: 860, Height: 560}), walk.Size{})
 	_ = mw.SetLayout(walk.NewVBoxLayout())
 
+	// 顶栏: 无边框标题栏(拖动热区 + 右上角扁平 ✕)
+	if _, err := newTitleBar(mw, mw, config.AppNameCN, "设置", 48, func() { mw.Close() }); err != nil {
+		return err
+	}
+
 	tab, err := walk.NewTabWidget(mw)
 	if err != nil {
 		return err
@@ -132,6 +138,10 @@ func (s *settings) build() error {
 	if err := s.buildSettingsPage(tab); err != nil {
 		return err
 	}
+	if bl, ok := mw.Layout().(*walk.BoxLayout); ok {
+		_ = bl.SetStretchFactor(tab, 1)
+	}
+	enableCustomFrame(mw) // 无边框(保留阴影/贴靠/边缘拉伸)
 	return nil
 }
 
@@ -205,6 +215,9 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 	saveBtn, _ := walk.NewPushButton(btnRow)
 	saveBtn.SetText("保存偏好")
 	saveBtn.Clicked().Attach(func() { s.saveProfileEdits() })
+	calibBtn, _ := walk.NewPushButton(btnRow)
+	calibBtn.SetText("图片探针校准")
+	calibBtn.Clicked().Attach(func() { s.runProbeCalibration() })
 	reBtn, _ := walk.NewPushButton(btnRow)
 	reBtn.SetText("重新初始化向导")
 	reBtn.Clicked().Attach(func() {
@@ -485,11 +498,13 @@ func (s *settings) buildSettingsPage(tab *walk.TabWidget) error {
 	_ = verRow.SetLayout(walk.NewHBoxLayout())
 	s.versionLbl, _ = walk.NewLabel(verRow)
 	s.versionLbl.SetText("当前版本: " + update.CurrentVersion)
-	checkBtn, _ := walk.NewPushButton(verRow)
-	checkBtn.SetText("检查更新")
-	checkBtn.Clicked().Attach(func() { s.checkUpdate() })
 	s.updateLbl, _ = walk.NewLabel(verRow)
-	s.updateLbl.SetText("")
+	s.updateLbl.SetText("最后更新: " + s.lastUpdateText())
+	changelogBtn, _ := walk.NewPushButton(verRow)
+	changelogBtn.SetText("查看更新内容")
+	changelogBtn.Clicked().Attach(func() { openURL(releaseNotesURL) })
+	upNoteLbl, _ := walk.NewLabel(upGroup)
+	upNoteLbl.SetText("软件在后台自动无感更新, 无需手动操作; 更新后此处会显示最后更新时间。")
 
 	// ----- 设备同步(换机/重装领回画像) -----
 	syncGroup, _ := walk.NewGroupBox(page)
@@ -541,6 +556,13 @@ func (s *settings) buildSettingsPage(tab *walk.TabWidget) error {
 	openBtn, _ := walk.NewPushButton(btnRow)
 	openBtn.SetText("打开数据目录")
 	openBtn.Clicked().Attach(func() { openFolder(s.dir) })
+	uninstallBtn, _ := walk.NewPushButton(btnRow)
+	uninstallBtn.SetText("卸载")
+	uninstallBtn.Clicked().Attach(func() {
+		if proceed, removeData := confirmUninstall(s.mw); proceed {
+			doUninstall(s.dir, removeData)
+		}
+	})
 	if bl, ok := btnRow.Layout().(*walk.BoxLayout); ok {
 		_ = bl.SetStretchFactor(hsp, 1)
 	}
@@ -649,17 +671,11 @@ func (s *settings) saveService() {
 	s.be, s.cc = makeBackend(s.cfg)
 	exe, err := os.Executable()
 	if err == nil {
-		dst := filepath.Join(s.st.BinDir(), "wallpaper.exe")
-		if !samePath(exe, dst) {
-			if err := copyFile(exe, dst); err != nil {
-				showError(s.mw, "复制程序失败: %v", err)
-			}
-		}
-		// 计划任务固定每小时(tick 内部节流): 静默保障, 用户无需参与
-		if err := scheduler.Register(dst, 1, s.cfg.PhaseMinutes); err != nil {
-			s.st.Log("settings: 任务注册失败: %v", err)
+		// 统一安装名 bin\AIWallpaper.exe + 固定每小时计划任务 + 快捷方式/卸载项(幂等)
+		if _, err := install.Setup(s.st.BinDir(), exe, update.CurrentVersion, s.cfg.PhaseMinutes); err != nil {
+			s.st.Log("settings: 安装/任务注册失败: %v", err)
 		} else {
-			s.cfg.TaskTickHours = 1
+			s.cfg.TaskTickHours = scheduler.TickHours
 			_ = s.cfg.Save(s.dir)
 		}
 	}
@@ -858,26 +874,18 @@ func (s *settings) refreshAskLabel() {
 		next.Format("2006-01-02 15:04")))
 }
 
-func (s *settings) checkUpdate() {
-	s.updateLbl.SetText("检查中...")
-	go func() {
-		var got bool
-		if s.cc == nil {
-			s.mw.Synchronize(func() { s.updateLbl.SetText("直连调试模式不支持云端更新") })
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		exe, _ := os.Executable()
-		got = update.Check(ctx, s.cc, s.dir, exe, func(string, ...any) {})
-		s.mw.Synchronize(func() {
-			if got {
-				s.updateLbl.SetText("发现新版本, 已暂存, 退出后将自动换装 ✓")
-			} else {
-				s.updateLbl.SetText("已是最新版本 (或检查失败, 稍后自动重试)")
-			}
-		})
-	}()
+// releaseNotesURL "查看更新内容"跳转的 Gitee Releases 页(国内可达)。
+const releaseNotesURL = "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases"
+
+// lastUpdateText 返回无感自更新的"最后更新时间"展示文本。
+func (s *settings) lastUpdateText() string {
+	if s.cfg.LastUpdate == "" {
+		return "安装后自动记录"
+	}
+	if t, err := time.Parse(time.RFC3339, s.cfg.LastUpdate); err == nil {
+		return t.Local().Format("2006-01-02 15:04")
+	}
+	return s.cfg.LastUpdate
 }
 
 // ---------- 对话框助手 ----------

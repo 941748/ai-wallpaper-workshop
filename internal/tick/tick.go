@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"wallpaper/internal/backend"
@@ -17,6 +19,7 @@ import (
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
 	"wallpaper/internal/desktop"
+	"wallpaper/internal/install"
 	"wallpaper/internal/policy"
 	"wallpaper/internal/pool"
 	"wallpaper/internal/prompt"
@@ -124,6 +127,26 @@ func RunOnce(ctx context.Context, env Env) error {
 	}
 	paused := cfg.PauseUntil != ""
 
+	// 安装名迁移: 旧 wallpaper.exe → 统一 AIWallpaper.exe(重指计划任务/快捷方式/卸载项, 清理旧名)。
+	// 运行中的旧 exe 无法删除: 改名为 .old, 由下次 tick 的 CleanupOldFiles 清理。
+	if exe := env.ExePath; exe != "" && !strings.EqualFold(filepath.Base(exe), install.ExeName) {
+		binDir := filepath.Dir(exe)
+		dst := install.BinPath(binDir)
+		if err := install.CopyFile(exe, dst); err != nil {
+			st.Log("tick: 安装名迁移复制失败: %v", err)
+		} else if err := scheduler.Register(dst, scheduler.TickHours, cfg.PhaseMinutes); err != nil {
+			st.Log("tick: 迁移后重注册计划任务失败: %v", err)
+		} else {
+			cfg.TaskTickHours = scheduler.TickHours
+			_ = cfg.Save(env.Dir)
+			_ = install.CreateShortcuts(dst)
+			_ = install.WriteUninstallKey(dst, filepath.Dir(binDir), update.CurrentVersion)
+			_ = os.Rename(exe, exe+".old")
+			env.ExePath = dst // 后续自更新指向新路径
+			st.Log("tick: 安装名已迁移 → %s", dst)
+		}
+	}
+
 	// 计划任务节律修正(固定每小时; 补池与换图节流均由 tick 内部完成)
 	if cfg.TaskTickHours != taskTickHours {
 		if err := scheduler.Register(env.ExePath, taskTickHours, cfg.PhaseMinutes); err == nil {
@@ -131,6 +154,15 @@ func RunOnce(ctx context.Context, env Env) error {
 			_ = cfg.Save(env.Dir)
 			st.Log("tick: 计划任务节律已修正为每 %d 小时", taskTickHours)
 		}
+	}
+
+	// 无感自更新留痕: 运行版本与记录不一致 = 已完成一次静默换装(或首次就位),
+	// 记录"最后更新时间"供设置页展示(全程无提示)。
+	if cfg.LastVersion != update.CurrentVersion {
+		cfg.LastUpdate = now.Format(time.RFC3339)
+		cfg.LastVersion = update.CurrentVersion
+		_ = cfg.Save(env.Dir)
+		st.Log("tick: 记录最后更新时间 → %s (版本 %s)", cfg.LastUpdate, update.CurrentVersion)
 	}
 
 	profile, err := config.LoadProfile(env.Dir)
@@ -441,8 +473,8 @@ func chooseGenSize(sw, sh int) (int, int) {
 	return 1920, 1080
 }
 
-// taskTickHours 计划任务理想节律(小时; 换图频率由 tick 内部节流完成)。
-const taskTickHours = 1
+// taskTickHours 计划任务理想节律(小时); 与 scheduler.TickHours 统一, 换图频率由 tick 内部节流完成。
+const taskTickHours = scheduler.TickHours
 
 // changeWindow 判定本轮是否进入换图窗口, 并给出跳过原因(日志用)。
 // 频率节流: 距上次成功换图不足 interval_hours 的 90% 时跳过(容忍计划任务抖动)。

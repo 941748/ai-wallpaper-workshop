@@ -26,7 +26,7 @@ func TestStartBoundaryPhase(t *testing.T) {
 
 func TestBuildXML(t *testing.T) {
 	now := time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)
-	raw, err := BuildXML(`C:\Users\u\AppData\Local\AIWallpaper\bin\wallpaper.exe`, 1, 17, now)
+	raw, err := BuildXML(`C:\Users\u\AppData\Local\AIWallpaper\bin\AIWallpaper.exe`, 1, 17, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestBuildXML(t *testing.T) {
 		"<LogonType>InteractiveToken</LogonType>",
 		"<Priority>7</Priority>",
 		"<Arguments>--tick</Arguments>",
-		"wallpaper.exe",
+		"AIWallpaper.exe",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("XML missing %q:\n%s", want, text)

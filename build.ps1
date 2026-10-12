@@ -1,6 +1,6 @@
 ﻿# AI 壁纸工坊 — 一键构建脚本
 # 用法: powershell -ExecutionPolicy Bypass -File build.ps1
-# 产物: dist\wallpaper.exe(客户端, GUI 无窗口) + dist\aiwallpaper-cloud.exe(云服务)
+# 产物: dist\AIWallpaper.exe(客户端, GUI 无窗口) + dist\aiwallpaper-cloud.exe(云服务)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -21,7 +21,7 @@ if (-not (Test-Path $rsrc)) {
     go install github.com/akavel/rsrc@latest
 }
 & $rsrc -manifest app.manifest -ico assets\appicon.ico -arch amd64 -o rsrc_windows_amd64.syso
-go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\wallpaper.exe .
+go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\AIWallpaper.exe .
 
 Write-Host "[3/4] 构建云服务 (Linux 部署用 GOOS=linux / Windows 调试用默认)..."
 $os = $env:AW_BUILD_OS
@@ -38,6 +38,6 @@ Write-Host "[4/4] 产物列表:"
 Get-ChildItem dist | Format-Table Name, @{Name="MB";Expression={[math]::Round($_.Length/1MB,1)}} -AutoSize
 
 Write-Host ""
-Write-Host "客户端分发: 把 dist\wallpaper.exe 发给用户双击运行(首次进入初始化向导)。"
+Write-Host "客户端分发: 把 dist\AIWallpaper.exe 发给用户双击运行(首次进入初始化向导)。"
 Write-Host "云服务发布: 见 README.md 的「云服务部署」章节。"
 Write-Host "=== 构建完成 ===" -ForegroundColor Green

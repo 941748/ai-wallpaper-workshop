@@ -34,6 +34,52 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) migrate() error {
+	// 版本表: 记录已应用的迁移版本(既有生产库无此表 → 视为版本 0, 顺序补齐;
+	// 所有迁移均写成幂等(IF NOT EXISTS / 守卫式 ALTER / 主键探测重建), 对旧库重放安全)。
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL)`); err != nil {
+		return err
+	}
+	cur, err := s.schemaVersion()
+	if err != nil {
+		return err
+	}
+	for _, m := range migrations {
+		if m.version <= cur {
+			continue
+		}
+		if err := m.apply(s.db); err != nil {
+			return fmt.Errorf("store 迁移 v%d 失败: %w", m.version, err)
+		}
+		if _, err := s.db.Exec(`INSERT INTO schema_version(version) VALUES(?)`, m.version); err != nil {
+			return fmt.Errorf("store 迁移 v%d 版本落库失败: %w", m.version, err)
+		}
+	}
+	return nil
+}
+
+// schemaVersion 返回已应用的最高迁移版本(空表视为 0)。
+func (s *Store) schemaVersion() (int, error) {
+	var v int
+	err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&v)
+	return v, err
+}
+
+// migration 一次顺序迁移(版本号严格递增)。
+type migration struct {
+	version int
+	apply   func(*sql.DB) error
+}
+
+// migrations 顺序迁移表: 新增迁移时追加更高版本, 勿改动既有项(保证旧库重放一致)。
+var migrations = []migration{
+	{1, m001BaselineSchema},
+	{2, m002UserLastActive},
+	{3, m003UserProfiles},
+	{4, m004Pregen},
+}
+
+// m001BaselineSchema 基线表结构(全部 IF NOT EXISTS, 对新库建表/对旧库无操作)。
+func m001BaselineSchema(db *sql.DB) error {
 	schema := `
 CREATE TABLE IF NOT EXISTS users (
   user_id    TEXT PRIMARY KEY,
@@ -118,34 +164,26 @@ CREATE TABLE IF NOT EXISTS site_events (
 );
 CREATE INDEX IF NOT EXISTS idx_site_events ON site_events(kind, ts);
 `
-	if _, err := s.db.Exec(schema); err != nil {
-		return err
-	}
-	if err := s.ensureUserLastActive(); err != nil {
-		return err
-	}
-	if err := s.createProfileSnapshotTable(); err != nil {
-		return err
-	}
-	return s.createPregenTable()
+	_, err := db.Exec(schema)
+	return err
 }
 
-// ensureUserLastActive 为旧库补 last_active 列(活跃窗口判定用); 新库已含则跳过。
-func (s *Store) ensureUserLastActive() error {
+// m002UserLastActive 为旧库补 users.last_active 列(活跃窗口判定用); 已含则跳过。
+func m002UserLastActive(db *sql.DB) error {
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='last_active'`).Scan(&n); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='last_active'`).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
 		return nil
 	}
-	_, err := s.db.Exec(`ALTER TABLE users ADD COLUMN last_active TEXT NOT NULL DEFAULT ''`)
+	_, err := db.Exec(`ALTER TABLE users ADD COLUMN last_active TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 
-// createProfileSnapshotTable 画像快照表: 服务端空闲主动预生成所需的最近画像。
-func (s *Store) createProfileSnapshotTable() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS user_profiles(
+// m003UserProfiles 画像快照表: 服务端空闲主动预生成所需的最近画像。
+func m003UserProfiles(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS user_profiles(
   user_id         TEXT PRIMARY KEY,
   profile_version INTEGER NOT NULL,
   profile         TEXT,
@@ -158,11 +196,11 @@ func (s *Store) createProfileSnapshotTable() error {
 	return err
 }
 
-// createPregenTable 建(或确保)新版 pregen 表: 以 job_id 为主键, 支持每用户多单并存
+// m004Pregen 建(或确保)新版 pregen 表: 以 job_id 为主键, 支持每用户多单并存
 // (补池"一次出多张"); 检测到旧版主键(user_id, 每用户单行)时重建。表内容仅为待提货
 // 短周期缓冲, 重建后客户端下轮自动重新补池, 无实质损失。
 // 注意: 索引必须在表结构确认为新版后创建(旧表无 created_at 列)。
-func (s *Store) createPregenTable() error {
+func m004Pregen(db *sql.DB) error {
 	const ddl = `CREATE TABLE IF NOT EXISTS pregen (
   job_id          TEXT PRIMARY KEY,
   user_id         TEXT NOT NULL,
@@ -179,19 +217,19 @@ func (s *Store) createPregenTable() error {
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 )`
-	if _, err := s.db.Exec(ddl); err != nil {
+	if _, err := db.Exec(ddl); err != nil {
 		return err
 	}
 	var pkCol string
-	if err := s.db.QueryRow(`SELECT name FROM pragma_table_info('pregen') WHERE pk>0 LIMIT 1`).Scan(&pkCol); err == nil && pkCol != "" && pkCol != "job_id" {
-		if _, err := s.db.Exec(`DROP TABLE pregen`); err != nil {
+	if err := db.QueryRow(`SELECT name FROM pragma_table_info('pregen') WHERE pk>0 LIMIT 1`).Scan(&pkCol); err == nil && pkCol != "" && pkCol != "job_id" {
+		if _, err := db.Exec(`DROP TABLE pregen`); err != nil {
 			return err
 		}
-		if _, err := s.db.Exec(ddl); err != nil {
+		if _, err := db.Exec(ddl); err != nil {
 			return err
 		}
 	}
-	_, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_pregen_user ON pregen(user_id, ready, created_at)`)
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_pregen_user ON pregen(user_id, ready, created_at)`)
 	return err
 }
 

@@ -37,6 +37,8 @@ var (
 	colChipBorder        = walk.RGB(214, 221, 218) // 筹码边框(中立)
 	colChipDislikeBg     = walk.RGB(253, 237, 234) // 筹码底(讨厌)
 	colChipDislikeBorder = walk.RGB(240, 196, 190) // 筹码边框(讨厌)
+	colCloseHoverBg      = walk.RGB(9, 76, 72)     // 标题栏关闭按钮悬停底(深青, "变深")
+	colCloseIdle         = walk.RGB(190, 214, 210) // 关闭 ✕ 常态色(低调灰白)
 )
 
 // 字体层级(Segoe UI; 中文自动回退系统字体)。
@@ -60,6 +62,7 @@ var (
 	brushAccentLight     walk.Brush
 	brushChipBg          walk.Brush
 	brushChipDislikeBg   walk.Brush
+	brushCloseHover      walk.Brush
 	penChipBorder        walk.Pen
 	penChipDislikeBorder walk.Pen
 	penAccent            walk.Pen
@@ -85,6 +88,7 @@ func initTheme() {
 		brushAccentLight, _ = walk.NewSolidColorBrush(colAccentLight)
 		brushChipBg, _ = walk.NewSolidColorBrush(colChipBg)
 		brushChipDislikeBg, _ = walk.NewSolidColorBrush(colChipDislikeBg)
+		brushCloseHover, _ = walk.NewSolidColorBrush(colCloseHoverBg)
 		penChipBorder, _ = walk.NewCosmeticPen(walk.PenSolid, colChipBorder)
 		penChipDislikeBorder, _ = walk.NewCosmeticPen(walk.PenSolid, colChipDislikeBorder)
 		penAccent, _ = walk.NewCosmeticPen(walk.PenSolid, colAccent)

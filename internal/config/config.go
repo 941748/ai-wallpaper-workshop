@@ -77,6 +77,10 @@ type Config struct {
 	// 画像版本(重配置后 +1, 云端预生成据此作废)
 	ProfileVer int `json:"profile_version"`
 
+	// 无感自更新留痕: 当前版本被就位的时间与版本号(设置页展示"最后更新")
+	LastUpdate  string `json:"last_update,omitempty"`  // RFC3339; 空=尚未记录
+	LastVersion string `json:"last_version,omitempty"` // 记录 LastUpdate 时的客户端版本(检测版本变化)
+
 	Satisfaction Satisfaction `json:"satisfaction"`
 }
 

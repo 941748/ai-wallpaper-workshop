@@ -3,8 +3,8 @@
 $ErrorActionPreference = 'Stop'
 $dataDir = Join-Path $env:LOCALAPPDATA 'AIWallpaper'
 $binDir  = Join-Path $dataDir 'bin'
-$exePath = Join-Path $binDir 'wallpaper.exe'
-$srcExe  = Join-Path $PSScriptRoot '..\dist\wallpaper.exe'
+$exePath = Join-Path $binDir 'AIWallpaper.exe'
+$srcExe  = Join-Path $PSScriptRoot '..\dist\AIWallpaper.exe'
 
 # 1. 复制正式副本(与向导注册任务时一致: 计划任务指向 bin, 不再依赖开发目录)
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null

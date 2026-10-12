@@ -197,6 +197,11 @@ func openFolder(dir string) {
 	_ = exec.Command("explorer", dir).Start()
 }
 
+// openURL 用系统默认浏览器打开链接(无控制台窗口)。
+func openURL(url string) {
+	_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+}
+
 // ---------- 探针网格 ----------
 
 // probeGrid 12/8 张探针图网格: 单击循环 中立 → 喜欢 → 不喜欢。

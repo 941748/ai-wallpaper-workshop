@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $desktop = [Environment]::GetFolderPath('Desktop')
 $dataDir = Join-Path $env:LOCALAPPDATA 'AIWallpaper'
 $binDir  = Join-Path $dataDir 'bin'
-$exePath = Join-Path $binDir 'wallpaper.exe'
+$exePath = Join-Path $binDir 'AIWallpaper.exe'
 
 # 1. 删除乱码快捷方式
 Get-ChildItem $desktop -Filter 'AI*.lnk' -ErrorAction SilentlyContinue | Remove-Item -Force

@@ -18,7 +18,7 @@ import (
 
 // Comfy 云服务侧的 ComfyUI 代理(出图机经内网通道接入)。
 type Comfy struct {
-	Base string // 例 http://127.0.0.1:8188 或内网映射地址
+	Base  string // 例 http://127.0.0.1:8188 或内网映射地址
 	Token string
 	HTTP  *http.Client
 

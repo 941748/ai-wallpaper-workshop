@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"wallpaper/internal/config"
 	"wallpaper/internal/survey"
 	"wallpaper/internal/taxonomy"
 )
@@ -87,5 +88,89 @@ func TestPresetPacksCoverAllDims(t *testing.T) {
 		if len(pack.Keys) < 6 || len(pack.Keys) > 9 {
 			t.Errorf("风格包 %s 词条数 %d 不符合预期(6~9)", pack.Name, len(pack.Keys))
 		}
+	}
+}
+
+// TestSurveyCounts 校验喜欢/讨厌计数纯函数。
+func TestSurveyCounts(t *testing.T) {
+	a := map[string]survey.Attitude{
+		"style/a": survey.Like,
+		"style/b": survey.Like,
+		"mood/x":  survey.Dislike,
+		"mood/y":  survey.Neutral,
+	}
+	if n := surveyLikesIn(a); n != 2 {
+		t.Errorf("surveyLikesIn = %d, want 2", n)
+	}
+	if n := surveyDislikesIn(a); n != 1 {
+		t.Errorf("surveyDislikesIn = %d, want 1", n)
+	}
+	if n := surveyLikesIn(nil); n != 0 {
+		t.Errorf("surveyLikesIn(nil) = %d, want 0", n)
+	}
+}
+
+// TestFocusSummary 校验"重点出图"摘要: 无喜欢项为空, 有则含前导文案。
+func TestFocusSummary(t *testing.T) {
+	if got := focusSummary(map[string]survey.Attitude{}); got != "" {
+		t.Errorf("无喜欢项应为空串, got %q", got)
+	}
+	d0, d1 := taxonomy.Dimensions[0], taxonomy.Dimensions[1]
+	answers := map[string]survey.Attitude{
+		config.Key(d0.ID, d0.Values[0].ID): survey.Like,
+		config.Key(d1.ID, d1.Values[0].ID): survey.Like,
+	}
+	got := focusSummary(answers)
+	if !strings.Contains(got, "将重点出图") {
+		t.Errorf("有喜欢项摘要应含前导文案, got %q", got)
+	}
+	if !strings.Contains(got, d0.Values[0].NameCN) {
+		t.Errorf("摘要应含第一个喜欢词条, got %q", got)
+	}
+}
+
+// TestSurveyRecapText 校验完成页回显: 无喜欢项为空, 有则按维度分组。
+func TestSurveyRecapText(t *testing.T) {
+	if got := surveyRecapText(map[string]survey.Attitude{}); got != "" {
+		t.Errorf("无喜欢项应为空串, got %q", got)
+	}
+	d0 := taxonomy.Dimensions[0]
+	answers := map[string]survey.Attitude{config.Key(d0.ID, d0.Values[0].ID): survey.Like}
+	got := surveyRecapText(answers)
+	if !strings.Contains(got, "你的偏好") || !strings.Contains(got, d0.NameCN) {
+		t.Errorf("回显应含标题与维度名, got %q", got)
+	}
+}
+
+// TestAnswersFromProfile 校验画像反推: 结构覆盖全部维度词条, 高/低权重映射到喜欢/讨厌。
+func TestAnswersFromProfile(t *testing.T) {
+	p := config.NewProfile()
+	d0 := taxonomy.Dimensions[0]
+	p.Set(d0.ID, d0.Values[0].ID, 0.9) // → 喜欢
+	p.Set(d0.ID, d0.Values[1].ID, 0.0) // → 讨厌
+	answers := answersFromProfile(p)
+	total := 0
+	for _, d := range taxonomy.Dimensions {
+		total += len(d.Values)
+	}
+	if len(answers) != total {
+		t.Errorf("answers 条数 = %d, want %d", len(answers), total)
+	}
+	if got := answers[config.Key(d0.ID, d0.Values[0].ID)]; got != survey.Like {
+		t.Errorf("高权重反推 = %v, want Like", got)
+	}
+	if got := answers[config.Key(d0.ID, d0.Values[1].ID)]; got != survey.Dislike {
+		t.Errorf("低权重反推 = %v, want Dislike", got)
+	}
+}
+
+// TestPhaseFromUser 校验相位分配: 落在 0~59 且同 ID 稳定。
+func TestPhaseFromUser(t *testing.T) {
+	p := phaseFromUser("u_abc123")
+	if p < 0 || p >= 60 {
+		t.Errorf("phaseFromUser 超出 [0,60): %d", p)
+	}
+	if q := phaseFromUser("u_abc123"); q != p {
+		t.Errorf("同 ID 应稳定: %d != %d", q, p)
 	}
 }

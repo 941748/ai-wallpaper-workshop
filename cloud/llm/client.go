@@ -67,7 +67,7 @@ func (c *Client) ChatJSON(ctx context.Context, system, user string) (string, err
 			{Role: "system", Content: system},
 			{Role: "user", Content: user},
 		},
-		Temperature:    0.6,
+		Temperature: 0.6,
 		// 推理模型思维链与 JSON 输出共用上限: 实测常规约 600, 复杂场景预估 ≤3K; 8192 留足余量
 		MaxTokens:      8192,
 		ResponseFormat: &respFormat{Type: "json_object"},

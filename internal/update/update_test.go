@@ -55,7 +55,7 @@ func nextVersion() string {
 	return strings.Join(parts, ".")
 }
 
-func stagedPath(dir string) string { return filepath.Join(dir, "bin", "wallpaper.new.exe") }
+func stagedPath(dir string) string { return filepath.Join(dir, "bin", "AIWallpaper.new.exe") }
 
 func assertNotStaged(t *testing.T, dir string) {
 	t.Helper()

@@ -3,9 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,17 +13,17 @@ import (
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
 	"wallpaper/internal/desktop"
-	"wallpaper/internal/probe"
+	"wallpaper/internal/install"
 	"wallpaper/internal/prompt"
 	"wallpaper/internal/scheduler"
 	"wallpaper/internal/signals"
 	"wallpaper/internal/store"
 	"wallpaper/internal/survey"
-	"wallpaper/internal/taxonomy"
+	"wallpaper/internal/update"
 )
 
-// wizard 初始化向导(5 步; 左侧自绘步骤导航, 允许返回已完成步骤)。
-// 流程: 连接服务 → 偏好问卷(五维三态筹码, 可选探针校准) → 首张壁纸(喜欢/换一张) → 注册计划任务 → 完成。
+// wizard 初始化向导(4 步; 左侧自绘步骤导航, 允许返回已完成步骤)。
+// 流程: 连接服务 → 偏好问卷(五维三态筹码) → 首张壁纸(喜欢/换一张, 进度可见) → 完成(静默安装+注册每小时计划任务)。
 type wizard struct {
 	mw  *walk.MainWindow
 	cfg *config.Config
@@ -60,21 +58,18 @@ type wizard struct {
 	focusLbl      *walk.Label
 	profile       *config.Profile
 
-	// 步骤 1 可选: 图片探针校准(子流程)
-	calibMode   bool
-	calibCombos []probe.Combo
-	probeImages map[string][]byte
-	grid        *probeGrid
-
 	// 步骤 2: 首张壁纸
 	firstPreview   *walk.ImageView
 	firstPreviewBm *walk.Bitmap // 返回重进时恢复预览
 	firstOK        bool         // 当前壁纸已成功生成并应用
 	firstAccepted  bool         // 是否已点过"喜欢"(避免重复信号)
 	genSeq         int          // 生成序号(导航离开后使在途回调失效)
+	firstTick      *time.Ticker // 首张壁纸生成进度刷新定时器(nil=未在生成)
 
-	// 步骤 3/4
-	finalized bool // 是否已写过完成信号
+	// 步骤 3: 完成(静默安装/注册结果)
+	finalized     bool   // 是否已写过完成信号
+	regOK         bool   // 计划任务/快捷方式是否安装成功
+	installedPath string // 已安装 exe 路径(完成页展示)
 
 	// 步骤 0: 连接设置控件
 	directCheck   *walk.CheckBox
@@ -83,15 +78,14 @@ type wizard struct {
 	connStatusLbl *walk.Label
 }
 
-var navTitles = []string{"连接服务", "偏好问卷", "首张壁纸", "自动更新", "完成"}
+var navTitles = []string{"连接服务", "偏好问卷", "首张壁纸", "完成"}
 
 // RunWizard 打开初始化向导(阻塞直到窗口关闭)。
 func RunWizard(dir string, st *store.Store, cfg *config.Config) {
 	w := &wizard{
-		cfg:         cfg,
-		dir:         dir,
-		st:          st,
-		probeImages: map[string][]byte{},
+		cfg: cfg,
+		dir: dir,
+		st:  st,
 	}
 	if err := w.build(); err != nil {
 		st.Log("wizard 窗口创建失败: %v", err)
@@ -120,24 +114,10 @@ func (w *wizard) build() error {
 	_ = mw.SetLayout(walk.NewVBoxLayout())
 	mw.SetBackground(brushPageBg)
 
-	// 顶栏: 青绿渐变 + 产品名
-	header, err := walk.NewCustomWidgetPixels(mw, 0, func(canvas *walk.Canvas, update walk.Rectangle) error {
-		s := scaleFunc(mw.DPI())
-		cw := clientWidthPx(mw.Handle())
-		if cw <= 0 {
-			cw = update.Width
-		}
-		_ = canvas.GradientFillRectanglePixels(colAccentDk, colAccent, walk.Horizontal, update)
-		_ = canvas.DrawTextPixels(config.AppNameCN, themeFontHeader, colWhite,
-			walk.Rectangle{X: s(22), Y: 0, Width: cw - s(44), Height: update.Height}, walk.TextVCenter|walk.TextSingleLine|walk.TextLeft)
-		_ = canvas.DrawTextPixels("初始化向导", themeFontReg, colHeaderSub,
-			walk.Rectangle{X: s(22), Y: 0, Width: cw - s(44), Height: update.Height}, walk.TextVCenter|walk.TextSingleLine|walk.TextRight)
-		return nil
-	})
-	if err != nil {
+	// 顶栏: 无边框标题栏(青绿渐变 + 产品名 + 拖动热区 + 右上角扁平 ✕)
+	if _, err := newTitleBar(mw, mw, config.AppNameCN, "初始化向导", 52, func() { mw.Close() }); err != nil {
 		return err
 	}
-	_ = header.SetMinMaxSize(walk.Size{Height: 52}, walk.Size{Height: 52})
 
 	// 主体: 左导航 + 分隔线 + 右内容
 	body, _ := walk.NewComposite(mw)
@@ -213,14 +193,12 @@ func (w *wizard) build() error {
 	if bl, ok := mw.Layout().(*walk.BoxLayout); ok {
 		_ = bl.SetStretchFactor(body, 1) // 主体填满顶栏与底栏之间
 	}
+	enableCustomFrame(mw) // 无边框(保留阴影/贴靠/边缘拉伸)
 	return nil
 }
 
 // navClick 左侧导航跳转: 仅允许返回已解锁步骤(探针校准中锁定)。
 func (w *wizard) navClick(n int) {
-	if w.calibMode {
-		return
-	}
 	if n == w.step || n > w.maxReached {
 		return
 	}
@@ -246,23 +224,19 @@ func (w *wizard) setStep(n int) {
 
 	switch n {
 	case 0:
-		w.titleLbl.SetText("第 1 步 / 共 5 步 · 连接出图服务")
+		w.titleLbl.SetText("第 1 步 / 共 4 步 · 连接出图服务")
 		w.hintLbl.SetText("客户端所有出图与大模型调用都经云端代理, 用于统计与控制调用量; 也可直连局域网 ComfyUI 调试。")
 		w.buildConnStep()
 	case 1:
-		w.titleLbl.SetText("第 2 步 / 共 5 步 · 勾选你的偏好")
+		w.titleLbl.SetText("第 2 步 / 共 4 步 · 勾选你的偏好")
 		w.hintLbl.SetText("点圆角筹码循环切换: 中立 → ✓ 喜欢 → ✕ 讨厌; 顶部标签可切换维度。")
 		w.buildSurveyStep()
 	case 2:
-		w.titleLbl.SetText("第 3 步 / 共 5 步 · 生成第一张壁纸")
+		w.titleLbl.SetText("第 3 步 / 共 4 步 · 生成第一张壁纸")
 		w.hintLbl.SetText("按你的屏幕分辨率出图并立即应用; 不满意点\"换一张\"。")
 		w.buildFirstWallpaperStep()
 	case 3:
-		w.titleLbl.SetText("第 4 步 / 共 5 步 · 注册每小时自动更新")
-		w.hintLbl.SetText("计划任务每小时静默出图换壁纸; 本程序不会常驻后台。")
-		w.buildRegisterStep()
-	case 4:
-		w.titleLbl.SetText("第 5 步 / 共 5 步 · 完成")
+		w.titleLbl.SetText("第 4 步 / 共 4 步 · 完成")
 		w.hintLbl.SetText("")
 		w.buildDoneStep()
 	}
@@ -291,18 +265,12 @@ func (w *wizard) onNext() {
 			w.finishFirstWallpaper()
 		}
 	case 3:
-		if w.stepDone {
-			if !w.finalized {
-				w.cfg.Initialized = true
-				_ = w.cfg.Save(w.dir)
-				_ = signals.Append(w.dir, signals.Event{Type: signals.TypeReinitialized, Detail: "初始化向导完成"})
-				w.finalized = true
-			}
-			w.setStep(4)
-		} else {
-			w.registerTask() // 重试
+		if !w.finalized {
+			w.cfg.Initialized = true
+			_ = w.cfg.Save(w.dir)
+			_ = signals.Append(w.dir, signals.Event{Type: signals.TypeReinitialized, Detail: "初始化向导完成"})
+			w.finalized = true
 		}
-	case 4:
 		w.mw.Close()
 	}
 }
@@ -310,8 +278,6 @@ func (w *wizard) onNext() {
 // onExtra 附加按钮分发(问卷校准入口 / 首张壁纸换一张)。
 func (w *wizard) onExtra() {
 	switch w.step {
-	case 1:
-		w.startCalibration()
 	case 2:
 		if w.stepDone && !w.busy {
 			if w.firstOK {
@@ -369,7 +335,7 @@ func (w *wizard) buildConnStep() {
 	if bl, ok := testRow.Layout().(*walk.BoxLayout); ok {
 		_ = bl.SetStretchFactor(hsp, 1)
 	}
-	w.enableNext("保存并继续")
+	w.enableNext("下一步")
 }
 
 func (w *wizard) runConnTest() {
@@ -462,8 +428,6 @@ func (w *wizard) testAndRegister() bool {
 
 // buildSurveyStep 构建问卷: 风格包(一键勾选) + 自绘筹码网格(五维) + 汇总条(计数/清空本维)。
 func (w *wizard) buildSurveyStep() {
-	w.btnExtra.SetText("图片探针校准 (可选)")
-	w.btnExtra.SetVisible(true)
 	w.ensureSurveyAnswers()
 
 	// 风格包(面向 90/00 后审美的预设组合, 一键勾选, 可多选叠加)
@@ -513,24 +477,7 @@ func (w *wizard) ensureSurveyAnswers() {
 	if w.profile == nil {
 		w.profile, _ = config.LoadProfile(w.dir)
 	}
-	w.surveyAnswers = map[string]survey.Attitude{}
-	for _, d := range taxonomy.Dimensions {
-		for _, v := range d.Values {
-			w.surveyAnswers[config.Key(d.ID, v.ID)] = attitudeOfWeight(w.profile.Get(d.ID, v.ID))
-		}
-	}
-}
-
-// attitudeOfWeight 按画像权重反推问卷三态(与落盘阈值一致: ≥0.6 喜欢 / ≤0.25 讨厌)。
-func attitudeOfWeight(wgt float64) survey.Attitude {
-	switch {
-	case wgt >= 0.6:
-		return survey.Like
-	case wgt <= 0.25:
-		return survey.Dislike
-	default:
-		return survey.Neutral
-	}
+	w.surveyAnswers = answersFromProfile(w.profile)
 }
 
 // updateSurveyCount 刷新汇总条: 计数 + 每维前 2 个喜欢项的"重点出图"摘要。
@@ -538,49 +485,9 @@ func (w *wizard) updateSurveyCount() {
 	if w.likesLbl == nil {
 		return
 	}
-	w.likesLbl.SetText(fmt.Sprintf("%d", w.surveyLikes()))
-	w.dislikesLbl.SetText(fmt.Sprintf("%d", w.surveyDislikes()))
-	var parts []string
-	for _, d := range taxonomy.Dimensions {
-		n := 0
-		for _, v := range d.Values {
-			if w.surveyAnswers[config.Key(d.ID, v.ID)] == survey.Like {
-				parts = append(parts, v.NameCN)
-				n++
-				if n >= 2 {
-					break
-				}
-			}
-		}
-	}
-	if len(parts) > 6 {
-		parts = parts[:6]
-	}
-	if len(parts) == 0 {
-		w.focusLbl.SetText("")
-	} else {
-		w.focusLbl.SetText("  将重点出图: " + strings.Join(parts, " · "))
-	}
-}
-
-func (w *wizard) surveyLikes() int {
-	n := 0
-	for _, a := range w.surveyAnswers {
-		if a == survey.Like {
-			n++
-		}
-	}
-	return n
-}
-
-func (w *wizard) surveyDislikes() int {
-	n := 0
-	for _, a := range w.surveyAnswers {
-		if a == survey.Dislike {
-			n++
-		}
-	}
-	return n
+	w.likesLbl.SetText(fmt.Sprintf("%d", surveyLikesIn(w.surveyAnswers)))
+	w.dislikesLbl.SetText(fmt.Sprintf("%d", surveyDislikesIn(w.surveyAnswers)))
+	w.focusLbl.SetText(focusSummary(w.surveyAnswers))
 }
 
 // clearDim 清空当前维度所有勾选(回到中立)。
@@ -599,61 +506,7 @@ func (w *wizard) clearDim() {
 	w.updateSurveyCount()
 }
 
-// presetPack 一个风格包(面向 90/00 后审美的预设组合)。
-type presetPack struct {
-	Name string   // 界面按钮文案
-	Keys []string // config.Key(dim, val) 列表
-}
-
-// presetPacks 风格包(每包覆盖 5 维, 点选即勾为喜欢, 可多选叠加并再微调)。
-var presetPacks = []presetPack{
-	{Name: "潮酷未来", Keys: []string{
-		config.Key(taxonomy.DimStyle, "cyberpunk"),
-		config.Key(taxonomy.DimStyle, "neonart"),
-		config.Key(taxonomy.DimSubject, "citynight"),
-		config.Key(taxonomy.DimSubject, "space"),
-		config.Key(taxonomy.DimPalette, "neon"),
-		config.Key(taxonomy.DimMood, "vibrant"),
-		config.Key(taxonomy.DimComposition, "silhouette"),
-	}},
-	{Name: "二次元", Keys: []string{
-		config.Key(taxonomy.DimStyle, "anime"),
-		config.Key(taxonomy.DimStyle, "anime3d"),
-		config.Key(taxonomy.DimSubject, "mecha"),
-		config.Key(taxonomy.DimSubject, "pet"),
-		config.Key(taxonomy.DimPalette, "pastel"),
-		config.Key(taxonomy.DimMood, "vibrant"),
-		config.Key(taxonomy.DimComposition, "centered"),
-	}},
-	{Name: "国风雅韵", Keys: []string{
-		config.Key(taxonomy.DimStyle, "ink"),
-		config.Key(taxonomy.DimStyle, "neochinese"),
-		config.Key(taxonomy.DimStyle, "papercut"),
-		config.Key(taxonomy.DimSubject, "oldstreet"),
-		config.Key(taxonomy.DimSubject, "cloudsea"),
-		config.Key(taxonomy.DimPalette, "morandi"),
-		config.Key(taxonomy.DimMood, "serene"),
-		config.Key(taxonomy.DimComposition, "wide"),
-	}},
-	{Name: "治愈日常", Keys: []string{
-		config.Key(taxonomy.DimStyle, "film"),
-		config.Key(taxonomy.DimStyle, "watercolor"),
-		config.Key(taxonomy.DimSubject, "pet"),
-		config.Key(taxonomy.DimSubject, "plants"),
-		config.Key(taxonomy.DimSubject, "food"),
-		config.Key(taxonomy.DimPalette, "warm"),
-		config.Key(taxonomy.DimMood, "cozy"),
-		config.Key(taxonomy.DimComposition, "macro"),
-	}},
-	{Name: "极简高级", Keys: []string{
-		config.Key(taxonomy.DimStyle, "minimal"),
-		config.Key(taxonomy.DimSubject, "abstract"),
-		config.Key(taxonomy.DimSubject, "building"),
-		config.Key(taxonomy.DimPalette, "dark"),
-		config.Key(taxonomy.DimMood, "mysterious"),
-		config.Key(taxonomy.DimComposition, "centered"),
-	}},
-}
+// presetPack 与 presetPacks 风格包预设已移至 wizard_logic.go(纯数据, 可单测)。
 
 // applyPresetPack 将风格包内词条勾为喜欢(不覆盖其他已勾选项)。
 func (w *wizard) applyPresetPack(keys []string) {
@@ -670,13 +523,7 @@ func (w *wizard) applyPresetPack(keys []string) {
 
 // nextFromSurvey 问卷步骤的下一步: 校准模式合并推理返回问卷; 否则校验并保存画像。
 func (w *wizard) nextFromSurvey() {
-	if w.calibMode {
-		w.mergeCalibration()
-		w.calibMode = false
-		w.setStep(1)
-		return
-	}
-	if w.surveyLikes() == 0 {
+	if surveyLikesIn(w.surveyAnswers) == 0 {
 		showInfo(w.mw, "请至少勾选 1 项\"喜欢\", 我才能知道你想看什么。")
 		return
 	}
@@ -693,105 +540,10 @@ func (w *wizard) nextFromSurvey() {
 	_ = w.cfg.Save(w.dir)
 	_ = signals.Append(w.dir, signals.Event{
 		Type:   signals.TypeReconfigure,
-		Detail: fmt.Sprintf("初始化问卷完成: 喜欢 %d 项 / 讨厌 %d 项", w.surveyLikes(), w.surveyDislikes()),
+		Detail: fmt.Sprintf("初始化问卷完成: 喜欢 %d 项 / 讨厌 %d 项", surveyLikesIn(w.surveyAnswers), surveyDislikesIn(w.surveyAnswers)),
 	})
 	w.lastSurvey = cloneSurvey(w.surveyAnswers)
 	w.setStep(2)
-}
-
-func surveyEqual(a, b map[string]survey.Attitude) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
-}
-
-func cloneSurvey(m map[string]survey.Attitude) map[string]survey.Attitude {
-	out := make(map[string]survey.Attitude, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
-}
-
-// ---------- 步骤 1 可选: 图片探针校准 ----------
-
-// startCalibration 问卷页点"图片探针校准": 内容区切换为探针生成流程。
-func (w *wizard) startCalibration() {
-	w.calibMode = true
-	w.btnExtra.SetVisible(false)
-	w.btnNext.SetEnabled(false)
-	clearChildren(w.content)
-	w.progress.SetVisible(true)
-	w.progress.SetValue(0)
-	w.calibCombos = probe.SurveyCombos(probe.FirstCount)
-	w.probeImages = map[string][]byte{}
-	w.grid = nil
-	w.setStatus("正在生成 12 张探针图(约 1-2 分钟)...", colHint)
-	go w.runCalibGen()
-}
-
-func (w *wizard) runCalibGen() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-	imgs := acquireProbeImages(ctx, w.cfg, w.cc, w.be, w.calibCombos, func(done, total int) {
-		w.mw.Synchronize(func() {
-			w.progress.SetValue(done * 100 / maxInt(total, 1))
-			w.setStatus(fmt.Sprintf("已完成 %d / %d", done, total), colHint)
-		})
-	})
-	// 落盘留档(便于排查与复用)
-	for _, cb := range w.calibCombos {
-		if data, ok := imgs[cb.ID]; ok {
-			_ = os.WriteFile(filepath.Join(w.st.ProbesDir(), cb.ID+".png"), data, 0o644)
-		}
-	}
-	w.mw.Synchronize(func() {
-		w.probeImages = imgs
-		w.progress.SetVisible(false)
-		if len(imgs) == 0 {
-			w.setStatus("探针生成失败, 已返回问卷", colRed)
-			w.calibMode = false
-			w.setStep(1)
-			return
-		}
-		grid, err := newProbeGrid(w.content, w.calibCombos, imgs, func() {
-			w.btnNext.SetEnabled(w.grid.Likes() >= 3)
-		})
-		if err != nil {
-			w.setStatus("探针网格创建失败: "+err.Error(), colRed)
-			w.calibMode = false
-			w.setStep(1)
-			return
-		}
-		w.grid = grid
-		if len(imgs) < len(w.calibCombos) {
-			w.setStatus(fmt.Sprintf("生成完成 %d / %d(失败的可跳过)", len(imgs), len(w.calibCombos)), colHint)
-		} else {
-			w.setStatus("单击图片循环切换: 中立 → 喜欢 → 不喜欢; 至少 3 张喜欢后点\"完成校准\"", colHint)
-		}
-		w.btnNext.SetText("完成校准")
-		w.btnNext.SetEnabled(false)
-	})
-}
-
-// mergeCalibration 用探针点选推理画像, 与问卷画像融合(0.35/0.65), 结果反推回勾选状态。
-func (w *wizard) mergeCalibration() {
-	if w.grid == nil || w.grid.Likes() < 3 {
-		return
-	}
-	w.profile = probe.Infer(w.calibCombos, w.grid.Choices(), w.profile)
-	for _, d := range taxonomy.Dimensions {
-		for _, v := range d.Values {
-			w.surveyAnswers[config.Key(d.ID, v.ID)] = attitudeOfWeight(w.profile.Get(d.ID, v.ID))
-		}
-	}
-	w.lastSurvey = nil // 校准后强制下次落盘
 }
 
 // ---------- 步骤 2: 首张壁纸 ----------
@@ -842,11 +594,50 @@ func (w *wizard) buildPreviewView() {
 	w.firstPreview = preview
 }
 
-// firstWallpaperTimeout 首张壁纸现场出图上限: 单张典型 30-45s, 留排队/慢卡余量到 90s; 超时即跳过稍后补。
-const firstWallpaperTimeout = 90 * time.Second
+// startFirstCountdown 首张壁纸生成期间显示进度条与倒计时(上限 firstWallpaperTimeout)。
+// 真实阶段无法从出图链路取得, 以"已用时间/上限"驱动进度, 让用户明确感知"正在进行且会自动结束"。
+func (w *wizard) startFirstCountdown(seq int) {
+	w.stopFirstCountdown()
+	w.progress.SetValue(0)
+	w.progress.SetVisible(true)
+	w.setStatus("正在生成第一张壁纸… 通常 30–60 秒", colHint)
+	start := time.Now()
+	w.firstTick = time.NewTicker(500 * time.Millisecond)
+	go func(t *time.Ticker) {
+		for range t.C {
+			el := time.Since(start)
+			if el > firstWallpaperTimeout {
+				el = firstWallpaperTimeout
+			}
+			pct := int(el * 100 / firstWallpaperTimeout)
+			if pct > 95 {
+				pct = 95
+			}
+			remain := int((firstWallpaperTimeout - el).Seconds())
+			if remain < 0 {
+				remain = 0
+			}
+			w.mw.Synchronize(func() {
+				if seq != w.genSeq || w.firstTick == nil {
+					t.Stop()
+					return
+				}
+				w.progress.SetValue(pct)
+				w.setStatus(fmt.Sprintf("正在生成第一张壁纸… 通常 30–60 秒, 最多再等 %d 秒后自动完成", remain), colHint)
+			})
+		}
+	}(w.firstTick)
+}
 
-// msgRenderBusy 出图链路不可用(出图机离线/繁忙/超时)时对用户的统一文案; 不暴露技术原因。
-const msgRenderBusy = "系统繁忙, 初始化完成后会自动无感补图"
+// stopFirstCountdown 停止进度刷新并隐藏进度条。
+func (w *wizard) stopFirstCountdown() {
+	if w.firstTick != nil {
+		w.firstTick.Stop()
+		w.firstTick = nil
+	}
+	w.progress.SetVisible(false)
+	w.progress.SetValue(0)
+}
 
 // genFirstWallpaper 生成并应用壁纸; force=true 时排除最近主风格值("换一张")。
 // 优先提服务端主动预生成的 ready 图(秒出); 无则现场出图(90s 上限)。
@@ -857,8 +648,8 @@ func (w *wizard) genFirstWallpaper(force bool) {
 	w.busy = true
 	w.btnNext.SetEnabled(false)
 	w.btnExtra.SetEnabled(false)
-	w.setStatus("正在准备第一张壁纸...", colHint)
 	seq := w.genSeq
+	w.startFirstCountdown(seq)
 	go func() {
 		data, spec, src := w.firstWallpaperPayload(force)
 		if data == nil {
@@ -868,6 +659,7 @@ func (w *wizard) genFirstWallpaper(force bool) {
 					return // 已导航离开, 回调过期
 				}
 				w.busy = false
+				w.stopFirstCountdown()
 				w.setStatus(msgRenderBusy, colHint)
 				w.stepDone = true
 				w.btnExtra.SetText("重试")
@@ -893,6 +685,7 @@ func (w *wizard) genFirstWallpaper(force bool) {
 				return
 			}
 			w.busy = false
+			w.stopFirstCountdown()
 			if err != nil {
 				w.setStatus(msgRenderBusy, colHint)
 				w.stepDone = true
@@ -972,73 +765,72 @@ func (w *wizard) retryFirstWallpaper() {
 	}()
 }
 
-// finishFirstWallpaper 喜欢当前壁纸: 记弱正向信号并进入注册步骤。
+// finishFirstWallpaper 喜欢/跳过当前壁纸: 记弱正向信号 → 静默安装(计划任务+快捷方式) → 完成页。
 func (w *wizard) finishFirstWallpaper() {
-	if !w.firstAccepted {
+	if !w.firstAccepted && w.firstOK {
 		_ = signals.Append(w.dir, signals.Event{Type: signals.TypeStyleKeep, Detail: "初始化首张壁纸: 喜欢"})
 		w.firstAccepted = true
 	}
+	w.registerTask()
 	w.setStep(3)
 }
 
-// ---------- 步骤 3: 注册计划任务 ----------
+// ---------- 步骤 3: 完成(静默安装 + 注册) ----------
 
-func (w *wizard) buildRegisterStep() {
-	group, _ := walk.NewGroupBox(w.content)
-	group.SetTitle("每小时自动更新")
-	group.SetBackground(brushWhite)
-	_ = group.SetLayout(walk.NewVBoxLayout())
-	themedLabel(group, "计划任务每小时静默出图并自动更换壁纸; 本程序不会常驻后台。", nil, colBody)
-	themedLabel(group, "注册成功后即可关闭窗口; 手动运行本程序随时可以修改设置。", nil, colHint)
-	w.setStatus("", colHint)
-	w.enableNext("注册")
-	w.registerTask()
-}
-
+// registerTask 静默安装: 复制 exe 到 bin\AIWallpaper.exe → 注册每小时计划任务 →
+// 建桌面/开始菜单快捷方式 → 写卸载项。用户无需参与; 结果在完成页与状态行体现。
 func (w *wizard) registerTask() {
 	exe, err := os.Executable()
 	if err != nil {
 		w.st.Log("向导: 定位程序路径失败: %v", err)
-		w.setStatus("程序安装失败, 请重试", colRed)
+		w.regOK = false
 		return
-	}
-	dst := filepath.Join(w.st.BinDir(), "wallpaper.exe")
-	if !samePath(exe, dst) {
-		if err := copyFile(exe, dst); err != nil {
-			w.st.Log("向导: 复制程序失败: %v", err)
-			w.setStatus("程序安装失败, 请重试", colRed)
-			return
-		}
 	}
 	w.cfg.PhaseMinutes = phaseFromUser(w.cfg.UserID)
-	if err := scheduler.Register(dst, w.cfg.IntervalHours, w.cfg.PhaseMinutes); err != nil {
-		w.st.Log("向导: 计划任务注册失败: %v", err)
-		w.setStatus("计划任务注册失败, 请点击\"重试注册\"", colRed)
-		w.enableNext("重试注册")
+	dst, err := install.Setup(w.st.BinDir(), exe, update.CurrentVersion, w.cfg.PhaseMinutes)
+	if err != nil {
+		w.st.Log("向导: 安装/注册失败: %v", err)
+		w.regOK = false
+		_ = w.cfg.Save(w.dir)
 		return
 	}
+	w.installedPath = dst
+	w.cfg.TaskTickHours = scheduler.TickHours
+	// 无感自更新留痕: 安装即当前版本首次就位(后续版本变化由 tick 更新此时间)
+	w.cfg.LastVersion = update.CurrentVersion
+	if w.cfg.LastUpdate == "" {
+		w.cfg.LastUpdate = time.Now().Format(time.RFC3339)
+	}
 	_ = w.cfg.Save(w.dir)
-	state, _ := scheduler.QueryState()
-	w.stepDone = true
-	w.setStatus(fmt.Sprintf("计划任务已注册 ✓ 每小时第 %d 分钟前后自动换壁纸 (%s)", w.cfg.PhaseMinutes, state), colGreen)
-	w.enableNext("下一步")
+	w.regOK = true
+	w.st.Log("向导: 已安装并注册计划任务 → %s", dst)
 }
 
-// ---------- 步骤 4: 完成 ----------
+// ---------- 步骤 3: 完成页 ----------
 
 func (w *wizard) buildDoneStep() {
 	checkLbl := themedLabel(w.content, "✔", themeFontDone, colGreen)
 	_ = checkLbl.SetTextAlignment(walk.AlignCenter)
 	title := themedLabel(w.content, "初始化完成", themeFontStep, colTitle)
 	_ = title.SetTextAlignment(walk.AlignCenter)
+
+	if w.regOK {
+		w.setStatus(fmt.Sprintf("已开启每小时自动换图 ✓ 桌面与开始菜单已添加\"%s\"快捷方式", config.AppNameCN), colGreen)
+	} else {
+		w.setStatus("自动换图将由系统后台稍后完成注册; 不影响你正常使用", colHint)
+	}
+
 	body := themedLabel(w.content,
-		"之后每小时由 Windows 计划任务静默出图并自动更换壁纸\n"+
-			"本程序不会常驻后台: 此刻关闭窗口后, 系统中没有任何本程序的进程\n"+
-			"需要修改设置时, 重新运行本程序即可(手动运行 = 设置面板)\n"+
-			"偏好会在使用中自动微调: 重新勾选问卷/重新应用某张壁纸/满意度回访\n"+
-			"都会被记为漂移依据, 影响后续出图方向",
+		"之后每小时由 Windows 计划任务静默出图并自动更换壁纸, 本程序不会常驻后台\n"+
+			"关闭窗口后系统中没有任何本程序的进程; 需要时从桌面快捷方式或重新运行即可打开设置面板\n"+
+			"在设置面板里你可以随时: 调整偏好问卷 · 修改换图频率 · 暂停换图 · 卸载本程序\n"+
+			"偏好也会在使用中自动微调(重新勾选问卷/重新应用某张壁纸/满意度回访都会影响后续出图)",
 		nil, colBody)
 	_ = body.SetTextAlignment(walk.AlignCenter)
+
+	tip := themedLabel(w.content, "提示: 安装已完成, 你下载目录里的原始安装包文件现在可以删除了。", nil, colHint)
+	_ = tip.SetTextAlignment(walk.AlignCenter)
+
 	recap := themedLabel(w.content, w.surveyRecap(), nil, colHint)
 	_ = recap.SetTextAlignment(walk.AlignCenter)
 	w.enableNext("完成")
@@ -1047,47 +839,5 @@ func (w *wizard) buildDoneStep() {
 // surveyRecap 完成页回显所选偏好(按维度分组)。
 func (w *wizard) surveyRecap() string {
 	w.ensureSurveyAnswers()
-	var groups []string
-	for _, d := range taxonomy.Dimensions {
-		var names []string
-		for _, v := range d.Values {
-			if w.surveyAnswers[config.Key(d.ID, v.ID)] == survey.Like {
-				names = append(names, v.NameCN)
-			}
-		}
-		if len(names) > 0 {
-			groups = append(groups, d.NameCN+": "+strings.Join(names, " · "))
-		}
-	}
-	if len(groups) == 0 {
-		return ""
-	}
-	return "你的偏好\n" + strings.Join(groups, "\n")
-}
-
-// ---------- 通用小工具 ----------
-
-func phaseFromUser(userID string) int {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(userID))
-	return int(h.Sum64() % 60)
-}
-
-func samePath(a, b string) bool {
-	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
-}
-
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, 0o755)
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	return surveyRecapText(w.surveyAnswers)
 }

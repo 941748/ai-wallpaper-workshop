@@ -4,6 +4,8 @@ import "testing"
 
 // TestPregenTableMigrationFromV1 复现线上场景: 旧库 pregen 表(主键 user_id, 无 created_at 列)
 // 打开时应被安全重建为新结构(主键 job_id), 且后续多单写入正常。
+// 版本化迁移下, 真正的旧生产库不含 schema_version 表 → 视为版本 0, 顺序重放全部迁移;
+// 故此处一并删除 schema_version, 忠实模拟早于版本化迁移的线上库。
 func TestPregenTableMigrationFromV1(t *testing.T) {
 	path := t.TempDir() + "/m.db"
 	s, err := Open(path)
@@ -30,6 +32,10 @@ func TestPregenTableMigrationFromV1(t *testing.T) {
   updated_at      TEXT NOT NULL
 )`
 	if _, err := s.db.Exec(oldDDL); err != nil {
+		t.Fatal(err)
+	}
+	// 删除版本表, 模拟早于版本化迁移的线上旧库(重开时 cur=0 → 全部迁移重放)
+	if _, err := s.db.Exec(`DROP TABLE schema_version`); err != nil {
 		t.Fatal(err)
 	}
 	_ = s.Close()

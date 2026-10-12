@@ -20,6 +20,10 @@ import (
 	"wallpaper/internal/config"
 )
 
+// TickHours 计划任务理想节律(小时)。固定每小时触发一次; 换图频率与补池节流均由 tick 内部完成,
+// 用户选择的"换图频率"不影响任务节律。安装/迁移/重注册统一使用此值, 避免各处硬编码打架。
+const TickHours = 1
+
 // StartBoundary 计算任务起始边界: 今天(或下一小时)的 HH:phase 时刻。
 // 任务随后按 PT<N>H 周期触发, 从而把每个用户的换图时刻固定在其 uid 哈希相位上, 削平整点尖峰。
 func StartBoundary(now time.Time, phaseMinutes int) time.Time {

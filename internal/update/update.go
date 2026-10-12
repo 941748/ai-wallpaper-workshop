@@ -18,10 +18,11 @@ import (
 	"time"
 
 	"wallpaper/internal/cloud"
+	"wallpaper/internal/version"
 )
 
-// CurrentVersion 当前客户端版本(每次发版递增, 与 Release tag 对齐)。
-const CurrentVersion = "1.0.4"
+// CurrentVersion 当前客户端版本(单一版本源见 internal/version, 与 Release tag 对齐)。
+const CurrentVersion = version.Version
 
 // CompareVersions 比较语义化版本: a<b 返回 -1, a==b 返回 0, a>b 返回 1。
 func CompareVersions(a, b string) int {
@@ -81,7 +82,7 @@ func Check(ctx context.Context, c *cloud.Client, dir string, exePath string, log
 			return false
 		}
 	}
-	newPath := filepath.Join(dir, "bin", "wallpaper.new.exe")
+	newPath := filepath.Join(dir, "bin", "AIWallpaper.new.exe")
 	if err := os.WriteFile(newPath, data, 0o755); err != nil {
 		log("自更新: 写入新版本失败: %v", err)
 		return false

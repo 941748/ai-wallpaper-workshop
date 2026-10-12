@@ -28,8 +28,14 @@ func ShowAskDialog(req tick.AskRequest) tick.AskChoice {
 		_ = dlg.SetIcon(icon)
 	}
 	dlg.SetBackground(brushPageBg)
-	dlg.SetSize(walk.Size{Width: 440, Height: 400})
+	dlg.SetSize(walk.Size{Width: 440, Height: 440})
 	_ = dlg.SetLayout(walk.NewVBoxLayout())
+
+	// 顶栏: 无边框标题栏(拖动热区 + 右上角扁平 ✕; 关闭=“以后再说”)
+	if _, err := newTitleBar(dlg, dlg, config.AppNameCN, "偏好回访", 40, func() { dlg.Cancel() }); err != nil {
+		return choice
+	}
+	enableCustomFrame(dlg)
 
 	title, _ := walk.NewLabel(dlg)
 	title.SetText("最近的壁纸, 还合你心意吗？")
