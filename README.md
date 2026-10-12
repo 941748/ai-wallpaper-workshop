@@ -293,6 +293,9 @@ server {
 
 ## 客户端版本发布(静默自更新)
 
+> **完整发版与双端同步流程(含核验清单与踩坑记录)见 [docs/RELEASE.md](docs/RELEASE.md)**;
+> 服务端部署用 `tools/server-deploy.py`(paramiko 单连接, 内置限速重试/备份回滚)。
+
 1. 递增代码中的版本号(`internal/version/version.go` 的 `Version`, 客户端与云服务共用), 构建新客户端,
    产物重命名为 `AIWallpaper-<version>.exe`。
 2. 计算 sha256 与大小, 连同发布说明写入服务端 `releases/manifest.json`:

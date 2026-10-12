@@ -294,6 +294,9 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
 ## Client releases (silent self-update)
 
+> **Full release & dual-remote sync procedure (verification checklist + known pitfalls) see [docs/RELEASE.md](docs/RELEASE.md)**;
+> server deployment uses `tools/server-deploy.py` (single paramiko connection, built-in rate-limit retries / backup rollback).
+
 1. Bump the version in code (`Version` in `internal/version/version.go`, shared by client and cloud server), build the new client,
    and rename the artifact to `AIWallpaper-<version>.exe`.
 2. Compute the sha256 and size, and write them together with the release notes into the server-side `releases/manifest.json`:
