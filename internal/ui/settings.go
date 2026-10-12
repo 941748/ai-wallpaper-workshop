@@ -504,8 +504,11 @@ func (s *settings) buildSettingsPage(tab *walk.TabWidget) error {
 	changelogBtn, _ := walk.NewPushButton(verRow)
 	changelogBtn.SetText("查看更新内容")
 	changelogBtn.Clicked().Attach(func() { openURL(releaseNotesURL) })
+	manualBtn, _ := walk.NewPushButton(verRow)
+	manualBtn.SetText("检查更新")
+	manualBtn.Clicked().Attach(func() { s.checkUpdateManual(manualBtn) })
 	upNoteLbl, _ := walk.NewLabel(upGroup)
-	upNoteLbl.SetText("软件在后台自动无感更新, 无需手动操作; 更新后此处会显示最后更新时间。")
+	upNoteLbl.SetText("软件在后台自动无感更新, 也可点\"检查更新\"立即获取新版本; 更新后此处会显示最后更新时间。")
 
 	// ----- 设备同步(换机/重装领回画像) -----
 	syncGroup, _ := walk.NewGroupBox(page)
@@ -942,6 +945,76 @@ func (s *settings) lastUpdateText() string {
 		return t.Local().Format("2006-01-02 15:04")
 	}
 	return s.cfg.LastUpdate
+}
+
+// checkUpdateManual 手动检查更新: 查 manifest → 确认后下载+校验并预启动换装助手,
+// 关闭窗口(进程退出)后由助手完成原子换装; 后台 tick 的自动无感更新不受影响。
+func (s *settings) checkUpdateManual(btn *walk.PushButton) {
+	btn.SetEnabled(false)
+	btn.SetText("检查中…")
+	restore := func() {
+		s.mw.Synchronize(func() {
+			if s.mw.IsDisposed() {
+				return
+			}
+			btn.SetText("检查更新")
+			btn.SetEnabled(true)
+		})
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		showError(s.mw, "无法定位程序路径: %v", err)
+		restore()
+		return
+	}
+	// 手动更新恒走云端 manifest(直连局域网模式也可更新)
+	c := cloud.New(s.cfg.CloudURL, s.cfg.UserID, s.cfg.Token, hostName())
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		latest, err := c.ClientLatest(ctx, update.CurrentVersion)
+		cancel()
+		if err != nil {
+			s.mw.Synchronize(func() { showError(s.mw, "查询更新失败: %v", err) })
+			restore()
+			return
+		}
+		if latest.Version == "" || update.CompareVersions(latest.Version, update.CurrentVersion) <= 0 {
+			s.mw.Synchronize(func() {
+				showInfo(s.mw, "当前已是最新版本 ("+update.CurrentVersion+")。")
+			})
+			restore()
+			return
+		}
+		confirmed := false
+		s.mw.Synchronize(func() {
+			msg := fmt.Sprintf("发现新版本 %s (当前 %s)。\n\n是 = 立即下载更新(约 10 MB), 下载完成后关闭窗口自动换装, 下次打开即新版\n否 = 取消",
+				latest.Version, update.CurrentVersion)
+			confirmed = walk.MsgBox(s.mw, config.AppNameCN, msg, walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) == walk.DlgCmdYes
+		})
+		if !confirmed {
+			restore()
+			return
+		}
+		// 下载+校验+预启动换装助手(等待本进程退出后原子换装)
+		dlCtx, dlCancel := context.WithTimeout(context.Background(), 150*time.Second)
+		defer dlCancel()
+		if !update.Check(dlCtx, c, s.dir, exe, s.st.Log) {
+			s.mw.Synchronize(func() {
+				showError(s.mw, "更新失败: 下载或校验未通过, 详见日志(数据目录 logs)。")
+			})
+			restore()
+			return
+		}
+		// 走统一关闭流程(未保存修改会询问); 进程退出后助手完成换装
+		s.mw.Synchronize(func() {
+			s.confirmClose()
+			if !s.mw.IsDisposed() {
+				// 用户取消关闭: 换装助手等不到本进程退出会超时放弃, 后台 tick 下轮自动更新会重新下载完成换装
+				btn.SetText("检查更新")
+				btn.SetEnabled(true)
+			}
+		})
+	}()
 }
 
 // ---------- 对话框助手 ----------
