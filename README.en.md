@@ -80,7 +80,7 @@ Four-step wizard: connect to the service → preference questionnaire (five-dime
 
 ### How preferences are "learned"
 
-1. **Tri-state questionnaire**: 86 tags across five dimensions (style 22 / subject 38 / palette 6 / mood 10 / composition 10),
+1. **Tri-state questionnaire**: 90 tags across five dimensions (style 22 / subject 42 / palette 6 / mood 10 / composition 10),
    picked as "like / neutral / dislike" and mapped to profile weights (0.9 / 0.3 / 0.05); style packs can be checked in one click.
 2. **Drift detection**: only real user actions are adopted (re-running the wizard, re-applying a wallpaper, adjusting weights, check-in choices);
    the profile is refined once same-direction evidence accumulates. It never relies on guessed signals like "how long a wallpaper survived", avoiding intrusion and misjudgement.

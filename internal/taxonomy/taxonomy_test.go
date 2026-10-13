@@ -11,8 +11,8 @@ func TestDimensionsSanity(t *testing.T) {
 		if d.ID == "" || d.NameCN == "" {
 			t.Fatalf("dimension missing id/name: %+v", d)
 		}
-		if len(d.Values) < 4 || len(d.Values) > 40 {
-			t.Fatalf("dimension %s should have 4-40 values, got %d", d.ID, len(d.Values))
+		if len(d.Values) < 4 || len(d.Values) > 50 {
+			t.Fatalf("dimension %s should have 4-50 values, got %d", d.ID, len(d.Values))
 		}
 		for _, v := range d.Values {
 			if v.ID == "" || v.NameCN == "" || v.Prompt == "" {

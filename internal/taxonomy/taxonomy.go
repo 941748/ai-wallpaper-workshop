@@ -106,6 +106,10 @@ var Dimensions = []Dimension{
 			{ID: "undersea", NameCN: "海底世界", Prompt: "deep underwater world, coral reef, exotic fish, blue ambient light"},
 			{ID: "lake", NameCN: "湖泊", Prompt: "serene lake landscape, mirror-like water reflections, tranquil shoreline"},
 			{ID: "snowmountain", NameCN: "雪山", Prompt: "snow-capped mountain peak, alpine winter scenery, majestic glacier view"},
+			{ID: "guzhuang", NameCN: "古装美女", Prompt: "portrait of a beautiful chinese woman in traditional hanfu guzhuang, classical chinese makeup, ancient elegance"},
+			{ID: "sunshineboy", NameCN: "阳光少年", Prompt: "portrait of a sunny cheerful teenage boy, warm golden sunlight, bright wholesome smile, casual summer style"},
+			{ID: "nextdoorgirl", NameCN: "邻家女孩", Prompt: "portrait of a girl next door, natural fresh everyday look, soft candid smile, casual homey vibe"},
+			{ID: "cosplay", NameCN: "cosplay", Prompt: "cosplay photography, elaborate anime character costume, convention photoshoot, detailed cosplay outfit"},
 		},
 	},
 	{
