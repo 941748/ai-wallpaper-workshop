@@ -1,6 +1,6 @@
 // Package tick 实现 --tick 单次运行的全流程编排:
 // 文件锁 → 读配置 → 拉策略 → 节律判定 → 换图(本地备用池优先, 池空实时出图)
-// → 补池(静默也执行) → 静默自更新 → 上报(离线补传) → 留档清理 → 退出。
+// → 补池与静默自更新并行执行 → 上报(离线补传) → 留档清理 → 退出。
 // "静默"= 不换图但后台维护照常(补池/自更新/策略同步); 全程无窗口, 进程秒级~分钟级即退。
 package tick
 
@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"wallpaper/internal/backend"
@@ -329,15 +330,25 @@ func RunOnce(ctx context.Context, env Env) error {
 		}
 	}
 
-	// ---------- 补池(静默也执行; 储备充足则延缓申请, 避免拥堵) ----------
+	// ---------- 补池 与 静默自更新: 并行执行(互不依赖, 谁也不拖住谁) ----------
+	// 二者资源不相交(补池写 wallpapers/pool, 更新写 bin 并启换装助手); 助手等待旧进程
+	// 退出的上限已放宽(见 update.ApplyUpdate), 因此补池拖长本轮也不会导致换装超时。
+	var wg sync.WaitGroup
 	if cloudOK {
-		replenishPool(ctx, env, st, cc, cfg, pol, profile, history, sw, sh)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			replenishPool(ctx, env, st, cc, cfg, pol, profile, history, sw, sh)
+		}()
 	}
-
-	// ---------- 静默自更新(不受换图节律影响) ----------
 	if cc != nil && env.SelfUpdate && env.ExePath != "" {
-		update.Check(ctx, cc, env.Dir, env.ExePath, func(f string, a ...any) { st.Log("update: "+f, a...) })
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			update.Check(ctx, cc, env.Dir, env.ExePath, func(f string, a ...any) { st.Log("update: "+f, a...) })
+		}()
 	}
+	wg.Wait()
 
 	// ---------- 上报 + 历史 ----------
 	if imgData != nil {

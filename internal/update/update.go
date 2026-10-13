@@ -104,9 +104,10 @@ func spawnHelper(selfExe, target, newFile string) error {
 	return cmd.Start()
 }
 
-// ApplyUpdate 助手模式: 等待旧进程退出并原子换装(重试最多 120 秒)。
+// ApplyUpdate 助手模式: 等待旧进程退出并原子换装(重试最多 30 分钟)。
+// 与补池并行后, tick 退出时间取决于最慢的补池(实测可达 10+ 分钟), 原 120 秒不够。
 func ApplyUpdate(target, newFile string) error {
-	deadline := time.Now().Add(120 * time.Second)
+	deadline := time.Now().Add(30 * time.Minute)
 	oldPath := target + ".old"
 	var renamed bool
 	for time.Now().Before(deadline) {
