@@ -49,6 +49,10 @@ var Dimensions = []Dimension{
 			{ID: "anime", NameCN: "二次元", Prompt: "anime style, japanese animation art, vibrant cel shading, clean linework",
 				Negative: "photorealistic, realistic photograph"},
 			{ID: "anime3d", NameCN: "3D动漫", Prompt: "3d anime render, stylized 3d character, cinematic cg lighting"},
+			{ID: "donghua3d", NameCN: "国漫3D半写实精致五官", Prompt: "chinese donghua 3d animation style, semi-realistic rendering, refined delicate facial features, gorgeous detailed face, cinematic cg quality",
+				Negative: "3d cg donghua character, stylized 3d render"},
+			{ID: "chibi", NameCN: "Q版", Prompt: "chibi q-version style, cute big-head small-body character, kawaii proportions",
+				Negative: "chibi, oversized big head, small childlike proportions"},
 			{ID: "print", NameCN: "版画", Prompt: "woodblock print style, ukiyo-e inspired, bold graphic linework"},
 			{ID: "chalk", NameCN: "粉笔画", Prompt: "chalk pastel drawing, soft chalk texture, hand-drawn strokes"},
 			{ID: "film", NameCN: "复古胶片", Prompt: "retro film photography, 90s kodak film grain, nostalgic analog aesthetic"},
@@ -121,6 +125,7 @@ var Dimensions = []Dimension{
 			{ID: "morandi", NameCN: "低饱和莫兰迪", Prompt: "muted morandi color palette, desaturated soft tones, dusty pastel"},
 			{ID: "neon", NameCN: "高饱和霓虹", Prompt: "vibrant neon saturated palette, electric magenta and cyan glow"},
 			{ID: "pastel", NameCN: "柔和粉彩", Prompt: "soft pastel palette, gentle pink and cream tones, airy"},
+			{ID: "cinematic", NameCN: "电影级打光", Prompt: "cinematic film lighting, dramatic key light, soft rim light, professional hollywood color grading"},
 		},
 	},
 	{
@@ -136,6 +141,7 @@ var Dimensions = []Dimension{
 			{ID: "melancholy", NameCN: "忧郁", Prompt: "melancholic wistful mood, quiet blue sorrow, bittersweet rain atmosphere"},
 			{ID: "solitude", NameCN: "孤寂", Prompt: "solitary contemplative mood, lone stillness, quiet introspection"},
 			{ID: "passionate", NameCN: "热烈", Prompt: "passionate intense mood, fiery dramatic energy, bold emotion"},
+			{ID: "story", NameCN: "故事感", Prompt: "cinematic storytelling mood, narrative atmosphere, emotional depth, film still with a story"},
 		},
 	},
 	{
