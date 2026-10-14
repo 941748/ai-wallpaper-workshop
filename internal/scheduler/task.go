@@ -133,6 +133,35 @@ func Delete() error {
 	return nil
 }
 
+// VerifyRegistered 校验计划任务确实注册成功且指向 exePath, 返回状态描述(如 "就绪")。
+// 注册可能被 360 等杀软静默拦截(schtasks /Create 假成功或事后清除),
+// 因此以查询结果为准: XML 内容指向当前 exe 且带 --tick、状态存在且未被禁用, 才算注册成功。
+func VerifyRegistered(exePath string) (string, error) {
+	out, err := run("schtasks", "/Query", "/TN", config.TaskName, "/XML")
+	if err != nil {
+		return "", fmt.Errorf("任务查询失败: %v (%s)", err, out)
+	}
+	// /Query /XML 声明 UTF-16 但实际输出为本地 OEM 编码(中文系统即 GBK), 由 decodeOEM 统一处理。
+	text := decodeOEM([]byte(out))
+	if !strings.Contains(text, "<Command>"+xmlEscape(exePath)+"</Command>") {
+		return "", fmt.Errorf("任务未指向当前程序(%s)", exePath)
+	}
+	if !strings.Contains(text, "--tick") {
+		return "", fmt.Errorf("任务缺少 --tick 参数")
+	}
+	state, err := QueryState()
+	if err != nil {
+		return "", fmt.Errorf("任务状态查询失败: %v", err)
+	}
+	if state == "" {
+		return "", fmt.Errorf("任务状态为空, 未确认注册")
+	}
+	if strings.Contains(state, "禁用") {
+		return "", fmt.Errorf("任务已注册但处于禁用状态")
+	}
+	return state, nil
+}
+
 // RunNow 立即触发一次(tick 会自行处理锁与安静检测)。
 func RunNow() error {
 	out, err := run("schtasks", "/Run", "/TN", config.TaskName)
@@ -143,21 +172,22 @@ func RunNow() error {
 }
 
 // QueryState 查询任务是否存在及其状态描述(如 "就绪"/"已禁用"/"正在运行")。
-// schtasks 输出为本地 OEM 编码(中文系统即 GBK), 需转码后再提取"状态"行。
+// 用 /V /FO LIST 拿键值行(普通查询是表格, 无前缀可解析);
+// 状态列中文系统前缀为"模式:"(英文 "Mode:"), schtasks 输出为本地 OEM 编码(中文系统即 GBK), 需转码。
 func QueryState() (string, error) {
-	out, err := run("schtasks", "/Query", "/TN", config.TaskName)
+	out, err := run("schtasks", "/Query", "/TN", config.TaskName, "/V", "/FO", "LIST")
 	if err != nil {
 		return "", err
 	}
 	return parseTaskState([]byte(out)), nil
 }
 
-// parseTaskState 从 schtasks /Query 输出中提取状态值; 找不到时返回空串。
+// parseTaskState 从 schtasks /Query /V /FO LIST 输出中提取状态值; 找不到时返回空串。
 func parseTaskState(out []byte) string {
 	text := decodeOEM(out)
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
-		for _, prefix := range []string{"状态:", "Status:"} {
+		for _, prefix := range []string{"状态:", "Status:", "模式:", "Mode:"} {
 			if strings.HasPrefix(line, prefix) {
 				return strings.TrimSpace(strings.TrimPrefix(line, prefix))
 			}

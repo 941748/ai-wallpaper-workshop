@@ -59,6 +59,7 @@ type settings struct {
 	autoCk      *walk.CheckBox
 	pauseCB     *walk.ComboBox
 	pauseLB     *walk.Label
+	taskLbl     *walk.Label
 	askCk       *walk.CheckBox
 
 	// 历史页
@@ -471,6 +472,25 @@ func (s *settings) buildSettingsPage(tab *walk.TabWidget) error {
 	_ = s.pauseCB.SetCurrentIndex(s.pauseIndex(s.cfg.PauseHours))
 	s.pauseLB, _ = walk.NewLabel(row2)
 
+	// 计划任务: 展示注册状态 + 修复按钮(注册常被 360 等杀软拦截, 修复后必须校验确实生效)。
+	row3, _ := walk.NewComposite(chGroup)
+	_ = row3.SetLayout(walk.NewHBoxLayout())
+	s.taskLbl, _ = walk.NewLabel(row3)
+	s.taskLbl.SetText("计划任务: 检测中...")
+	repairBtn, _ := walk.NewPushButton(row3)
+	repairBtn.SetText("修复计划任务")
+	repairBtn.Clicked().Attach(func() { s.repairTask(repairBtn) })
+	go func() {
+		state, err := scheduler.QueryState()
+		s.mw.Synchronize(func() {
+			if err != nil || state == "" {
+				s.taskLbl.SetText("计划任务: 未检测到(可能被杀软拦截)")
+			} else {
+				s.taskLbl.SetText("计划任务: " + state)
+			}
+		})
+	}()
+
 	// ----- 偏好回访(开关 + 周期) -----
 	askGroup, _ := walk.NewGroupBox(page)
 	askGroup.SetTitle("偏好回访")
@@ -638,6 +658,42 @@ func (s *settings) updatePauseHint() {
 		return
 	}
 	s.pauseLB.SetText("保存后按所选时长暂停, 到期自动恢复")
+}
+
+// repairTask 重新注册计划任务并校验确实生效; 被杀软拦截时引导用户关闭杀软后重试。
+func (s *settings) repairTask(btn *walk.PushButton) {
+	exe, err := os.Executable()
+	if err != nil {
+		showError(s.mw, "无法获取程序路径: %v", err)
+		return
+	}
+	// installed 守卫: 与 tick 同规则, 仅安装目录(bin\)下的程序才写系统级副作用,
+	// 防止 go test / 开发态进程把计划任务劫持到临时路径(实测事故: 任务 0x80070002)。
+	if filepath.Base(filepath.Dir(exe)) != "bin" {
+		showInfo(s.mw, "当前为便携/开发模式, 未安装计划任务, 无需修复。")
+		return
+	}
+	btn.SetEnabled(false)
+	s.taskLbl.SetText("计划任务: 修复中...")
+	go func() {
+		var state string
+		err := scheduler.Register(exe, scheduler.TickHours, s.cfg.PhaseMinutes)
+		if err == nil {
+			state, err = scheduler.VerifyRegistered(exe)
+		}
+		s.mw.Synchronize(func() {
+			btn.SetEnabled(true)
+			if err != nil {
+				s.taskLbl.SetText("计划任务: 修复失败")
+				s.st.Log("settings: 计划任务修复失败: %v", err)
+				showError(s.mw, "计划任务修复失败, 未能确认注册成功:\n%v\n\n多半是被 360安全等杀毒软件拦截。请暂时关闭杀软的拦截防护, 再点击\"修复计划任务\"重试。", err)
+				return
+			}
+			s.taskLbl.SetText("计划任务: " + state + " ✓")
+			s.st.Log("settings: 计划任务修复成功, 状态=%s", state)
+			showInfo(s.mw, "计划任务已修复, 并已确认注册成功(状态: %s)。", state)
+		})
+	}()
 }
 
 func (s *settings) collectServiceConfig() *config.Config {
