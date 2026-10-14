@@ -16,7 +16,7 @@ ComfyUI (Z-Image Turbo) renders the image → it is fitted to your screen's phys
 
 No sign-up, no login, no tray icon, no resident process — close the window and there is no process left in the system.
 
-**Current version: v1.0.9** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~10 MB single file.
+**Current version: v1.1.0** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~10 MB single file.
 
 ## Download
 
@@ -298,12 +298,12 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
    ```json
    {
-     "version": "1.0.9",
-     "file": "AIWallpaper-1.0.9.exe",
+     "version": "1.1.0",
+     "file": "AIWallpaper-1.1.0.exe",
      "sha256": "<64-hex>",
-     "size": 10814464,
-     "notes": "v1.0.9: settings page adds a Repair Scheduled Task button (triple-verified registration, prompts retry when blocked by antivirus); preference dictionary +4 entries (donghua 3D semi-realistic / chibi / cinematic lighting / storytelling); website gallery finalized with ink-wash and photoreal portrait",
-     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.0.9/AIWallpaper.exe"
+     "size": 10820608,
+     "notes": "v1.1.0: manual update check adds live download progress and a completion dialog; adds safe image-generation review",
+     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.1.0/AIWallpaper.exe"
    }
    ```
 
