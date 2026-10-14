@@ -34,7 +34,7 @@ func (a *API) handleSite(w http.ResponseWriter, r *http.Request) {
 	}
 	if p == "/index.html" {
 		w.Header().Set("Cache-Control", "no-cache")
-		if err := a.st.RecordSiteEvent("pv", siteVisitorHash(r)); err != nil {
+		if err := a.st.RecordSiteEvent("pv", siteVisitorHash(r), siteVisitorIP(r)); err != nil {
 			a.logf("官网计数失败: %v", err)
 		}
 	}
@@ -53,14 +53,14 @@ func (a *API) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="AIWallpaper-Setup.exe"`)
-	if err := a.st.RecordSiteEvent("dl", siteVisitorHash(r)); err != nil {
+	if err := a.st.RecordSiteEvent("dl", siteVisitorHash(r), siteVisitorIP(r)); err != nil {
 		a.logf("官网计数失败: %v", err)
 	}
 	http.ServeFile(w, r, fp)
 }
 
-// siteVisitorHash 访客 IP 的匿名哈希(仅用于 UV 近似去重, 不存明文 IP)。
-func siteVisitorHash(r *http.Request) string {
+// siteVisitorIP 取访客来源 IP(X-Real-IP / X-Forwarded-For / RemoteAddr)。
+func siteVisitorIP(r *http.Request) string {
 	ip := r.Header.Get("X-Real-IP")
 	if ip == "" {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
@@ -74,6 +74,11 @@ func siteVisitorHash(r *http.Request) string {
 			ip = r.RemoteAddr
 		}
 	}
-	sum := sha1.Sum([]byte("aw-site-uv:" + ip))
+	return ip
+}
+
+// siteVisitorHash 访客 IP 的匿名哈希(用于 UV 近似去重; 明文 IP 另存 site_events.ip)。
+func siteVisitorHash(r *http.Request) string {
+	sum := sha1.Sum([]byte("aw-site-uv:" + siteVisitorIP(r)))
 	return hex.EncodeToString(sum[:6])
 }

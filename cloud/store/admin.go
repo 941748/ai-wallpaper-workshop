@@ -94,48 +94,118 @@ func (s *Store) AdminRecentJobs(n int) ([]AdminJobRow, error) {
 
 // SiteDailyRow 官网某天的统计行。
 type SiteDailyRow struct {
-	Day string
-	PV  int64
-	UV  int64
-	DL  int64
+	Day   string
+	PV    int64
+	UV    int64
+	DL    int64
+	ImgDL int64
 }
 
-// RecordSiteEvent 记录一次官网事件(kind: pv=页面浏览 / dl=下载; iph 为访客匿名哈希)。
-func (s *Store) RecordSiteEvent(kind, iph string) error {
-	_, err := s.db.Exec(`INSERT INTO site_events(ts, kind, iph) VALUES(?,?,?)`,
-		time.Now().Format(timeFmt), kind, iph)
+// RecordSiteEvent 记录一次官网事件(kind: pv=页面浏览 / dl=客户端下载 / img_dl=图片下载;
+// iph 为访客匿名哈希或 user_id, ip 为访客来源明文 IP(供区域分析))。
+func (s *Store) RecordSiteEvent(kind, iph, ip string) error {
+	_, err := s.db.Exec(`INSERT INTO site_events(ts, kind, iph, ip) VALUES(?,?,?,?)`,
+		time.Now().Format(timeFmt), kind, iph, ip)
 	return err
 }
 
-// SiteStats 官网统计: 总 PV / 总 UV / 总下载 + 近 n 天按天明细(日期倒序)。
-func (s *Store) SiteStats(n int) (int64, int64, int64, []SiteDailyRow, error) {
-	var pv, uv, dl int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM site_events WHERE kind='pv'`).Scan(&pv); err != nil {
-		return 0, 0, 0, nil, err
+// SiteStats 官网统计: 总 PV / 总 UV / 总客户端下载 / 总图片下载 + 近 n 天按天明细(日期倒序)。
+func (s *Store) SiteStats(n int) (pv, uv, dl, imgDL int64, daily []SiteDailyRow, err error) {
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM site_events WHERE kind='pv'`).Scan(&pv); err != nil {
+		return
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT iph) FROM site_events WHERE kind='pv' AND iph<>''`).Scan(&uv); err != nil {
-		return 0, 0, 0, nil, err
+	if err = s.db.QueryRow(`SELECT COUNT(DISTINCT iph) FROM site_events WHERE kind='pv' AND iph<>''`).Scan(&uv); err != nil {
+		return
 	}
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM site_events WHERE kind='dl'`).Scan(&dl); err != nil {
-		return 0, 0, 0, nil, err
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM site_events WHERE kind='dl'`).Scan(&dl); err != nil {
+		return
+	}
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM site_events WHERE kind='img_dl'`).Scan(&imgDL); err != nil {
+		return
 	}
 	since := time.Now().AddDate(0, 0, -n).Format(timeFmt)
-	rows, err := s.db.Query(`SELECT substr(ts,1,10) AS d,
+	rows, qErr := s.db.Query(`SELECT substr(ts,1,10) AS d,
   COUNT(CASE WHEN kind='pv' THEN 1 END),
   COUNT(DISTINCT CASE WHEN kind='pv' AND iph<>'' THEN iph END),
-  COUNT(CASE WHEN kind='dl' THEN 1 END)
+  COUNT(CASE WHEN kind='dl' THEN 1 END),
+  COUNT(CASE WHEN kind='img_dl' THEN 1 END)
 FROM site_events WHERE ts >= ? GROUP BY d ORDER BY d DESC`, since)
-	if err != nil {
-		return pv, uv, dl, nil, err
+	if qErr != nil {
+		err = qErr
+		return
 	}
 	defer rows.Close()
-	var daily []SiteDailyRow
 	for rows.Next() {
 		var r SiteDailyRow
-		if err := rows.Scan(&r.Day, &r.PV, &r.UV, &r.DL); err != nil {
-			return pv, uv, dl, nil, err
+		if err = rows.Scan(&r.Day, &r.PV, &r.UV, &r.DL, &r.ImgDL); err != nil {
+			return
 		}
 		daily = append(daily, r)
 	}
-	return pv, uv, dl, daily, rows.Err()
+	err = rows.Err()
+	return
+}
+
+// SiteEventRow 看板用官网事件行。
+type SiteEventRow struct {
+	TS   string
+	Kind string
+	IPh  string
+	IP   string
+}
+
+// AdminRecentSiteEvents 最近 n 条官网事件(含 IP, 供区域分析)。
+func (s *Store) AdminRecentSiteEvents(n int) ([]SiteEventRow, error) {
+	rows, err := s.db.Query(`SELECT ts, kind, iph, ip FROM site_events ORDER BY id DESC LIMIT ?`, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SiteEventRow
+	for rows.Next() {
+		var r SiteEventRow
+		if err := rows.Scan(&r.TS, &r.Kind, &r.IPh, &r.IP); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ---------- 出图统计 ----------
+
+// GenDailyRow 某天的出图统计行。
+type GenDailyRow struct {
+	Day     string
+	Total   int64
+	Success int64
+}
+
+// GenStats 出图统计: 总出图 / 成功出图 + 近 n 天按天明细(日期倒序)。
+func (s *Store) GenStats(n int) (total, success int64, daily []GenDailyRow, err error) {
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM prompt_records`).Scan(&total); err != nil {
+		return
+	}
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM prompt_records WHERE success=1`).Scan(&success); err != nil {
+		return
+	}
+	since := time.Now().AddDate(0, 0, -n).Format(timeFmt)
+	rows, qErr := s.db.Query(`SELECT substr(at,1,10) AS d,
+  COUNT(*),
+  COUNT(CASE WHEN success=1 THEN 1 END)
+FROM prompt_records WHERE at >= ? GROUP BY d ORDER BY d DESC`, since)
+	if qErr != nil {
+		err = qErr
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r GenDailyRow
+		if err = rows.Scan(&r.Day, &r.Total, &r.Success); err != nil {
+			return
+		}
+		daily = append(daily, r)
+	}
+	err = rows.Err()
+	return
 }

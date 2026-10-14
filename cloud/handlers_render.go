@@ -82,6 +82,9 @@ func (a *API) handleJobImage(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, http.StatusConflict, "成品尚未就绪")
 		return
 	}
+	if err := a.st.RecordSiteEvent("img_dl", u.UserID, siteVisitorIP(r)); err != nil {
+		a.logf("下载图计数失败: %v", err)
+	}
 	serveFile(w, job.ImagePath)
 }
 
@@ -224,6 +227,9 @@ func (a *API) handlePregenImage(w http.ResponseWriter, r *http.Request) {
 	if err != nil || p == nil || !p.Ready || p.ImagePath == "" {
 		writeFail(w, http.StatusNotFound, "暂无预生成成品")
 		return
+	}
+	if err := a.st.RecordSiteEvent("img_dl", u.UserID, siteVisitorIP(r)); err != nil {
+		a.logf("下载图计数失败: %v", err)
 	}
 	serveFile(w, p.ImagePath)
 }

@@ -76,6 +76,7 @@ var migrations = []migration{
 	{2, m002UserLastActive},
 	{3, m003UserProfiles},
 	{4, m004Pregen},
+	{5, m005SiteEventIP},
 }
 
 // m001BaselineSchema 基线表结构(全部 IF NOT EXISTS, 对新库建表/对旧库无操作)。
@@ -230,6 +231,19 @@ func m004Pregen(db *sql.DB) error {
 		}
 	}
 	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_pregen_user ON pregen(user_id, ready, created_at)`)
+	return err
+}
+
+// m005SiteEventIP 为 site_events 补 ip 列(访客来源 IP, 供后续分析客户区域); 已含则跳过。
+func m005SiteEventIP(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('site_events') WHERE name='ip'`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := db.Exec(`ALTER TABLE site_events ADD COLUMN ip TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 
