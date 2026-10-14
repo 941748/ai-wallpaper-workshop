@@ -54,19 +54,31 @@ func parseVer(v string) [3]int {
 }
 
 // Check 检查并暂存新版本; 有更新且暂存成功时返回 true。
+// progress 非 nil 时在下载过程中回调(已下载字节数, 总字节数)。
 // 换装由助手进程完成(tick 结束时本进程即将退出)。
-func Check(ctx context.Context, c *cloud.Client, dir string, exePath string, log func(string, ...any)) bool {
+func Check(ctx context.Context, c *cloud.Client, dir string, exePath string, progress func(got, total int64), log func(string, ...any)) bool {
 	latest, err := c.ClientLatest(ctx, CurrentVersion)
 	if err != nil {
 		log("自更新: 查询最新版本失败: %v", err)
 		return false
 	}
 	if latest.Version == "" || CompareVersions(latest.Version, CurrentVersion) <= 0 {
+		// 注意: 此分支是唯一的静默出口, 必须留日志, 否则手动更新"点了没反应"时无从排查
+		log("自更新: 云端未返回更高版本 (返回 %q, 当前 %s)", latest.Version, CurrentVersion)
 		return false
 	}
 	log("自更新: 发现新版本 %s (当前 %s)", latest.Version, CurrentVersion)
 
-	data, err := c.DownloadFile(ctx, latest.URL)
+	manifestSize := latest.Size
+	data, err := c.DownloadFileWithProgress(ctx, latest.URL, func(got, total int64) {
+		if progress == nil {
+			return
+		}
+		if total <= 0 {
+			total = manifestSize // Gitee 302 后无 Content-Length 时用 manifest 的 size
+		}
+		progress(got, total)
+	})
 	if err != nil {
 		log("自更新: 下载失败: %v", err)
 		return false

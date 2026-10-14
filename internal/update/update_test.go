@@ -95,7 +95,7 @@ func TestCheckNoUpdateForSameOrOlder(t *testing.T) {
 			"sha256": sumHex(payload), "size": int64(len(payload))}
 	}, payload)
 	c := cloud.New(srvSame.URL, "u1", "tok", "dev")
-	if Check(context.Background(), c, dir, exe, func(string, ...any) {}) {
+	if Check(context.Background(), c, dir, exe, nil, func(string, ...any) {}) {
 		t.Fatal("同版本不应触发更新")
 	}
 
@@ -104,7 +104,7 @@ func TestCheckNoUpdateForSameOrOlder(t *testing.T) {
 			"sha256": sumHex(payload), "size": int64(len(payload))}
 	}, payload)
 	c2 := cloud.New(srvOld.URL, "u1", "tok", "dev")
-	if Check(context.Background(), c2, dir, exe, func(string, ...any) {}) {
+	if Check(context.Background(), c2, dir, exe, nil, func(string, ...any) {}) {
 		t.Fatal("旧版本不应触发更新")
 	}
 	assertNotStaged(t, dir)
@@ -121,7 +121,7 @@ func TestCheckRejectsBadSHA(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := cloud.New(srv.URL, "u1", "tok", "dev")
-	if Check(context.Background(), c, dir, filepath.Join(dir, "bin", "wallpaper.exe"), func(string, ...any) {}) {
+	if Check(context.Background(), c, dir, filepath.Join(dir, "bin", "wallpaper.exe"), nil, func(string, ...any) {}) {
 		t.Fatal("sha256 校验失败必须放弃更新")
 	}
 	assertNotStaged(t, dir)
@@ -138,7 +138,7 @@ func TestCheckRejectsSizeMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := cloud.New(srv.URL, "u1", "tok", "dev")
-	if Check(context.Background(), c, dir, filepath.Join(dir, "bin", "wallpaper.exe"), func(string, ...any) {}) {
+	if Check(context.Background(), c, dir, filepath.Join(dir, "bin", "wallpaper.exe"), nil, func(string, ...any) {}) {
 		t.Fatal("大小不符必须放弃更新")
 	}
 	assertNotStaged(t, dir)
@@ -164,7 +164,7 @@ func TestCheckStagesNewVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := cloud.New(srv.URL, "u1", "tok", "dev")
-	if !Check(context.Background(), c, dir, spawnable, func(string, ...any) {}) {
+	if !Check(context.Background(), c, dir, spawnable, nil, func(string, ...any) {}) {
 		t.Fatal("合法新版本应暂存成功")
 	}
 	got, err := os.ReadFile(stagedPath(dir))

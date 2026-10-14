@@ -445,6 +445,12 @@ var allowedDownloadPrefixes = []string{
 
 // DownloadFile 从给定 URL 下载(仅允许自有云端与官方镜像来源, 保证安全边界)。
 func (c *Client) DownloadFile(ctx context.Context, fileURL string) ([]byte, error) {
+	return c.DownloadFileWithProgress(ctx, fileURL, nil)
+}
+
+// DownloadFileWithProgress 同 DownloadFile; progress 非 nil 时按块回调
+// (已下载字节数, 总字节数; Content-Length 缺失时 total 为 -1)。
+func (c *Client) DownloadFileWithProgress(ctx context.Context, fileURL string, progress func(got, total int64)) ([]byte, error) {
 	allowed := c.BaseURL != "" && strings.HasPrefix(fileURL, c.BaseURL)
 	for _, p := range allowedDownloadPrefixes {
 		if strings.HasPrefix(fileURL, p) {
@@ -468,7 +474,25 @@ func (c *Client) DownloadFile(ctx context.Context, fileURL string) ([]byte, erro
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("下载 HTTP %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	if progress == nil {
+		return io.ReadAll(resp.Body)
+	}
+	total := resp.ContentLength
+	buf := make([]byte, 0, 64<<10)
+	chunk := make([]byte, 64<<10)
+	for {
+		n, rerr := resp.Body.Read(chunk)
+		if n > 0 {
+			buf = append(buf, chunk[:n]...)
+			progress(int64(len(buf)), total)
+		}
+		if rerr == io.EOF {
+			return buf, nil
+		}
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
 }
 
 // ---------- 设备扫码配对 ----------

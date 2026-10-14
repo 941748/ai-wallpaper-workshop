@@ -345,7 +345,7 @@ func RunOnce(ctx context.Context, env Env) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			update.Check(ctx, cc, env.Dir, env.ExePath, func(f string, a ...any) { st.Log("update: "+f, a...) })
+			update.Check(ctx, cc, env.Dir, env.ExePath, nil, func(f string, a ...any) { st.Log("update: "+f, a...) })
 		}()
 	}
 	wg.Wait()

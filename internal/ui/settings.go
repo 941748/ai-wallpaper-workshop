@@ -1048,21 +1048,52 @@ func (s *settings) checkUpdateManual(btn *walk.PushButton) {
 			confirmed = walk.MsgBox(s.mw, config.AppNameCN, msg, walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) == walk.DlgCmdYes
 		})
 		if !confirmed {
+			s.st.Log("手动更新: 用户在确认框点了否/关闭")
 			restore()
 			return
 		}
-		// 下载+校验+预启动换装助手(等待本进程退出后原子换装)
+		s.st.Log("手动更新: 用户确认下载 %s (当前 %s)", latest.Version, update.CurrentVersion)
+		s.mw.Synchronize(func() {
+			if !s.mw.IsDisposed() {
+				btn.SetText("下载中…")
+			}
+		})
+		// 下载+校验+预启动换装助手(等待本进程退出后原子换装);
+		// 进度回调按 200ms 节流刷按钮, 避免 64KB 级回调打爆 UI 线程
+		var lastUI time.Time
+		progressUI := func(got, total int64) {
+			now := time.Now()
+			if now.Sub(lastUI) < 200*time.Millisecond && (total <= 0 || got < total) {
+				return
+			}
+			lastUI = now
+			s.mw.Synchronize(func() {
+				if s.mw.IsDisposed() {
+					return
+				}
+				if total > 0 {
+					btn.SetText(fmt.Sprintf("下载中 %d/%d MB", got>>20, total>>20))
+				} else {
+					btn.SetText(fmt.Sprintf("下载中 %d MB", got>>20))
+				}
+			})
+		}
 		dlCtx, dlCancel := context.WithTimeout(context.Background(), 150*time.Second)
 		defer dlCancel()
-		if !update.Check(dlCtx, c, s.dir, exe, s.st.Log) {
+		if !update.Check(dlCtx, c, s.dir, exe, progressUI, s.st.Log) {
+			s.st.Log("手动更新: 下载或校验未通过, 弹错误提示")
 			s.mw.Synchronize(func() {
 				showError(s.mw, "更新失败: 下载或校验未通过, 详见日志(数据目录 logs)。")
 			})
 			restore()
 			return
 		}
+		s.st.Log("手动更新: 已暂存新版本 %s, 弹完成提示", latest.Version)
 		// 走统一关闭流程(未保存修改会询问); 进程退出后助手完成换装
 		s.mw.Synchronize(func() {
+			walk.MsgBox(s.mw, config.AppNameCN,
+				fmt.Sprintf("已更新到 %s，下次打开生效。\n\n确定后关闭窗口完成换装。", latest.Version),
+				walk.MsgBoxOK|walk.MsgBoxIconInformation)
 			s.confirmClose()
 			if !s.mw.IsDisposed() {
 				// 用户取消关闭: 换装助手等不到本进程退出会超时放弃, 后台 tick 下轮自动更新会重新下载完成换装
