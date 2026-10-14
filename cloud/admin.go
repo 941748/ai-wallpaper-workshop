@@ -71,9 +71,9 @@ func mergeDaily(site []siteDaily, gen []genDayRow) []dailyRow {
 }
 
 type siteDaily struct {
-	Day           string
-	PV, UV, DL    int64
-	ImgDL         int64
+	Day        string
+	PV, UV, DL int64
+	ImgDL      int64
 }
 type genDayRow struct {
 	Day     string

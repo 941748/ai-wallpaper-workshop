@@ -131,7 +131,7 @@ func randomHex(nBytes int) string {
 	return hex.EncodeToString(b)
 }
 
-// serveFile 以只读方式回传成品文件(.png 自动置图片 MIME)。
+// serveFile 以只读方式回传成品文件(.png/.jpg 自动置图片 MIME)。
 func serveFile(w http.ResponseWriter, path string) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -139,8 +139,11 @@ func serveFile(w http.ResponseWriter, path string) {
 		return
 	}
 	defer f.Close()
-	if strings.HasSuffix(path, ".png") {
+	switch {
+	case strings.HasSuffix(path, ".png"):
 		w.Header().Set("Content-Type", "image/png")
+	case strings.HasSuffix(path, ".jpg"), strings.HasSuffix(path, ".jpeg"):
+		w.Header().Set("Content-Type", "image/jpeg")
 	}
 	_, _ = io.Copy(w, f)
 }

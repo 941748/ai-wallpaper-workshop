@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/jpeg"
+	_ "image/png" // 注册 PNG 解码(ComfyUI 出图为 PNG)
 	"os"
 	"path/filepath"
 	"time"
@@ -82,19 +86,27 @@ func (q *queue) process(ctx context.Context, job *store.Job) {
 		return
 	}
 
+	// 落盘前转码 JPEG: 云端→客户端下载体积缩至 PNG 的约 1/4~1/5(带宽瓶颈在这一段)。
+	// 失败时保留原 PNG, 由后缀决定下发 MIME。
+	data := img
+	ext := ".png"
+	if jpg, ok := toJPEG(img); ok {
+		data, ext = jpg, ".jpg"
+	}
+
 	var path string
 	switch job.Kind {
 	case "pregen":
-		path = filepath.Join(q.dataDir, "pregen", job.JobID+".png")
+		path = filepath.Join(q.dataDir, "pregen", job.JobID+ext)
 	default:
-		path = filepath.Join(q.dataDir, "images", job.JobID+".png")
+		path = filepath.Join(q.dataDir, "images", job.JobID+ext)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		_ = q.st.SetJobStatus(job.JobID, "failed", err.Error(), "")
 		return
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, img, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		_ = q.st.SetJobStatus(job.JobID, "failed", err.Error(), "")
 		return
 	}
@@ -108,4 +120,20 @@ func (q *queue) process(ctx context.Context, job *store.Job) {
 		_ = q.st.SetPregenReady(job.JobID, path)
 	}
 	q.logf("任务完成 job=%s kind=%s -> %s", job.JobID, job.Kind, path)
+}
+
+// jpegQuality 下发成品的 JPEG 质量(体积与画质折中; 客户端设壁纸前还会转码, 此处无二次损失)。
+const jpegQuality = 90
+
+// toJPEG 把成品图转码为 JPEG 以压缩下发体积; 解码失败返回 ok=false(保留原图)。
+func toJPEG(src []byte) ([]byte, bool) {
+	img, _, err := image.Decode(bytes.NewReader(src))
+	if err != nil {
+		return nil, false
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: jpegQuality}); err != nil {
+		return nil, false
+	}
+	return buf.Bytes(), true
 }

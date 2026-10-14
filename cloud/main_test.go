@@ -309,8 +309,8 @@ func TestFullClientLifecycle(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("image status %d", resp.StatusCode)
 	}
-	if _, err := png.Decode(bytes.NewReader(imgRaw)); err != nil {
-		t.Fatalf("image not png: %v", err)
+	if _, format, err := image.Decode(bytes.NewReader(imgRaw)); err != nil || format != "jpeg" {
+		t.Fatalf("image not jpeg (format=%q): %v", format, err)
 	}
 
 	// 越权访问他人任务
