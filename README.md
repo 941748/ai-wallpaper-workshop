@@ -16,7 +16,7 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 
 零注册、零登录、无托盘、无常驻进程——关掉窗口,系统里就没有它的进程。
 
-**当前版本: v1.1.1** · 官网 [cybermesh.space](https://www.cybermesh.space) · 客户端约 10 MB 单文件。
+**当前版本: v1.1.2** · 官网 [cybermesh.space](https://www.cybermesh.space) · 客户端约 10 MB 单文件。
 
 ## 下载
 
@@ -297,12 +297,12 @@ server {
 
    ```json
    {
-     "version": "1.1.1",
-     "file": "AIWallpaper-1.1.1.exe",
+     "version": "1.1.2",
+     "file": "AIWallpaper-1.1.2.exe",
      "sha256": "<64 位 hex>",
-     "size": 10820608,
-     "notes": "v1.1.1: 云端出图转码 JPEG, 壁纸下载体积更小、下载更快",
-     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.1.1/AIWallpaper.exe"
+     "size": 10830848,
+     "notes": "v1.1.2: 修复立即换一张",
+     "url": "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/v1.1.2/AIWallpaper.exe"
    }
    ```
 
