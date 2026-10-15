@@ -9,4 +9,4 @@
 package version
 
 // Version 产品发布版本(语义化, 与 Release tag 对齐)。
-const Version = "1.1.2"
+const Version = "1.1.3"
