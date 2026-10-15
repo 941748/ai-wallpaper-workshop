@@ -337,7 +337,7 @@ func (s *settings) swapNow(btn *walk.PushButton) {
 		}
 	}
 	btn.SetEnabled(true)
-	s.curLbl.SetText("触发失败: " + err.Error())
+	s.curLbl.SetText("触发失败: " + friendlyText(err.Error()))
 }
 
 // awaitSwap 等待换图进程与结果文件(500ms 轮询, 上限 15 分钟), 回 UI 线程收尾。
@@ -372,7 +372,7 @@ func (s *settings) awaitSwap(btn *walk.PushButton, cmd *exec.Cmd) {
 			s.curLbl.SetText("✓ 已换壁纸 — 新图已生效")
 			s.refreshCurrentImage()
 		} else {
-			s.curLbl.SetText("未换图: " + res.Detail)
+			s.curLbl.SetText("未换图: " + friendlyText(res.Detail))
 		}
 	})
 }
@@ -1105,7 +1105,8 @@ func (s *settings) checkUpdateManual(btn *walk.PushButton) {
 		latest, err := c.ClientLatest(ctx, update.CurrentVersion)
 		cancel()
 		if err != nil {
-			s.mw.Synchronize(func() { showError(s.mw, "查询更新失败: %v", err) })
+			s.st.Log("手动更新: 查询更新失败: %v", err)
+			s.mw.Synchronize(func() { showError(s.mw, "查询更新失败: %s, 请稍后重试", friendlyErrText(err)) })
 			restore()
 			return
 		}

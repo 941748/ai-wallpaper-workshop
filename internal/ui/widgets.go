@@ -23,23 +23,34 @@ func friendlyErrText(err error) string {
 	if err == nil {
 		return "未知错误"
 	}
-	msg := err.Error()
+	return friendlyText(err.Error())
+}
+
+// friendlyText 同 friendlyErrText, 但接收字符串(用于 "阶段前缀: 错误原文" 形式的拼接文案)。
+// 前缀(如 "出图失败")保留, 仅对技术细节部分做替换。
+func friendlyText(msg string) string {
 	if !looksTechnical(msg) {
 		return msg
 	}
 	low := strings.ToLower(msg)
+	var cls string
 	switch {
 	case strings.Contains(low, "timeout") || strings.Contains(low, "deadline"):
-		return "网络连接超时"
+		cls = "网络连接超时"
 	case strings.Contains(low, "refused") || strings.Contains(low, "unreachable") || strings.Contains(low, "no route"):
-		return "服务暂时不可达"
+		cls = "服务暂时不可达"
 	case strings.Contains(low, "no such host") || strings.Contains(low, "dns"):
-		return "网络解析失败"
+		cls = "网络解析失败"
 	case strings.Contains(low, "eof") || strings.Contains(low, "reset"):
-		return "连接被中断"
+		cls = "连接被中断"
 	default:
-		return "暂时无法连接"
+		cls = "暂时无法连接"
 	}
+	// "阶段前缀: 详情" 结构保留前缀(如 "出图失败"), 前缀含路径/URL 字符时不保留
+	if i := strings.Index(msg, ": "); i > 0 && i < 20 && !strings.ContainsAny(msg[:i], "/\\") {
+		return msg[:i] + ": " + cls
+	}
+	return cls
 }
 
 // looksTechnical 判断错误文本是否含 URL/路径/网络栈等不宜直接展示的技术细节。
