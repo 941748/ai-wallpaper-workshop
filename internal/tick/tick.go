@@ -6,6 +6,7 @@ package tick
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -48,6 +49,41 @@ type AskRequest struct {
 	LastChoice string
 }
 
+// Outcome 单轮运行的结果反馈(设置页"立即换一张"经 Report 落盘后轮询读取)。
+type Outcome struct {
+	Changed bool   `json:"changed"`
+	Detail  string `json:"detail"` // 未换图/失败原因(成功为空)
+}
+
+// OutcomePath 手动触发结果文件路径。
+func OutcomePath(dir string) string {
+	return filepath.Join(dir, "logs", "force_result.json")
+}
+
+// WriteOutcome 落盘手动触发结果。
+func WriteOutcome(dir string, o Outcome) error {
+	path := OutcomePath(dir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.Marshal(o)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
+}
+
+// ReadOutcome 读取手动触发结果; 文件不存在或内容未写完整时返回错误。
+func ReadOutcome(dir string) (Outcome, error) {
+	var o Outcome
+	b, err := os.ReadFile(OutcomePath(dir))
+	if err != nil {
+		return o, err
+	}
+	err = json.Unmarshal(b, &o)
+	return o, err
+}
+
 // Env 运行环境(默认值见 withDefaults, 测试可注入)。
 type Env struct {
 	Dir        string
@@ -59,6 +95,8 @@ type Env struct {
 	Ask        func(AskRequest) AskChoice // nil = 不弹(顺延处理)
 	ExePath    string
 	SelfUpdate bool
+	Force      bool          // 手动触发(立即换一张): 绕过全部自动节律闸门
+	Report     func(Outcome) // 单轮结果回调(覆盖所有提前退出路径)
 }
 
 func (e Env) withDefaults() Env {
@@ -88,16 +126,23 @@ func (e Env) withDefaults() Env {
 // RunOnce 执行一轮完整流程; 所有失败路径均静默保留旧壁纸, 绝不打扰用户。
 func RunOnce(ctx context.Context, env Env) error {
 	env = env.withDefaults()
+	out := Outcome{}
+	if env.Report != nil {
+		defer func() { env.Report(out) }()
+	}
 	st, err := store.Open(env.Dir)
 	if err != nil {
+		out.Detail = "打开数据目录失败: " + err.Error()
 		return err
 	}
 	release, err := st.Lock()
 	if errors.Is(err, store.ErrBusy) {
+		out.Detail = "上一轮换图仍在进行中, 请稍后再试"
 		env.Log("已有实例在运行, 退出")
 		return nil
 	}
 	if err != nil {
+		out.Detail = "加锁失败: " + err.Error()
 		return err
 	}
 	defer release()
@@ -106,10 +151,12 @@ func RunOnce(ctx context.Context, env Env) error {
 
 	cfg, err := config.Load(env.Dir)
 	if err != nil {
+		out.Detail = "配置读取失败: " + err.Error()
 		st.Log("tick: 配置读取失败: %v", err)
 		return err
 	}
 	if !cfg.Initialized {
+		out.Detail = "尚未初始化"
 		env.Log("尚未初始化, 静默退出")
 		return nil
 	}
@@ -218,6 +265,7 @@ func RunOnce(ctx context.Context, env Env) error {
 	// ---------- 节律判定: 本轮是否进入换图窗口 ----------
 	changeOK, skipReason := changeWindow(env, cfg, pol, now, paused)
 	if !changeOK {
+		out.Detail = "本轮不换图: " + skipReason
 		st.Log("tick: 本轮不换图(%s), 仅后台维护", skipReason)
 	}
 
@@ -303,25 +351,33 @@ func RunOnce(ctx context.Context, env Env) error {
 		img, err := generateWithRetry(ctx, be, params)
 		duration = env.Now().Sub(start).Milliseconds()
 		if err != nil {
+			out.Detail = fmt.Sprintf("出图失败: %v", err)
 			st.Log("tick: 出图失败: %v, 保留当前壁纸", err)
 			reportPrompt(env, cc, cfg, spec, genW, genH, wfID, source, duration, false)
 		} else {
 			imgData = img
 		}
 	}
+	if changeOK && imgData == nil && out.Detail == "" {
+		out.Detail = "暂无可用图源(云端不可达且备用池空)"
+	}
 
 	// ---------- 适配 + 换壁纸 ----------
 	changed := false
 	if imgData != nil {
 		if final, err := desktop.FitToScreen(imgData, sw, sh); err != nil {
+			out.Detail = "适配失败: " + err.Error()
 			st.Log("tick: 适配失败: %v, 保留当前壁纸", err)
 		} else if path, err := st.SaveWallpaper(final, now); err != nil {
+			out.Detail = "留档失败: " + err.Error()
 			st.Log("tick: 留档失败: %v", err)
 		} else if err := env.SetWP(path); err != nil {
+			out.Detail = "换壁纸失败: " + err.Error()
 			st.Log("tick: 换壁纸失败: %v", err)
 		} else {
 			st.SetCurrent(path)
 			changed = true
+			out.Changed = true
 			// 记录换图锚点(换图频率节流依据)
 			cfg.LastChangeAt = now.Format(time.RFC3339)
 			if err := cfg.Save(env.Dir); err != nil {
@@ -494,6 +550,9 @@ const taskTickHours = scheduler.TickHours
 // changeWindow 判定本轮是否进入换图窗口, 并给出跳过原因(日志用)。
 // 频率节流: 距上次成功换图不足 interval_hours 的 90% 时跳过(容忍计划任务抖动)。
 func changeWindow(env Env, cfg *config.Config, pol policy.Policy, now time.Time, paused bool) (bool, string) {
+	if env.Force {
+		return true, "" // 手动触发(立即换一张): 用户明确指令, 绕过全部自动节律闸门
+	}
 	switch {
 	case !cfg.AutoChange:
 		return false, "换图开关已关闭"

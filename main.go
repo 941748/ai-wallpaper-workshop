@@ -4,6 +4,7 @@
 //
 //	无参数          用户手动运行 = 向导(首次) / 设置面板(之后); 关窗即进程退出
 //	--tick          计划任务每小时触发: 无窗口静默出图换壁纸后退出
+//	--tick --force  设置页"立即换一张": 同上但绕过全部自动节律闸门, 结果写 force_result.json
 //	--apply-update  内部换装助手: 等待旧进程退出后原子替换 exe(静默自更新)
 //	--uninstall     卸载: 弹确认框, 删计划任务/快捷方式/注册表项后拉起清理助手并退出
 //	--cleanup       内部卸载助手: 等待原进程退出后删除 exe(及可选整数据目录)
@@ -27,6 +28,7 @@ import (
 
 func main() {
 	tickMode := flag.Bool("tick", false, "计划任务单次运行(无窗口静默)")
+	force := flag.Bool("force", false, "内部: 立即换一张(绕过全部自动节律闸门)")
 	applyUpdate := flag.Bool("apply-update", false, "内部: 换装助手模式")
 	target := flag.String("target", "", "内部: 换装目标路径")
 	newFile := flag.String("new", "", "内部: 新版本文件路径")
@@ -53,7 +55,7 @@ func main() {
 	}
 
 	if *tickMode {
-		runTick()
+		runTick(*force)
 		return
 	}
 
@@ -61,12 +63,16 @@ func main() {
 }
 
 // runTick 计划任务单次流程: 全程静默, 任何失败均保留旧壁纸。
-func runTick() {
+// force=true(设置页"立即换一张")时绕过节律闸门, 并把结果落盘供设置页轮询反馈。
+func runTick(force bool) {
 	desktop.SetLowPriority() // BelowNormal: 不占用用户资源
 
 	dir := config.DefaultDir()
 	st, err := store.Open(dir)
 	if err != nil {
+		if force {
+			_ = tick.WriteOutcome(dir, tick.Outcome{Detail: "打开数据目录失败: " + err.Error()})
+		}
 		return
 	}
 	env := tick.Env{
@@ -76,6 +82,10 @@ func runTick() {
 			return ui.ShowAskDialog(req) // 到期回访: tick 进程内弹小窗, 关闭后即退
 		},
 		SelfUpdate: true,
+		Force:      force,
+	}
+	if force {
+		env.Report = func(o tick.Outcome) { _ = tick.WriteOutcome(dir, o) }
 	}
 	_ = tick.RunOnce(context.Background(), env)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"wallpaper/internal/store"
 	"wallpaper/internal/survey"
 	"wallpaper/internal/taxonomy"
+	"wallpaper/internal/tick"
 	"wallpaper/internal/update"
 )
 
@@ -277,13 +279,7 @@ func (s *settings) buildCurrentPage(tab *walk.TabWidget) error {
 	dislikeBtn.Clicked().Attach(func() { s.rateCurrent(signals.TypeDisliked, "不喜欢") })
 	swapBtn, _ := walk.NewPushButton(btnRow)
 	swapBtn.SetText("立即换一张")
-	swapBtn.Clicked().Attach(func() {
-		if err := scheduler.RunNow(); err != nil {
-			showError(s.mw, "%v", err)
-		} else {
-			s.curLbl.SetText("已触发换图, 稍后桌面会自动刷新(可重开本窗口查看)")
-		}
-	})
+	swapBtn.Clicked().Attach(func() { s.swapNow(swapBtn) })
 
 	s.curLbl, _ = walk.NewLabel(page)
 	s.curLbl.SetText("")
@@ -321,6 +317,85 @@ func (s *settings) rateCurrent(typ, word string) {
 	} else {
 		s.curLbl.SetText("已记录 " + word + " — 之后会避开这类画面 ✓")
 	}
+}
+
+// swapNow 立即换一张: 直接拉起隐藏的 --tick --force(绕过全部自动节律闸门),
+// 异步轮询结果文件, 完成后按真实结果刷新提示与壁纸大图。
+func (s *settings) swapNow(btn *walk.PushButton) {
+	if !btn.Enabled() {
+		return // 出图进行中, 防重复点击
+	}
+	btn.SetEnabled(false)
+	s.curLbl.SetText("正在出图…(约 1-2 分钟, 完成后自动生效)")
+	_ = os.Remove(tick.OutcomePath(s.dir)) // 清掉上次残留, 避免读到旧结果
+	exe, err := os.Executable()
+	if err == nil {
+		var cmd *exec.Cmd
+		if cmd, err = scheduler.RunTickNow(exe); err == nil {
+			go s.awaitSwap(btn, cmd)
+			return
+		}
+	}
+	btn.SetEnabled(true)
+	s.curLbl.SetText("触发失败: " + err.Error())
+}
+
+// awaitSwap 等待换图进程与结果文件(500ms 轮询, 上限 15 分钟), 回 UI 线程收尾。
+func (s *settings) awaitSwap(btn *walk.PushButton, cmd *exec.Cmd) {
+	waitCh := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(waitCh) }()
+
+	var res *tick.Outcome
+	timeout := time.After(15 * time.Minute)
+	poll := time.NewTicker(500 * time.Millisecond)
+	defer poll.Stop()
+	for res == nil {
+		select {
+		case <-waitCh:
+			// 结果文件在进程退出前写好; 读不到 = 进程异常退出
+			if o, err := tick.ReadOutcome(s.dir); err == nil {
+				res = &o
+			} else {
+				res = &tick.Outcome{Detail: "换图进程异常退出(未写结果)"}
+			}
+		case <-poll.C:
+			if o, err := tick.ReadOutcome(s.dir); err == nil {
+				res = &o
+			}
+		case <-timeout:
+			res = &tick.Outcome{Detail: "仍在出图中(超过 15 分钟), 可稍后查看桌面"}
+		}
+	}
+	s.mw.Synchronize(func() {
+		btn.SetEnabled(true)
+		if res.Changed {
+			s.curLbl.SetText("✓ 已换壁纸 — 新图已生效")
+			s.refreshCurrentImage()
+		} else {
+			s.curLbl.SetText("未换图: " + res.Detail)
+		}
+	})
+}
+
+// refreshCurrentImage 换图成功后重载当前壁纸大图与路径(喜欢/不喜欢随之指向新图)。
+func (s *settings) refreshCurrentImage() {
+	if s.curIV == nil {
+		return
+	}
+	p := s.st.CurrentPath()
+	if p == "" {
+		return
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return
+	}
+	bmp, err := scalePlain(data, 560, 315)
+	if err != nil {
+		return
+	}
+	s.curIV.SetImage(bmp)
+	s.curPath = p
 }
 
 // keywordListModel 自定义关键词列表模型。

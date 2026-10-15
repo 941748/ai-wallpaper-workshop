@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,21 +28,21 @@ import (
 // ---------- mock 云端 ----------
 
 type mockCloud struct {
-	mu            sync.Mutex
-	nextCalls     int
-	pregenSubmits int
-	pregenFetches int
-	pregenSeq     int
-	forceShake    bool
-	prompts       []cloud.PromptRecord
-	signalsGot    [][]signals.Event
-	pregenReady   bool
+	mu               sync.Mutex
+	nextCalls        int
+	pregenSubmits    int
+	pregenFetches    int
+	pregenSeq        int
+	forceShake       bool
+	prompts          []cloud.PromptRecord
+	signalsGot       [][]signals.Event
+	pregenReady      bool
 	proactiveReady   bool // 云端主动预生成 ready(无 job_id 拉取路径)
 	proactiveFetches int
 	proactiveSeq     int
-	pngData       []byte
-	nextFail      bool
-	srv           *httptest.Server
+	pngData          []byte
+	nextFail         bool
+	srv              *httptest.Server
 }
 
 func writeEnv(w http.ResponseWriter, data any) {
@@ -142,8 +143,8 @@ func (m *mockCloud) handler() http.Handler {
 	mux.HandleFunc("/api/v1/policy", func(w http.ResponseWriter, r *http.Request) {
 		writeEnv(w, map[string]any{
 			"policy_version": 1,
-			"active_blocks": [][]string{{"09:00", "12:00"}, {"14:00", "18:00"}, {"20:00", "24:00"}},
-			"pool_target": 3, "pause_options_hours": []int{8, 24, 48}, "max_pause_hours": 48,
+			"active_blocks":  [][]string{{"09:00", "12:00"}, {"14:00", "18:00"}, {"20:00", "24:00"}},
+			"pool_target":    3, "pause_options_hours": []int{8, 24, 48}, "max_pause_hours": 48,
 		})
 	})
 	mux.HandleFunc("/api/v1/client/latest", func(w http.ResponseWriter, r *http.Request) {
@@ -179,9 +180,9 @@ type testEnv struct {
 
 func (te *testEnv) env(cloudURL string, m *mockCloud) Env {
 	return Env{
-		Dir: te.dir,
-		Log: func(format string, args ...any) { tLog(format, args...) },
-		Now: func() time.Time { return te.now },
+		Dir:    te.dir,
+		Log:    func(format string, args ...any) { tLog(format, args...) },
+		Now:    func() time.Time { return te.now },
 		Screen: func() (int, int) { return 1920, 1080 },
 		Quiet:  func() bool { return false },
 		SetWP: func(path string) error {
@@ -468,6 +469,44 @@ func TestRunOnceCloudDownUsesPool(t *testing.T) {
 	}
 }
 
+// TestRunOnceForceBypassesGates 手动触发(立即换一张): 自动闸门全绕过, Report 回传真实结果。
+func TestRunOnceForceBypassesGates(t *testing.T) {
+	m := &mockCloud{pngData: gradientPNG(t, 1344, 768)}
+	m.srv = httptest.NewServer(m.handler())
+	defer m.srv.Close()
+
+	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 13, 30, 0, 0, time.Local)} // 非活跃时段
+	setupClient(t, m.srv.URL, te)
+	cfg, _ := config.Load(te.dir)
+	cfg.AutoChange = false                         // 自动换图关闭
+	cfg.LastChangeAt = te.now.Format(time.RFC3339) // 频率未到
+	if err := cfg.Save(te.dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// 非 force: 被闸门拦下, Report 反馈真实原因
+	env := te.env(m.srv.URL, m)
+	var got Outcome
+	env.Report = func(o Outcome) { got = o }
+	if err := RunOnce(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	if te.wpPath != "" || got.Changed || !strings.Contains(got.Detail, "换图开关已关闭") {
+		t.Fatalf("non-force should be gated: wp=%q got=%+v", te.wpPath, got)
+	}
+
+	// force: 同场景(关闭+非活跃+频率未到+锁屏)照换, Report 报成功
+	env.Force = true
+	env.Quiet = func() bool { return true }
+	got = Outcome{}
+	if err := RunOnce(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	if te.wpPath == "" || !got.Changed || got.Detail != "" {
+		t.Fatalf("force should change wallpaper: wp=%q got=%+v", te.wpPath, got)
+	}
+}
+
 // TestChangeWindow 换图窗口判定: 开关/暂停/时段/锁屏/频率节流。
 func TestChangeWindow(t *testing.T) {
 	cfg := config.Default()
@@ -501,6 +540,11 @@ func TestChangeWindow(t *testing.T) {
 	}
 	if ok, _ := changeWindow(env, cfg3, pol, at(11, 0), false); !ok {
 		t.Fatal("2h gap should pass throttle")
+	}
+	// 手动触发(--force): 关闭/暂停/锁屏/非活跃时段全部绕过
+	forceEnv := Env{Force: true, Quiet: func() bool { return true }}
+	if ok, why := changeWindow(forceEnv, cfgOff, pol, at(13, 0), true); !ok || why != "" {
+		t.Fatalf("force got ok=%v why=%s", ok, why)
 	}
 }
 

@@ -162,13 +162,15 @@ func VerifyRegistered(exePath string) (string, error) {
 	return state, nil
 }
 
-// RunNow 立即触发一次(tick 会自行处理锁与安静检测)。
-func RunNow() error {
-	out, err := run("schtasks", "/Run", "/TN", config.TaskName)
-	if err != nil {
-		return fmt.Errorf("schtasks /Run 失败: %v (%s)", err, out)
+// RunTickNow 直接拉起本机隐藏 tick(--force, 立即换一张), 返回已启动的进程供调用方等待退出。
+// 不经 schtasks: 手动触发不依赖计划任务注册(任务被杀软清除时按钮照样可用)。
+func RunTickNow(exePath string) (*exec.Cmd, error) {
+	cmd := exec.Command(exePath, "--tick", "--force")
+	hideWindow(cmd)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("启动换图进程失败: %v", err)
 	}
-	return nil
+	return cmd, nil
 }
 
 // QueryState 查询任务是否存在及其状态描述(如 "就绪"/"已禁用"/"正在运行")。
