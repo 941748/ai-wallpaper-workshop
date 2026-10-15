@@ -66,7 +66,6 @@ var Dimensions = []Dimension{
 			{ID: "flat", NameCN: "扁平插画", Prompt: "flat illustration, children's picture book style, clean shapes"},
 			{ID: "neochinese", NameCN: "新中式", Prompt: "modern chinese aesthetic, elegant contemporary oriental design"},
 			{ID: "neonart", NameCN: "霓虹光绘", Prompt: "neon light painting, glowing light trails, luminous long-exposure photography"},
-			{ID: "poster", NameCN: "电影海报", Prompt: "cinematic movie poster style, dramatic composition, epic title card feel"},
 		},
 	},
 	{
