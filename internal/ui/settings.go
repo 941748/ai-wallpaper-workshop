@@ -1118,13 +1118,20 @@ func (s *settings) checkUpdateManual(btn *walk.PushButton) {
 			return
 		}
 		confirmed := false
+		dialogCode := 0
+		// walk.Synchronize 只是把闭包异步排队到 UI 线程后立即返回, 不等执行完;
+		// 必须等闭包真正跑完再读结果, 否则 confirmed 恒为 false(弹窗还没关就判了取消)
+		done := make(chan struct{})
 		s.mw.Synchronize(func() {
+			defer close(done)
 			msg := fmt.Sprintf("发现新版本 %s (当前 %s)。\n\n是 = 立即下载更新(约 10 MB), 下载完成后关闭窗口自动换装, 下次打开即新版\n否 = 取消",
 				latest.Version, update.CurrentVersion)
-			confirmed = walk.MsgBox(s.mw, config.AppNameCN, msg, walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) == walk.DlgCmdYes
+			dialogCode = walk.MsgBox(s.mw, config.AppNameCN, msg, walk.MsgBoxYesNo|walk.MsgBoxIconQuestion)
+			confirmed = dialogCode == walk.DlgCmdYes
 		})
+		<-done
 		if !confirmed {
-			s.st.Log("手动更新: 用户在确认框点了否/关闭")
+			s.st.Log("手动更新: 用户在确认框点了否/关闭 (MsgBox 返回码=%d)", dialogCode)
 			restore()
 			return
 		}
@@ -1164,12 +1171,12 @@ func (s *settings) checkUpdateManual(btn *walk.PushButton) {
 			restore()
 			return
 		}
-		s.st.Log("手动更新: 已暂存新版本 %s, 弹完成提示", latest.Version)
-		// 走统一关闭流程(未保存修改会询问); 进程退出后助手完成换装
+		s.st.Log("手动更新: 已暂存新版本 %s, 关闭窗口换装", latest.Version)
+		// 下载完成不弹窗打断: 按钮提示后走统一关闭流程(未保存修改会询问), 进程退出后助手完成换装
 		s.mw.Synchronize(func() {
-			walk.MsgBox(s.mw, config.AppNameCN,
-				fmt.Sprintf("已更新到 %s，下次打开生效。\n\n确定后关闭窗口完成换装。", latest.Version),
-				walk.MsgBoxOK|walk.MsgBoxIconInformation)
+			if !s.mw.IsDisposed() {
+				btn.SetText("更新完成, 正在关闭…")
+			}
 			s.confirmClose()
 			if !s.mw.IsDisposed() {
 				// 用户取消关闭: 换装助手等不到本进程退出会超时放弃, 后台 tick 下轮自动更新会重新下载完成换装
