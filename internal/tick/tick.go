@@ -270,8 +270,10 @@ func RunOnce(ctx context.Context, env Env) error {
 	}
 
 	// ---------- 满意度回访(仅换图窗口内; 关闭回访开关则整体跳过) ----------
+	// 手动"立即换一张"(force)不弹回访: 用户已明确要按当前偏好换图, 不打扰;
+	// 后台自动换图仍按记忆曲线周期回访, 收集偏好漂移信号。
 	forceShake := false
-	if changeOK {
+	if changeOK && !env.Force {
 		forceShake = handleSatisfaction(env, cfg, st, now)
 	}
 

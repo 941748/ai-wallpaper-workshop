@@ -17,6 +17,10 @@ const askTimeout = 120 * time.Second
 // ShowAskDialog 满意度回访小窗(tick 到期时调用), 返回用户选择。
 // 四个选项: 满意(曲线拉长) / 换个风格(立即换+强漂移) / 调整一下(打开设置) / 以后再说(顺延3天)。
 func ShowAskDialog(req tick.AskRequest) tick.AskChoice {
+	// tick 子进程(--tick [--force])从不构建设置/向导窗口, initTheme() 无人调用,
+	// 自绘标题栏用到的 themeFont*/brushCloseHover 等全为 nil → 绘制时 handleForDPI(nil) panic。
+	// 这里补调一次(sync.Once 幂等); GUI 主进程早已初始化过, 无副作用。
+	initTheme()
 	choice := tick.ChoiceLater
 	dlg, err := walk.NewDialog(nil)
 	if err != nil {
