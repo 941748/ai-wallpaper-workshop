@@ -50,7 +50,7 @@ type settings struct {
 	baseAnswers  map[string]survey.Attitude // 关闭窗口时判断"未保存修改"的基线
 	selectedPacks map[string]bool           // 选中的风格包(一图一包基线; 与筹码微调互不写入)
 	basePacks    map[string]bool            // 未保存修改基线的选中包快照
-	packBtns     []*walk.PushButton         // 包按钮(刷新 ✓ 选中态)
+	packChips    *packRow                   // 包选择行(自绘, 选中态以颜色表达)
 	kwLB         *walk.ListBox
 	kwEdit       *walk.LineEdit
 
@@ -175,18 +175,12 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 	hint, _ := walk.NewLabel(page)
 	hint.SetText("筹码: 点一下 = 喜欢 ✓, 再点 = 不喜欢 ✕, 再点 = 取消; 色调/情绪/构图只勾 1 项即锁定(不勾 = 跟随风格包); 改完点\"保存偏好\"生效。")
 
-	// 风格包(多选 toggle: 选中 = 出图按整包轮换; 与筹码微调互不写入; 改动需点"保存偏好"落盘)
-	packRow, _ := walk.NewComposite(page)
-	_ = packRow.SetLayout(walk.NewHBoxLayout())
-	themedLabel(packRow, "风格包(可多选, 每张图按整包出图):", nil, colBody)
+	// 风格包(多选 toggle: 选中 = 强调色填充, 与筹码同步高亮; 改动需点"保存偏好"落盘)。
+	// 直接作为页面 VBox 的子项(与筹码组件同路径): 高分屏下 HBox 交叉轴的 DPI
+	// 换算会把行高压乱并裁切筹码, VBox 主轴(min/max)换算则处处正确。
 	s.selectedPacks = initSelectedPacks(profile)
-	s.packBtns = nil
-	for _, pack := range taxonomy.PresetPacks {
-		btn, _ := walk.NewPushButton(packRow)
-		btn.SetText(packButtonText(pack.Name, s.selectedPacks[pack.Name]))
-		name := pack.Name
-		btn.Clicked().Attach(func() { s.togglePack(name) })
-		s.packBtns = append(s.packBtns, btn)
+	if row, err := newPackRow(page, func() map[string]bool { return s.selectedPacks }, s.togglePack); err == nil {
+		s.packChips = row
 	}
 
 	// 三态点选(与初始化向导同一交互: 维度标签 + 筹码网格)
@@ -201,6 +195,8 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 	if s.chips, err = newSurveyChips(page, s.answers, nil); err != nil {
 		return err
 	}
+	// 被选中风格包覆盖的词条与包行同色高亮(实时读选中集)
+	s.chips.covered = func(key string) bool { return packCovered(s.selectedPacks, key) }
 
 	// 自定义关键词(词典之外的个人喜好, 改动即时生效)
 	kwTitle, _ := walk.NewLabel(page)
@@ -469,21 +465,18 @@ func (s *settings) saveKeywordMeta(detail string) {
 
 // togglePack 风格包多选 toggle: 选中→取消, 未选→选中; 仅改选中集, 不写筹码勾选。
 // 与向导 togglePack 同语义, 改动需点"保存偏好"落盘。
+// 包行与筹码网格同步重绘(选中包覆盖的词条同色高亮)。
 func (s *settings) togglePack(name string) {
 	if s.selectedPacks[name] {
 		delete(s.selectedPacks, name)
 	} else {
 		s.selectedPacks[name] = true
 	}
-	s.refreshPackBtns()
-}
-
-// refreshPackBtns 刷新包按钮 ✓ 选中态文案。
-func (s *settings) refreshPackBtns() {
-	for i, pack := range taxonomy.PresetPacks {
-		if i < len(s.packBtns) {
-			s.packBtns[i].SetText(packButtonText(pack.Name, s.selectedPacks[pack.Name]))
-		}
+	if s.packChips != nil {
+		s.packChips.refresh()
+	}
+	if s.chips != nil {
+		s.chips.refresh()
 	}
 }
 

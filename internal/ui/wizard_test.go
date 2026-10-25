@@ -188,8 +188,28 @@ func TestPackSummary(t *testing.T) {
 	if !strings.Contains(got, "潮酷未来") || !strings.Contains(got, defaultPackName) {
 		t.Errorf("摘要应含全部选中包名, got %q", got)
 	}
-	if packButtonText("包", true) != "✓ 包" || packButtonText("包", false) != "包" {
-		t.Error("包按钮选中态文案异常")
+}
+
+// TestPackCovered 校验"词条被选中包覆盖"判定(筹码同步变色依据)。
+func TestPackCovered(t *testing.T) {
+	sel := map[string]bool{"潮酷未来": true}
+	if !packCovered(sel, "style/cyberpunk") {
+		t.Error("包内词条应判覆盖")
+	}
+	if !packCovered(sel, "composition/wide") {
+		t.Error("包内构图词条应判覆盖")
+	}
+	if packCovered(sel, "style/ink") {
+		t.Error("包外词条不应判覆盖")
+	}
+	if packCovered(map[string]bool{}, "style/cyberpunk") {
+		t.Error("无选中包时不应覆盖")
+	}
+	if packCovered(sel, "bad-key-no-slash") {
+		t.Error("非法键不应判覆盖")
+	}
+	if packCovered(map[string]bool{"不存在的包": true}, "style/ink") {
+		t.Error("失效包名应被跳过, 不应误判覆盖")
 	}
 }
 

@@ -47,6 +47,10 @@ func answersFromProfile(profile *config.Profile) map[string]survey.Attitude {
 // defaultPackName 全新用户默认选中的风格包(避免空白起步, 可再自行调整或清空)。
 const defaultPackName = "治愈日常"
 
+// packRowLabel 风格包行的标签文案(向导与设置页共用, 宽度按此文测量锁定;
+// 文案刻意短——长文案会在窄窗口折行, 语义已由汇总条/提示行承载)。
+const packRowLabel = "风格包:"
+
 // initSelectedPacks 初始选中风格包:
 //   - 用户显式选择(profile.Packs 非 nil, 含显式清空)直接采用;
 //   - 旧档(packs 字段为 nil)按画像权重推断最匹配的包(运行时推断, 不改写用户数据);
@@ -121,12 +125,24 @@ func copyPackSel(sel map[string]bool) map[string]bool {
 	return out
 }
 
-// packButtonText 包按钮文案(选中加 ✓ 前缀做选中态)。
-func packButtonText(name string, on bool) string {
-	if on {
-		return "✓ " + name
+// packCovered 该词条(dim/val 键)是否被任一选中风格包覆盖(筹码同步变色用)。
+func packCovered(sel map[string]bool, key string) bool {
+	dim, val, ok := strings.Cut(key, "/")
+	if !ok {
+		return false
 	}
-	return name
+	for name := range sel {
+		p := taxonomy.PackByName(name)
+		if p == nil {
+			continue
+		}
+		for _, pv := range p.Values(dim) {
+			if pv == val {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // packSummary 汇总条/回显用的选中包摘要。

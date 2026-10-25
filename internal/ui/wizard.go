@@ -19,7 +19,6 @@ import (
 	"wallpaper/internal/signals"
 	"wallpaper/internal/store"
 	"wallpaper/internal/survey"
-	"wallpaper/internal/taxonomy"
 	"wallpaper/internal/update"
 )
 
@@ -54,7 +53,7 @@ type wizard struct {
 	lastSurvey    map[string]survey.Attitude // 最近一次已落盘快照(避免重复写入/重复信号)
 	selectedPacks map[string]bool            // 选中的风格包(一图一包基线; 与筹码微调互不写入)
 	lastPacks     map[string]bool            // 最近一次已落盘的选中包快照
-	packBtns      []*walk.PushButton         // 包按钮(刷新 ✓ 选中态)
+	packChips     *packRow                   // 包选择行(自绘, 选中态以颜色表达)
 	surveyDimIdx  int                        // 问卷当前维度标签(跨返回导航保持)
 	chips         *surveyChips
 	likesLbl      *walk.Label
@@ -435,17 +434,10 @@ func (w *wizard) testAndRegister() bool {
 func (w *wizard) buildSurveyStep() {
 	w.ensureSurveyAnswers()
 
-	// 风格包(多选 toggle: 选中 = 出图按整包轮换; 与筹码微调互不写入)
-	packRow, _ := walk.NewComposite(w.content)
-	_ = packRow.SetLayout(walk.NewHBoxLayout())
-	themedLabel(packRow, "风格包(可多选, 每张图按整包出图):", nil, colBody)
-	w.packBtns = nil
-	for _, pack := range taxonomy.PresetPacks {
-		btn, _ := walk.NewPushButton(packRow)
-		btn.SetText(packButtonText(pack.Name, w.selectedPacks[pack.Name]))
-		name := pack.Name
-		btn.Clicked().Attach(func() { w.togglePack(name) })
-		w.packBtns = append(w.packBtns, btn)
+	// 风格包(多选 toggle: 选中 = 强调色填充, 与筹码同步高亮; 与筹码微调互不写入)。
+	// 直接作为 content VBox 子项(与设置页同路径, 防高分屏 HBox 裁切)。
+	if row, err := newPackRow(w.content, func() map[string]bool { return w.selectedPacks }, w.togglePack); err == nil {
+		w.packChips = row
 	}
 
 	chips, err := newSurveyChips(w.content, w.surveyAnswers, w.updateSurveyCount)
@@ -456,6 +448,8 @@ func (w *wizard) buildSurveyStep() {
 	// 返回重进时恢复上次查看的维度标签
 	chips.dimIdx = w.surveyDimIdx
 	chips.onDim = func(i int) { w.surveyDimIdx = i }
+	// 被选中风格包覆盖的词条与包行同色高亮(实时读选中集)
+	chips.covered = func(key string) bool { return packCovered(w.selectedPacks, key) }
 	w.chips = chips
 
 	sumRow, _ := walk.NewComposite(w.content)
@@ -516,26 +510,21 @@ func (w *wizard) clearDim() {
 	w.updateSurveyCount()
 }
 
-// presetPack 与 presetPacks 风格包预设已移至 taxonomy.PresetPacks(纯数据, 词典单源)。
-
 // togglePack 风格包多选 toggle: 选中→取消, 未选→选中; 仅改选中集, 不写筹码勾选。
+// 包行与筹码网格同步重绘(选中包覆盖的词条同色高亮)。
 func (w *wizard) togglePack(name string) {
 	if w.selectedPacks[name] {
 		delete(w.selectedPacks, name)
 	} else {
 		w.selectedPacks[name] = true
 	}
-	w.refreshPackBtns()
-	w.updateSurveyCount()
-}
-
-// refreshPackBtns 刷新包按钮 ✓ 选中态文案。
-func (w *wizard) refreshPackBtns() {
-	for i, pack := range taxonomy.PresetPacks {
-		if i < len(w.packBtns) {
-			w.packBtns[i].SetText(packButtonText(pack.Name, w.selectedPacks[pack.Name]))
-		}
+	if w.packChips != nil {
+		w.packChips.refresh()
 	}
+	if w.chips != nil {
+		w.chips.refresh()
+	}
+	w.updateSurveyCount()
 }
 
 // nextFromSurvey 问卷步骤的下一步: 校准模式合并推理返回问卷; 否则校验并保存画像。

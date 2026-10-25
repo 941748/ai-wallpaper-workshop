@@ -16,6 +16,7 @@ import (
 type surveyChips struct {
 	cw       *walk.CustomWidget
 	answers  map[string]survey.Attitude // 单一数据源(wizard.surveyAnswers)
+	covered  func(key string) bool      // 该词条是否被选中风格包覆盖(中立态同步变色); nil 视为全不覆盖
 	dimIdx   int
 	hoverKey string // 悬停筹码 key
 	hoverTab int    // 悬停维度标签, -1 无
@@ -124,22 +125,29 @@ func (sc *surveyChips) paint(canvas *walk.Canvas, update walk.Rectangle) error {
 			cy += chipH + s(chipsGapY)
 		}
 		rect := walk.Rectangle{X: cx, Y: cy, Width: chipW, Height: chipH}
-		switch att {
-		case survey.Like:
-			_ = canvas.FillRoundedRectanglePixels(brushAccent, rect, corner)
-			_ = canvas.DrawTextPixels(full, themeFontReg, colWhite, rect, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
-		case survey.Dislike:
+		// 着色规则: 点踩红色 > 包内青绿 > 包外未选中底色(手动喜欢仅加 ✓ 标记, 不填充强调色)
+		switch {
+		case att == survey.Dislike:
 			_ = canvas.FillRoundedRectanglePixels(brushChipDislikeBg, rect, corner)
 			_ = canvas.DrawRoundedRectanglePixels(penChipDislikeBorder, rect, corner)
 			_ = canvas.DrawTextPixels(full, themeFontReg, colRed, rect, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
+		case sc.covered != nil && sc.covered(key):
+			// 在选中风格包内: 与包行同色(手动喜欢叠加 ✓)
+			_ = canvas.FillRoundedRectanglePixels(brushAccent, rect, corner)
+			_ = canvas.DrawTextPixels(full, themeFontReg, colWhite, rect, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
 		default:
+			// 不在任何选中包: 未选中底色; 手动喜欢以 ✓ 文字标记
 			_ = canvas.FillRoundedRectanglePixels(brushChipBg, rect, corner)
 			border := penChipBorder
 			if key == sc.hoverKey {
 				border = penAccent
 			}
 			_ = canvas.DrawRoundedRectanglePixels(border, rect, corner)
-			_ = canvas.DrawTextPixels(full, themeFontReg, colBody, rect, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
+			textCol := colBody
+			if att == survey.Like {
+				textCol = colAccent
+			}
+			_ = canvas.DrawTextPixels(full, themeFontReg, textCol, rect, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
 		}
 		sc.chipHit = append(sc.chipHit, chipHitRect{key: key, rect: rect})
 		cx += chipW + s(chipsGapX)
