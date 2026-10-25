@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -46,5 +48,50 @@ func TestProfileCustomKeywordsRoundTrip(t *testing.T) {
 	}
 	if len(got.CustomKeywords) != 2 || got.CustomKeywords[0] != "猫咪" || got.CustomKeywords[1] != "高达" {
 		t.Fatalf("round trip keywords = %v", got.CustomKeywords)
+	}
+}
+
+// TestProfilePacksRoundTrip 校验 packs 字段三态: 旧档缺字段=nil(待推断),
+// 显式选择=列表, 显式清空=非 nil 空数组(不推断)。空数组不可因序列化丢失语义。
+func TestProfilePacksRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+
+	// 旧档: 手写无 packs 字段的 profile.json → 加载后 Packs 应为 nil
+	legacy := []byte(`{"version":1,"weights":{},"disliked":[]}`)
+	if err := os.WriteFile(filepath.Join(dir, "profile.json"), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadProfile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Packs != nil {
+		t.Fatalf("旧档缺 packs 字段应为 nil, got %v", got.Packs)
+	}
+
+	// 显式选择 round trip
+	got.Packs = []string{"治愈日常", "自然山河"}
+	if err := got.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	got2, err := LoadProfile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got2.Packs) != 2 || got2.Packs[0] != "治愈日常" || got2.Packs[1] != "自然山河" {
+		t.Fatalf("显式选择 round trip = %v", got2.Packs)
+	}
+
+	// 显式清空 round trip(非 nil 空数组语义须保留)
+	got2.Packs = []string{}
+	if err := got2.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	got3, err := LoadProfile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got3.Packs == nil || len(got3.Packs) != 0 {
+		t.Fatalf("显式清空 round trip 后应为非 nil 空数组, got %v", got3.Packs)
 	}
 }

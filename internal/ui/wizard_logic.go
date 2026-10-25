@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"wallpaper/internal/config"
+	"wallpaper/internal/prompt"
 	"wallpaper/internal/survey"
 	"wallpaper/internal/taxonomy"
 )
@@ -43,100 +44,98 @@ func answersFromProfile(profile *config.Profile) map[string]survey.Attitude {
 	return answers
 }
 
-// presetPack 一个风格包(面向 90/00 后审美的预设组合)。
-type presetPack struct {
-	Name string   // 界面按钮文案
-	Keys []string // config.Key(dim, val) 列表
-}
-
-// presetPacks 风格包(每包覆盖 5 维, 点选即勾为喜欢, 可多选叠加并再微调)。
-var presetPacks = []presetPack{
-	{Name: "潮酷未来", Keys: []string{
-		config.Key(taxonomy.DimStyle, "cyberpunk"),
-		config.Key(taxonomy.DimStyle, "neonart"),
-		config.Key(taxonomy.DimSubject, "citynight"),
-		config.Key(taxonomy.DimSubject, "space"),
-		config.Key(taxonomy.DimPalette, "neon"),
-		config.Key(taxonomy.DimMood, "vibrant"),
-		config.Key(taxonomy.DimComposition, "silhouette"),
-	}},
-	{Name: "二次元", Keys: []string{
-		config.Key(taxonomy.DimStyle, "anime"),
-		config.Key(taxonomy.DimStyle, "anime3d"),
-		config.Key(taxonomy.DimSubject, "mecha"),
-		config.Key(taxonomy.DimSubject, "pet"),
-		config.Key(taxonomy.DimPalette, "pastel"),
-		config.Key(taxonomy.DimMood, "vibrant"),
-		config.Key(taxonomy.DimComposition, "centered"),
-	}},
-	{Name: "国风雅韵", Keys: []string{
-		config.Key(taxonomy.DimStyle, "ink"),
-		config.Key(taxonomy.DimStyle, "neochinese"),
-		config.Key(taxonomy.DimStyle, "papercut"),
-		config.Key(taxonomy.DimSubject, "oldstreet"),
-		config.Key(taxonomy.DimSubject, "cloudsea"),
-		config.Key(taxonomy.DimPalette, "morandi"),
-		config.Key(taxonomy.DimMood, "serene"),
-		config.Key(taxonomy.DimComposition, "wide"),
-	}},
-	{Name: "仙侠问道", Keys: []string{
-		config.Key(taxonomy.DimStyle, "ink"),
-		config.Key(taxonomy.DimStyle, "neochinese"),
-		config.Key(taxonomy.DimSubject, "xianxia"),
-		config.Key(taxonomy.DimSubject, "cloudsea"),
-		config.Key(taxonomy.DimPalette, "cool"),
-		config.Key(taxonomy.DimMood, "serene"),
-		config.Key(taxonomy.DimMood, "mysterious"),
-		config.Key(taxonomy.DimComposition, "wide"),
-		config.Key(taxonomy.DimComposition, "silhouette"),
-	}},
-	{Name: "治愈日常", Keys: []string{
-		config.Key(taxonomy.DimStyle, "film"),
-		config.Key(taxonomy.DimStyle, "watercolor"),
-		config.Key(taxonomy.DimSubject, "pet"),
-		config.Key(taxonomy.DimSubject, "plants"),
-		config.Key(taxonomy.DimSubject, "food"),
-		config.Key(taxonomy.DimPalette, "warm"),
-		config.Key(taxonomy.DimMood, "cozy"),
-		config.Key(taxonomy.DimComposition, "macro"),
-	}},
-	{Name: "极简高级", Keys: []string{
-		config.Key(taxonomy.DimStyle, "minimal"),
-		config.Key(taxonomy.DimSubject, "abstract"),
-		config.Key(taxonomy.DimSubject, "building"),
-		config.Key(taxonomy.DimPalette, "dark"),
-		config.Key(taxonomy.DimMood, "mysterious"),
-		config.Key(taxonomy.DimComposition, "centered"),
-	}},
-	{Name: "留白呼吸", Keys: []string{
-		config.Key(taxonomy.DimStyle, "minimal"),
-		config.Key(taxonomy.DimStyle, "neochinese"),
-		config.Key(taxonomy.DimSubject, "seasons"),
-		config.Key(taxonomy.DimSubject, "lake"),
-		config.Key(taxonomy.DimPalette, "morandi"),
-		config.Key(taxonomy.DimPalette, "pastel"),
-		config.Key(taxonomy.DimMood, "serene"),
-		config.Key(taxonomy.DimComposition, "centered"),
-		config.Key(taxonomy.DimComposition, "wide"),
-	}},
-}
-
-// defaultPackName 初始化默认风格包: 全新用户进入问卷时无任何勾选, 预勾该包避免从零点选。
+// defaultPackName 全新用户默认选中的风格包(避免空白起步, 可再自行调整或清空)。
 const defaultPackName = "治愈日常"
 
-// applyDefaultPack 将默认风格包内词条勾为"喜欢"。仅在问卷无任何勾选(全新用户)时调用。
-func applyDefaultPack(answers map[string]survey.Attitude) {
-	for _, p := range presetPacks {
-		if p.Name != defaultPackName {
-			continue
-		}
-		for _, k := range p.Keys {
-			if _, ok := answers[k]; ok {
-				answers[k] = survey.Like
+// initSelectedPacks 初始选中风格包:
+//   - 用户显式选择(profile.Packs 非 nil, 含显式清空)直接采用;
+//   - 旧档(packs 字段为 nil)按画像权重推断最匹配的包(运行时推断, 不改写用户数据);
+//   - 全新用户(无选择且零喜欢)预选默认包。
+func initSelectedPacks(profile *config.Profile) map[string]bool {
+	sel := map[string]bool{}
+	if profile == nil {
+		sel[defaultPackName] = true
+		return sel
+	}
+	if profile.Packs != nil {
+		for _, n := range profile.Packs {
+			if taxonomy.PackByName(n) != nil {
+				sel[n] = true
 			}
 		}
-		return
+		return sel
 	}
+	if likesInProfile(profile) > 0 {
+		for _, n := range prompt.InferPacks(profile) {
+			sel[n] = true
+		}
+		return sel
+	}
+	sel[defaultPackName] = true
+	return sel
+}
+
+// likesInProfile 统计画像中达到明确偏好阈值的值数。
+func likesInProfile(profile *config.Profile) int {
+	n := 0
+	for _, d := range taxonomy.Dimensions {
+		for _, v := range d.Values {
+			if profile.Get(d.ID, v.ID) >= prompt.HighPref {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// selectedPackNames 按界面顺序返回选中包名; 恒非 nil(落盘后引擎按显式选择执行, 不再推断)。
+func selectedPackNames(sel map[string]bool) []string {
+	out := []string{}
+	for _, p := range taxonomy.PresetPacks {
+		if sel[p.Name] {
+			out = append(out, p.Name)
+		}
+	}
+	return out
+}
+
+// packSelEqual 判断两组选中包是否一致(避免重复落盘/重复信号)。
+func packSelEqual(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if !b[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// copyPackSel 深拷贝选中包快照。
+func copyPackSel(sel map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(sel))
+	for k, v := range sel {
+		out[k] = v
+	}
+	return out
+}
+
+// packButtonText 包按钮文案(选中加 ✓ 前缀做选中态)。
+func packButtonText(name string, on bool) string {
+	if on {
+		return "✓ " + name
+	}
+	return name
+}
+
+// packSummary 汇总条/回显用的选中包摘要。
+func packSummary(sel map[string]bool) string {
+	names := selectedPackNames(sel)
+	if len(names) == 0 {
+		return "风格包: 未选(按喜好自由组合)"
+	}
+	return "风格包: " + strings.Join(names, " + ")
 }
 
 // surveyLikesIn 统计勾选为"喜欢"的项数。
@@ -185,8 +184,8 @@ func focusSummary(answers map[string]survey.Attitude) string {
 	return "  将重点出图: " + strings.Join(parts, " · ")
 }
 
-// surveyRecapText 完成页回显所选偏好(按维度分组); 无喜欢项则返回空串。
-func surveyRecapText(answers map[string]survey.Attitude) string {
+// surveyRecapText 完成页回显所选风格包与偏好(按维度分组); 无包且无喜欢项则只回包状态。
+func surveyRecapText(answers map[string]survey.Attitude, packs map[string]bool) string {
 	var groups []string
 	for _, d := range taxonomy.Dimensions {
 		var names []string
@@ -199,10 +198,11 @@ func surveyRecapText(answers map[string]survey.Attitude) string {
 			groups = append(groups, d.NameCN+": "+strings.Join(names, " · "))
 		}
 	}
-	if len(groups) == 0 {
-		return ""
+	lines := []string{packSummary(packs)}
+	if len(groups) > 0 {
+		lines = append(lines, "额外微调", strings.Join(groups, "\n"))
 	}
-	return "你的偏好\n" + strings.Join(groups, "\n")
+	return strings.Join(lines, "\n")
 }
 
 // surveyEqual 判断两份勾选状态是否完全一致(用于避免重复落盘/重复信号)。

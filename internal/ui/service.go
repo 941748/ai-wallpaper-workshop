@@ -92,6 +92,7 @@ func generateWallpaper(ctx context.Context, cfg *config.Config, cc *cloud.Client
 			ProfileVersion: cfg.ProfileVer,
 			Profile:        profile.Weights,
 			Disliked:       profile.Disliked,
+			Packs:          profile.Packs,
 			ScreenW:        sw,
 			ScreenH:        sh,
 			ForceShake:     forceShake,

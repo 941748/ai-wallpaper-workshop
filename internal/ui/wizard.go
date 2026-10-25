@@ -19,6 +19,7 @@ import (
 	"wallpaper/internal/signals"
 	"wallpaper/internal/store"
 	"wallpaper/internal/survey"
+	"wallpaper/internal/taxonomy"
 	"wallpaper/internal/update"
 )
 
@@ -48,9 +49,12 @@ type wizard struct {
 
 	nav *navSidebar
 
-	// 步骤 1: 偏好问卷(五维三态)
+	// 步骤 1: 偏好问卷(风格包多选 + 五维三态筹码微调)
 	surveyAnswers map[string]survey.Attitude // 勾选状态单一数据源(跨返回导航保持)
 	lastSurvey    map[string]survey.Attitude // 最近一次已落盘快照(避免重复写入/重复信号)
+	selectedPacks map[string]bool            // 选中的风格包(一图一包基线; 与筹码微调互不写入)
+	lastPacks     map[string]bool            // 最近一次已落盘的选中包快照
+	packBtns      []*walk.PushButton         // 包按钮(刷新 ✓ 选中态)
 	surveyDimIdx  int                        // 问卷当前维度标签(跨返回导航保持)
 	chips         *surveyChips
 	likesLbl      *walk.Label
@@ -431,14 +435,17 @@ func (w *wizard) testAndRegister() bool {
 func (w *wizard) buildSurveyStep() {
 	w.ensureSurveyAnswers()
 
-	// 风格包(面向 90/00 后审美的预设组合, 一键勾选, 可多选叠加)
+	// 风格包(多选 toggle: 选中 = 出图按整包轮换; 与筹码微调互不写入)
 	packRow, _ := walk.NewComposite(w.content)
 	_ = packRow.SetLayout(walk.NewHBoxLayout())
-	themedLabel(packRow, "风格包(一键勾选, 可多选):", nil, colBody)
-	for _, pack := range presetPacks {
+	themedLabel(packRow, "风格包(可多选, 每张图按整包出图):", nil, colBody)
+	w.packBtns = nil
+	for _, pack := range taxonomy.PresetPacks {
 		btn, _ := walk.NewPushButton(packRow)
-		btn.SetText(pack.Name)
-		btn.Clicked().Attach(func() { w.applyPresetPack(pack.Keys) })
+		btn.SetText(packButtonText(pack.Name, w.selectedPacks[pack.Name]))
+		name := pack.Name
+		btn.Clicked().Attach(func() { w.togglePack(name) })
+		w.packBtns = append(w.packBtns, btn)
 	}
 
 	chips, err := newSurveyChips(w.content, w.surveyAnswers, w.updateSurveyCount)
@@ -470,29 +477,27 @@ func (w *wizard) buildSurveyStep() {
 	w.enableNext("下一步")
 }
 
-// ensureSurveyAnswers 首次进入问卷时从画像反推勾选状态(之后保持内存态)。
+// ensureSurveyAnswers 首次进入问卷时从画像反推勾选状态与选中包(之后保持内存态)。
 func (w *wizard) ensureSurveyAnswers() {
-	if w.surveyAnswers != nil {
-		return
-	}
 	if w.profile == nil {
 		w.profile, _ = config.LoadProfile(w.dir)
 	}
-	w.surveyAnswers = answersFromProfile(w.profile)
-	if surveyLikesIn(w.surveyAnswers) == 0 {
-		// 全新用户无任何勾选: 预勾默认风格包"治愈日常", 可再自行调整或清空
-		applyDefaultPack(w.surveyAnswers)
+	if w.surveyAnswers == nil {
+		w.surveyAnswers = answersFromProfile(w.profile)
+	}
+	if w.selectedPacks == nil {
+		w.selectedPacks = initSelectedPacks(w.profile)
 	}
 }
 
-// updateSurveyCount 刷新汇总条: 计数 + 每维前 2 个喜欢项的"重点出图"摘要。
+// updateSurveyCount 刷新汇总条: 选中包 + 计数 + 每维前 2 个喜欢项的"重点出图"摘要。
 func (w *wizard) updateSurveyCount() {
 	if w.likesLbl == nil {
 		return
 	}
 	w.likesLbl.SetText(fmt.Sprintf("%d", surveyLikesIn(w.surveyAnswers)))
 	w.dislikesLbl.SetText(fmt.Sprintf("%d", surveyDislikesIn(w.surveyAnswers)))
-	w.focusLbl.SetText(focusSummary(w.surveyAnswers))
+	w.focusLbl.SetText(packSummary(w.selectedPacks) + focusSummary(w.surveyAnswers))
 }
 
 // clearDim 清空当前维度所有勾选(回到中立)。
@@ -511,32 +516,41 @@ func (w *wizard) clearDim() {
 	w.updateSurveyCount()
 }
 
-// presetPack 与 presetPacks 风格包预设已移至 wizard_logic.go(纯数据, 可单测)。
+// presetPack 与 presetPacks 风格包预设已移至 taxonomy.PresetPacks(纯数据, 词典单源)。
 
-// applyPresetPack 将风格包内词条勾为喜欢(不覆盖其他已勾选项)。
-func (w *wizard) applyPresetPack(keys []string) {
-	for _, key := range keys {
-		if _, ok := w.surveyAnswers[key]; ok {
-			w.surveyAnswers[key] = survey.Like
+// togglePack 风格包多选 toggle: 选中→取消, 未选→选中; 仅改选中集, 不写筹码勾选。
+func (w *wizard) togglePack(name string) {
+	if w.selectedPacks[name] {
+		delete(w.selectedPacks, name)
+	} else {
+		w.selectedPacks[name] = true
+	}
+	w.refreshPackBtns()
+	w.updateSurveyCount()
+}
+
+// refreshPackBtns 刷新包按钮 ✓ 选中态文案。
+func (w *wizard) refreshPackBtns() {
+	for i, pack := range taxonomy.PresetPacks {
+		if i < len(w.packBtns) {
+			w.packBtns[i].SetText(packButtonText(pack.Name, w.selectedPacks[pack.Name]))
 		}
 	}
-	if w.chips != nil {
-		w.chips.refresh()
-	}
-	w.updateSurveyCount()
 }
 
 // nextFromSurvey 问卷步骤的下一步: 校准模式合并推理返回问卷; 否则校验并保存画像。
 func (w *wizard) nextFromSurvey() {
-	if surveyLikesIn(w.surveyAnswers) == 0 {
-		showInfo(w.mw, "请至少勾选 1 项\"喜欢\", 我才能知道你想看什么。")
+	if len(w.selectedPacks) == 0 && surveyLikesIn(w.surveyAnswers) == 0 {
+		showInfo(w.mw, "请至少选择 1 个风格包或勾选 1 项\"喜欢\", 我才能知道你想看什么。")
 		return
 	}
-	if surveyEqual(w.surveyAnswers, w.lastSurvey) {
+	if surveyEqual(w.surveyAnswers, w.lastSurvey) && packSelEqual(w.selectedPacks, w.lastPacks) {
 		w.setStep(2) // 与上次落盘一致, 不重复写入/记信号
 		return
 	}
 	w.profile = survey.Apply(w.profile, w.surveyAnswers)
+	// 显式落盘选中包(非 nil, 即使清空): 引擎按此执行一图一包, 不再推断
+	w.profile.Packs = selectedPackNames(w.selectedPacks)
 	if err := w.profile.Save(w.dir); err != nil {
 		showError(w.mw, "画像保存失败: %v", err)
 		return
@@ -544,10 +558,12 @@ func (w *wizard) nextFromSurvey() {
 	w.cfg.ProfileVer++
 	_ = w.cfg.Save(w.dir)
 	_ = signals.Append(w.dir, signals.Event{
-		Type:   signals.TypeReconfigure,
-		Detail: fmt.Sprintf("初始化问卷完成: 喜欢 %d 项 / 讨厌 %d 项", surveyLikesIn(w.surveyAnswers), surveyDislikesIn(w.surveyAnswers)),
+		Type: signals.TypeReconfigure,
+		Detail: fmt.Sprintf("初始化问卷完成: 风格包 %d 个 · 喜欢 %d 项 / 讨厌 %d 项",
+			len(w.selectedPacks), surveyLikesIn(w.surveyAnswers), surveyDislikesIn(w.surveyAnswers)),
 	})
 	w.lastSurvey = cloneSurvey(w.surveyAnswers)
+	w.lastPacks = copyPackSel(w.selectedPacks)
 	w.setStep(2)
 }
 
@@ -841,8 +857,8 @@ func (w *wizard) buildDoneStep() {
 	w.enableNext("完成")
 }
 
-// surveyRecap 完成页回显所选偏好(按维度分组)。
+// surveyRecap 完成页回显所选风格包与偏好(按维度分组)。
 func (w *wizard) surveyRecap() string {
 	w.ensureSurveyAnswers()
-	return surveyRecapText(w.surveyAnswers)
+	return surveyRecapText(w.surveyAnswers, w.selectedPacks)
 }

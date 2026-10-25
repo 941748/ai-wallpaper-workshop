@@ -134,3 +134,137 @@ func TestComposeCustomKeywords(t *testing.T) {
 		t.Fatal("Options 自定义关键词未生效")
 	}
 }
+
+// ---------- 一图一包采样 ----------
+
+// packProfile 构造仅选中指定风格包、无任何手动点选的画像。
+func packProfile(name string) *config.Profile {
+	p := config.NewProfile()
+	p.Packs = []string{name}
+	return p
+}
+
+func assertIn(t *testing.T, dim, val string, allowed []string, ctx string) {
+	t.Helper()
+	for _, a := range allowed {
+		if a == val {
+			return
+		}
+	}
+	t.Fatalf("%s: %s=%s 越出允许集 %v", ctx, dim, val, allowed)
+}
+
+// TestComposePackCoherence 任一采样组合的五维必须整体出自同一个包, 绝不跨包拆混。
+func TestComposePackCoherence(t *testing.T) {
+	for _, name := range []string{"国风仙侠", "自然山河", "写实美女", "国漫3D", "潮酷未来", "治愈日常", "极简留白"} {
+		p := packProfile(name)
+		pack := taxonomy.PackByName(name)
+		rng := rand.New(rand.NewSource(1))
+		for i := 0; i < 200; i++ {
+			s := Compose(p, rng, Options{})
+			for _, d := range taxonomy.Dimensions {
+				assertIn(t, d.ID, s.Combo[d.ID], pack.Values(d.ID), name+"#"+string(rune('0'+i%10)))
+			}
+		}
+	}
+}
+
+// TestComposePackSecondaryLock 色调/情绪/构图: 手动喜欢 1 项 = 锁定覆盖包基线。
+func TestComposePackSecondaryLock(t *testing.T) {
+	p := packProfile("国风仙侠") // 包基线: morandi/serene/wide,closeup
+	p.Set(taxonomy.DimPalette, "warm", HighPref)
+	p.Set(taxonomy.DimMood, "vibrant", HighPref)
+	rng := rand.New(rand.NewSource(2))
+	for i := 0; i < 100; i++ {
+		s := Compose(p, rng, Options{})
+		if s.Combo[taxonomy.DimPalette] != "warm" {
+			t.Fatalf("色调应锁定为手动喜欢的 warm, got %s", s.Combo[taxonomy.DimPalette])
+		}
+		if s.Combo[taxonomy.DimMood] != "vibrant" {
+			t.Fatalf("情绪应锁定为手动喜欢的 vibrant, got %s", s.Combo[taxonomy.DimMood])
+		}
+		// 未锁定的风格/题材仍守包基线
+		assertIn(t, taxonomy.DimStyle, s.Combo[taxonomy.DimStyle], []string{"ink", "neochinese"}, "lock")
+		assertIn(t, taxonomy.DimSubject, s.Combo[taxonomy.DimSubject], []string{"xianxia", "oldstreet", "cloudsea"}, "lock")
+	}
+}
+
+// TestComposePackManualStyleUnion 风格/题材: 手动喜欢并入包轮换池, 其余维不外溢。
+func TestComposePackManualStyleUnion(t *testing.T) {
+	p := packProfile("潮酷未来")
+	p.Set(taxonomy.DimStyle, "ink", HighPref)
+	rng := rand.New(rand.NewSource(3))
+	seen := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		s := Compose(p, rng, Options{})
+		assertIn(t, taxonomy.DimStyle, s.Combo[taxonomy.DimStyle], []string{"cyberpunk", "neonart", "ink"}, "union")
+		assertIn(t, taxonomy.DimSubject, s.Combo[taxonomy.DimSubject], []string{"citynight", "space"}, "union")
+		assertIn(t, taxonomy.DimPalette, s.Combo[taxonomy.DimPalette], []string{"neon"}, "union")
+		seen[s.Combo[taxonomy.DimStyle]] = true
+	}
+	if !seen["ink"] {
+		t.Fatal("手动并入的风格值未参与轮换")
+	}
+}
+
+// TestComposePackDislikeExcluded 包内值被点踩即从基线消失。
+func TestComposePackDislikeExcluded(t *testing.T) {
+	p := packProfile("治愈日常")
+	p.Set(taxonomy.DimSubject, "pet", LowCut-0.1)
+	rng := rand.New(rand.NewSource(4))
+	for i := 0; i < 100; i++ {
+		s := Compose(p, rng, Options{})
+		if s.Combo[taxonomy.DimSubject] == "pet" {
+			t.Fatal("点踩值 pet 不应被采出")
+		}
+		assertIn(t, taxonomy.DimSubject, s.Combo[taxonomy.DimSubject], []string{"plants", "food"}, "dislike")
+	}
+}
+
+// TestComposeShakeExcludesLastStyleInPack 包模式下"换个风格"仍在包内排除轮换。
+func TestComposeShakeExcludesLastStyleInPack(t *testing.T) {
+	p := packProfile("自然山河")
+	hist := []HistoryEntry{{At: time.Now(), Combo: map[string]string{taxonomy.DimStyle: "ink"}}}
+	for i := 0; i < 30; i++ {
+		s := Compose(p, rand.New(rand.NewSource(int64(i))), Options{ForceShake: true, History: hist})
+		if s.Combo[taxonomy.DimStyle] == "ink" {
+			t.Fatalf("换个风格应排除包内最近主风格 ink, got %s", s.Combo[taxonomy.DimStyle])
+		}
+		assertIn(t, taxonomy.DimStyle, s.Combo[taxonomy.DimStyle],
+			[]string{"realism", "watercolor", "impressionist"}, "shake")
+	}
+}
+
+// TestInferPacks 整包喜欢 → 推出该包; 零散喜欢不误推; 显式空不推断。
+func TestInferPacks(t *testing.T) {
+	p := config.NewProfile()
+	target := taxonomy.PackByName("治愈日常")
+	for _, d := range taxonomy.Dimensions {
+		for _, v := range target.Values(d.ID) {
+			p.Set(d.ID, v, HighPref)
+		}
+	}
+	names := InferPacks(p)
+	found := false
+	for _, n := range names {
+		if n == "治愈日常" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("整包喜欢应推出该包, got %v", names)
+	}
+
+	scattered := config.NewProfile()
+	scattered.Set(taxonomy.DimStyle, "pixel", HighPref)
+	scattered.Set(taxonomy.DimMood, "melancholy", HighPref)
+	if names := InferPacks(scattered); len(names) != 0 {
+		t.Fatalf("零散喜欢不应推断出包, got %v", names)
+	}
+
+	empty := config.NewProfile()
+	empty.Packs = []string{}
+	if got := activePacks(empty); len(got) != 0 {
+		t.Fatalf("显式清空不应推断, got %v", got)
+	}
+}

@@ -79,7 +79,7 @@ var Dimensions = []Dimension{
 			{ID: "animal", NameCN: "动物", Prompt: "wild animal in natural habitat, wildlife portrait, fur detail"},
 			{ID: "male", NameCN: "男性人像", Prompt: "portrait of a stylish man, masculine fashion photography"},
 			{ID: "careerwoman", NameCN: "职业女性", Prompt: "portrait of a professional career woman, business attire, confident elegant presence"},
-			{ID: "fashionwoman", NameCN: "时尚女性", Prompt: "portrait of a stylish fashionable woman, elegant fashion photography, trendy look"},
+			{ID: "fashionwoman", NameCN: "时尚女性", Prompt: "portrait of a gorgeous stylish woman with celebrity screen presence, glamorous magazine-cover editorial photography, flawless makeup, delicate refined facial features, captivating elegant beauty"},
 			{ID: "child", NameCN: "可爱小孩", Prompt: "portrait of a cute child, innocent joyful scene"},
 			{ID: "moto", NameCN: "摩托机车", Prompt: "motorcycle, powerful motorbike, dynamic automotive photography"},
 			{ID: "racecar", NameCN: "赛车", Prompt: "racing car, motorsport scene, track day action"},
@@ -158,6 +158,90 @@ var Dimensions = []Dimension{
 			{ID: "lowangle", NameCN: "仰视", Prompt: "low-angle worm's-eye view, towering upward perspective"},
 		},
 	},
+}
+
+// Pack 预设风格包: 每包覆盖五维且组内互相协调(风格同族 × 题材同族的任意组合均成立),
+// 出图按包整体采样(一图一包), 绝不跨包拆混关键词。
+type Pack struct {
+	Name         string   // 界面按钮文案
+	Style        []string // 风格值 ID(2~4, 须同族兼容)
+	Subject      []string // 题材值 ID(2~3, 同族)
+	Palette      []string // 色调值 ID(1)
+	Mood         []string // 情绪值 ID(1)
+	Composition  []string // 构图值 ID(1~2, 由题材反推镜头/场景)
+}
+
+// Values 返回该包在指定维度的值 ID 列表; 未知维度返回 nil。
+func (p Pack) Values(dimID string) []string {
+	switch dimID {
+	case DimStyle:
+		return p.Style
+	case DimSubject:
+		return p.Subject
+	case DimPalette:
+		return p.Palette
+	case DimMood:
+		return p.Mood
+	case DimComposition:
+		return p.Composition
+	}
+	return nil
+}
+
+// PresetPacks 七风格包定稿(结构模板: 风格2~4 · 题材2~3 · 色调1 · 情绪1 · 构图1~2)。
+var PresetPacks = []Pack{
+	{Name: "潮酷未来",
+		Style:       []string{"cyberpunk", "neonart"},
+		Subject:     []string{"citynight", "space"},
+		Palette:     []string{"neon"},
+		Mood:        []string{"vibrant"},
+		Composition: []string{"wide"}},
+	{Name: "国风仙侠",
+		Style:       []string{"ink", "neochinese"},
+		Subject:     []string{"xianxia", "oldstreet", "cloudsea"},
+		Palette:     []string{"morandi"},
+		Mood:        []string{"serene"},
+		Composition: []string{"wide", "closeup"}},
+	{Name: "国漫3D",
+		Style:       []string{"donghua3d", "anime3d"},
+		Subject:     []string{"mythic", "xianxia"},
+		Palette:     []string{"cinematic"},
+		Mood:        []string{"story"},
+		Composition: []string{"closeup", "wide"}},
+	{Name: "写实美女",
+		Style:       []string{"realism", "film"},
+		Subject:     []string{"fashionwoman", "nextdoorgirl", "guzhuang"},
+		Palette:     []string{"cinematic"},
+		Mood:        []string{"story"},
+		Composition: []string{"closeup", "thirds"}},
+	{Name: "治愈日常",
+		Style:       []string{"realism", "film", "watercolor"},
+		Subject:     []string{"pet", "plants", "food"},
+		Palette:     []string{"warm"},
+		Mood:        []string{"cozy"},
+		Composition: []string{"macro"}},
+	{Name: "极简留白",
+		Style:       []string{"minimal", "neochinese"},
+		Subject:     []string{"abstract", "lake"},
+		Palette:     []string{"morandi"},
+		Mood:        []string{"serene"},
+		Composition: []string{"centered", "wide"}},
+	{Name: "自然山河",
+		Style:       []string{"realism", "ink", "watercolor", "impressionist"},
+		Subject:     []string{"nature", "snowmountain"},
+		Palette:     []string{"cool"},
+		Mood:        []string{"majestic"},
+		Composition: []string{"wide", "aerial"}},
+}
+
+// PackByName 按名称取风格包; 不存在返回 nil(兼容旧档里的失效包名)。
+func PackByName(name string) *Pack {
+	for i := range PresetPacks {
+		if PresetPacks[i].Name == name {
+			return &PresetPacks[i]
+		}
+	}
+	return nil
 }
 
 // Get 按 ID 取维度; 不存在返回 nil。

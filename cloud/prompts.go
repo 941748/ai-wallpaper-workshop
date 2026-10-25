@@ -20,6 +20,7 @@ type nextReq struct {
 	Profile        map[string]float64 `json:"profile"`
 	Disliked       []string           `json:"disliked"`
 	CustomKeywords []string           `json:"custom_keywords"`
+	Packs          []string           `json:"packs"` // 选中的风格包名(一图一包; 缺省按权重推断)
 	RecentRounds   []roundItem        `json:"recent_rounds"`
 	PendingSignals []signalItem       `json:"pending_signals"`
 	ScreenW        int                `json:"screen_w"`
@@ -135,6 +136,7 @@ func extractJSON(s string) string {
 }
 
 // localCompose 本地引擎(与客户端一致的加权采样/去重规则; 组合由画像确定, 也是兜底文案的拼装器)。
+// 风格包走"一图一包"采样, 与客户端引擎同规则。
 func localCompose(req nextReq) prompt.Spec {
 	p := config.NewProfile()
 	p.Weights = map[string]float64{}
@@ -142,6 +144,7 @@ func localCompose(req nextReq) prompt.Spec {
 		p.Weights[k] = v
 	}
 	p.Disliked = req.Disliked
+	p.Packs = req.Packs
 	var hist []prompt.HistoryEntry
 	for _, r := range req.RecentRounds {
 		hist = append(hist, prompt.HistoryEntry{At: r.At, Combo: r.Combo, Source: r.Source})

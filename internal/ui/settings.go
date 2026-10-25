@@ -45,11 +45,14 @@ type settings struct {
 	curPath string
 
 	// 偏好页
-	chips       *surveyChips
-	answers     map[string]survey.Attitude
-	baseAnswers map[string]survey.Attitude // 关闭窗口时判断"未保存修改"的基线
-	kwLB        *walk.ListBox
-	kwEdit      *walk.LineEdit
+	chips        *surveyChips
+	answers      map[string]survey.Attitude
+	baseAnswers  map[string]survey.Attitude // 关闭窗口时判断"未保存修改"的基线
+	selectedPacks map[string]bool           // 选中的风格包(一图一包基线; 与筹码微调互不写入)
+	basePacks    map[string]bool            // 未保存修改基线的选中包快照
+	packBtns     []*walk.PushButton         // 包按钮(刷新 ✓ 选中态)
+	kwLB         *walk.ListBox
+	kwEdit       *walk.LineEdit
 
 	// 设置页
 	directCheck *walk.CheckBox
@@ -170,16 +173,20 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 	}
 	profile, _ := config.LoadProfile(s.dir)
 	hint, _ := walk.NewLabel(page)
-	hint.SetText("点一下 = 喜欢 ✓, 再点 = 不喜欢 ✕, 再点 = 取消; 改完点\"保存偏好\"生效。")
+	hint.SetText("筹码: 点一下 = 喜欢 ✓, 再点 = 不喜欢 ✕, 再点 = 取消; 色调/情绪/构图只勾 1 项即锁定(不勾 = 跟随风格包); 改完点\"保存偏好\"生效。")
 
-	// 风格包(与初始化向导同一套预设, 一键勾选可多选叠加; 改动需点"保存偏好"落盘)
+	// 风格包(多选 toggle: 选中 = 出图按整包轮换; 与筹码微调互不写入; 改动需点"保存偏好"落盘)
 	packRow, _ := walk.NewComposite(page)
 	_ = packRow.SetLayout(walk.NewHBoxLayout())
-	themedLabel(packRow, "风格包(一键勾选, 可多选):", nil, colBody)
-	for _, pack := range presetPacks {
+	themedLabel(packRow, "风格包(可多选, 每张图按整包出图):", nil, colBody)
+	s.selectedPacks = initSelectedPacks(profile)
+	s.packBtns = nil
+	for _, pack := range taxonomy.PresetPacks {
 		btn, _ := walk.NewPushButton(packRow)
-		btn.SetText(pack.Name)
-		btn.Clicked().Attach(func() { s.applyPresetPack(pack.Keys) })
+		btn.SetText(packButtonText(pack.Name, s.selectedPacks[pack.Name]))
+		name := pack.Name
+		btn.Clicked().Attach(func() { s.togglePack(name) })
+		s.packBtns = append(s.packBtns, btn)
 	}
 
 	// 三态点选(与初始化向导同一交互: 维度标签 + 筹码网格)
@@ -190,6 +197,7 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 		}
 	}
 	s.baseAnswers = cloneSurvey(s.answers)
+	s.basePacks = copyPackSel(s.selectedPacks)
 	if s.chips, err = newSurveyChips(page, s.answers, nil); err != nil {
 		return err
 	}
@@ -459,16 +467,23 @@ func (s *settings) saveKeywordMeta(detail string) {
 	_ = signals.Append(s.dir, signals.Event{Type: signals.TypeKeywordsAdjust, Detail: "自定义关键词: " + detail})
 }
 
-// applyPresetPack 风格包一键勾选: 包内词条勾为"喜欢", 不覆盖其他已勾项(可多选叠加);
-// 与向导 applyPresetPack 同语义, 改动需点"保存偏好"落盘。
-func (s *settings) applyPresetPack(keys []string) {
-	for _, key := range keys {
-		if _, ok := s.answers[key]; ok {
-			s.answers[key] = survey.Like
-		}
+// togglePack 风格包多选 toggle: 选中→取消, 未选→选中; 仅改选中集, 不写筹码勾选。
+// 与向导 togglePack 同语义, 改动需点"保存偏好"落盘。
+func (s *settings) togglePack(name string) {
+	if s.selectedPacks[name] {
+		delete(s.selectedPacks, name)
+	} else {
+		s.selectedPacks[name] = true
 	}
-	if s.chips != nil {
-		s.chips.refresh()
+	s.refreshPackBtns()
+}
+
+// refreshPackBtns 刷新包按钮 ✓ 选中态文案。
+func (s *settings) refreshPackBtns() {
+	for i, pack := range taxonomy.PresetPacks {
+		if i < len(s.packBtns) {
+			s.packBtns[i].SetText(packButtonText(pack.Name, s.selectedPacks[pack.Name]))
+		}
 	}
 }
 
@@ -478,6 +493,8 @@ func (s *settings) saveProfileEdits(quiet bool) bool {
 	profile, _ := config.LoadProfile(s.dir)
 	// 三态点选 → 画像(喜欢 0.9 / 中立 0.3 / 不喜欢 0.05 + 避让清单)
 	survey.Apply(profile, s.answers)
+	// 显式落盘选中包(非 nil, 即使清空): 引擎按此执行一图一包, 不再推断
+	profile.Packs = selectedPackNames(s.selectedPacks)
 	if err := profile.Save(s.dir); err != nil {
 		showError(s.mw, "偏好保存失败: %v", err)
 		return false
@@ -486,8 +503,9 @@ func (s *settings) saveProfileEdits(quiet bool) bool {
 	_ = s.cfg.Save(s.dir)
 	_ = signals.Append(s.dir, signals.Event{Type: signals.TypeWeightAdjust, Detail: "设置页调整偏好"})
 	s.baseAnswers = cloneSurvey(s.answers)
+	s.basePacks = copyPackSel(s.selectedPacks)
 	if !quiet {
-		showInfo(s.mw, "偏好已保存。出图将严格按你勾选的画风与题材生成。")
+		showInfo(s.mw, "偏好已保存。出图将按你选的风格包轮换, 并严格遵从你勾选的画风与题材。")
 	}
 	return true
 }
@@ -843,7 +861,7 @@ func (s *settings) serviceDirty() bool {
 // confirmClose 标题栏 ✕ 关闭: 有未保存修改(偏好点选/服务表单)则询问,
 // 选"是"保存后退出, "否"放弃修改退出, "取消"留在设置页; 无修改直接关闭退出。
 func (s *settings) confirmClose() {
-	profileDirty := s.answers != nil && !surveyEqual(s.answers, s.baseAnswers)
+	profileDirty := s.answers != nil && (!surveyEqual(s.answers, s.baseAnswers) || !packSelEqual(s.selectedPacks, s.basePacks))
 	svcDirty := s.serviceDirty()
 	if profileDirty || svcDirty {
 		var what []string

@@ -1,6 +1,7 @@
 // Package prompt 本地提示词引擎(云端 LLM 不可达时的兜底, 也是画像采样核心)。
-// 规则: 每维优先从明确偏好(权重 ≥ HighPref)的值中加权采样; 无明确偏好时在活跃值
-// (权重 ≥ LowCut)中加权轮换; 明显负面(低于 LowCut)的值不再采出。
+// 规则: 有风格包时"一图一包"——先抽 1 个已选包定五维基线, 再叠加用户微调
+// (风格/题材手动喜欢并入轮换池; 色调/情绪/构图手动喜欢则锁定覆盖; 点踩值一律剔除),
+// 绝不跨包拆混关键词; 无包(旧档按权重推断, 推断不出)回退逐维加权采样。
 // 由片段模板拼装正向提示词; 负面 = 通用负面 + 用户不喜欢片段;
 // 近 30 条内禁止完全重复组合。
 package prompt
@@ -86,7 +87,138 @@ type sampledCombo struct {
 	Seed   int64
 }
 
+// InferPacks 按画像权重反推最匹配的风格包(旧档 packs 字段缺失时的迁移路径, 运行时推断不落盘)。
+// 得分 = 包内高权值(≥HighPref)个数 − 包内点踩值(<LowCut)个数; 得分达包值总数一半即入选(可多选)。
+func InferPacks(profile *config.Profile) []string {
+	if profile == nil {
+		return nil
+	}
+	var out []string
+	for _, p := range taxonomy.PresetPacks {
+		total, score := 0, 0
+		for _, d := range taxonomy.Dimensions {
+			for _, v := range p.Values(d.ID) {
+				total++
+				w := profile.Get(d.ID, v)
+				if w >= HighPref {
+					score++
+				} else if w < LowCut {
+					score--
+				}
+			}
+		}
+		if score > 0 && score*2 >= total {
+			out = append(out, p.Name)
+		}
+	}
+	return out
+}
+
+// activePacks 本画像生效的风格包: 用户显式选择优先; 旧档(字段为 nil)按权重推断。
+// 显式清空(空数组)不推断, 回退逐维采样。
+func activePacks(profile *config.Profile) []*taxonomy.Pack {
+	var names []string
+	if profile.Packs != nil {
+		names = profile.Packs
+	} else {
+		names = InferPacks(profile)
+	}
+	var out []*taxonomy.Pack
+	for _, n := range names {
+		if p := taxonomy.PackByName(n); p != nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// packPool 一图一包下的单维候选池:
+//   - 风格/题材: 包内值 ∪ 手动喜欢的值 —— 手动勾选扩展轮换池;
+//   - 色调/情绪/构图: 手动喜欢非空则锁定覆盖(仅在手动喜欢值内轮换), 否则跟随包。
+//
+// 权重 < LowCut(点踩)一律剔除; 包内值被点踩即从基线消失。
+func packPool(profile *config.Profile, d taxonomy.Dimension, p *taxonomy.Pack) []string {
+	packVals := p.Values(d.ID)
+	inPack := func(id string) bool {
+		for _, pv := range packVals {
+			if pv == id {
+				return true
+			}
+		}
+		return false
+	}
+	var base, manual []string
+	for _, v := range d.Values {
+		w := profile.Get(d.ID, v.ID)
+		if w < LowCut {
+			continue
+		}
+		if inPack(v.ID) {
+			base = append(base, v.ID)
+		}
+		if w >= HighPref {
+			manual = append(manual, v.ID)
+		}
+	}
+	switch d.ID {
+	case taxonomy.DimPalette, taxonomy.DimMood, taxonomy.DimComposition:
+		if len(manual) > 0 {
+			return manual
+		}
+		return base
+	default:
+		pool := base
+		seen := map[string]bool{}
+		for _, id := range base {
+			seen[id] = true
+		}
+		for _, id := range manual {
+			if !seen[id] {
+				pool = append(pool, id)
+				seen[id] = true
+			}
+		}
+		return pool
+	}
+}
+
+// pickFromPool 在候选池中按画像权重加权采样(跳过 excludeVal 与点踩值)。
+// 池空或全被排除时回退 sampleDim 逐维兜底。
+func pickFromPool(profile *config.Profile, d taxonomy.Dimension, pool []string, rng *rand.Rand, excludeVal string) string {
+	type cand struct {
+		id string
+		w  float64
+	}
+	var cands []cand
+	for _, id := range pool {
+		if id == excludeVal {
+			continue
+		}
+		w := profile.Get(d.ID, id)
+		if w < LowCut {
+			continue
+		}
+		cands = append(cands, cand{id, w})
+	}
+	if len(cands) == 0 {
+		return sampleDim(profile, d, rng, excludeVal)
+	}
+	total := 0.0
+	for _, c := range cands {
+		total += c.w
+	}
+	r := rng.Float64() * total
+	for _, c := range cands {
+		r -= c.w
+		if r <= 0 {
+			return c.id
+		}
+	}
+	return cands[len(cands)-1].id
+}
+
 // sampleCombo 采样组合, 并保证近 30 条不重复。
+// 有风格包时按包整体采样(一图一包), 无包回退逐维独立采样。
 func sampleCombo(profile *config.Profile, rng *rand.Rand, opt Options) sampledCombo {
 	// "换个风格": 排除最近一条的风格主值
 	exclude := map[string]string{}
@@ -104,19 +236,38 @@ func sampleCombo(profile *config.Profile, rng *rand.Rand, opt Options) sampledCo
 		recent[comboKey(h.Combo)] = true
 	}
 
+	packs := activePacks(profile)
 	var values map[string]string
+	var chosen *taxonomy.Pack
 	for attempt := 0; attempt < 24; attempt++ {
 		values = map[string]string{}
-		for _, d := range taxonomy.Dimensions {
-			values[d.ID] = sampleDim(profile, d, rng, exclude[d.ID])
+		if len(packs) > 0 {
+			chosen = packs[rng.Intn(len(packs))]
+			for _, d := range taxonomy.Dimensions {
+				values[d.ID] = pickFromPool(profile, d, packPool(profile, d, chosen), rng, exclude[d.ID])
+			}
+		} else {
+			chosen = nil
+			for _, d := range taxonomy.Dimensions {
+				values[d.ID] = sampleDim(profile, d, rng, exclude[d.ID])
+			}
 		}
 		if !recent[comboKey(values)] {
 			break
 		}
-		// 重复: 末维顺推一步再试
+		// 重复: 末维顺推一步再试(包模式只在该包同池内顺推, 不破坏一图一包)
 		last := taxonomy.Dimensions[len(taxonomy.Dimensions)-1]
-		idx := indexOf(last, values[last.ID])
-		values[last.ID] = last.Values[(idx+1)%len(last.Values)].ID
+		var pool []string
+		if chosen != nil {
+			pool = packPool(profile, last, chosen)
+		}
+		if len(pool) == 0 {
+			for _, v := range last.Values {
+				pool = append(pool, v.ID)
+			}
+		}
+		cur := indexOfStr(pool, values[last.ID])
+		values[last.ID] = pool[(cur+1)%len(pool)]
 		if !recent[comboKey(values)] {
 			break
 		}
@@ -223,11 +374,11 @@ func seedOf(values map[string]string) int64 {
 	return int64(h & 0x7fffffff)
 }
 
-func indexOf(d taxonomy.Dimension, valID string) int {
-	for i, v := range d.Values {
-		if v.ID == valID {
+func indexOfStr(list []string, val string) int {
+	for i, s := range list {
+		if s == val {
 			return i
 		}
 	}
-	return 0
+	return -1
 }

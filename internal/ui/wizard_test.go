@@ -67,27 +67,63 @@ func TestCycleAttitude(t *testing.T) {
 	}
 }
 
-func TestPresetPacksCoverAllDims(t *testing.T) {
-	if len(presetPacks) < 4 || len(presetPacks) > 8 {
-		t.Fatalf("风格包数量 %d 不符合预期(4~8)", len(presetPacks))
+func TestPresetPacksTemplate(t *testing.T) {
+	if len(taxonomy.PresetPacks) != 7 {
+		t.Fatalf("风格包数量 %d, 应为 7(定稿)", len(taxonomy.PresetPacks))
 	}
-	for _, pack := range presetPacks {
-		dims := map[string]bool{}
-		for _, k := range pack.Keys {
-			parts := strings.SplitN(k, "/", 2)
-			dims[parts[0]] = true
-			if len(parts) != 2 || taxonomy.ValueOf(parts[0], parts[1]) == nil {
-				t.Errorf("风格包 %s 含非法词条 %s", pack.Name, k)
+	seen := map[string]bool{}
+	for _, pack := range taxonomy.PresetPacks {
+		if seen[pack.Name] {
+			t.Errorf("风格包名重复 %q", pack.Name)
+		}
+		seen[pack.Name] = true
+		if taxonomy.PackByName(pack.Name) == nil {
+			t.Errorf("PackByName 找不到 %q", pack.Name)
+		}
+		checks := []struct {
+			dim  string
+			vals []string
+			minN int
+			maxN int
+		}{
+			{taxonomy.DimStyle, pack.Style, 2, 4},
+			{taxonomy.DimSubject, pack.Subject, 2, 3},
+			{taxonomy.DimPalette, pack.Palette, 1, 1},
+			{taxonomy.DimMood, pack.Mood, 1, 1},
+			{taxonomy.DimComposition, pack.Composition, 1, 2},
+		}
+		total := 0
+		for _, c := range checks {
+			if len(c.vals) < c.minN || len(c.vals) > c.maxN {
+				t.Errorf("风格包 %s 维度 %s 词条数 %d 不符模板(%d~%d)", pack.Name, c.dim, len(c.vals), c.minN, c.maxN)
+			}
+			total += len(c.vals)
+			if len(pack.Values(c.dim)) != len(c.vals) {
+				t.Errorf("风格包 %s Values(%s) 与字段不一致", pack.Name, c.dim)
+			}
+			for _, v := range c.vals {
+				if taxonomy.ValueOf(c.dim, v) == nil {
+					t.Errorf("风格包 %s 含非法词条 %s/%s", pack.Name, c.dim, v)
+				}
 			}
 		}
-		for _, want := range []string{"style", "subject", "palette", "mood", "composition"} {
-			if !dims[want] {
-				t.Errorf("风格包 %s 未覆盖维度 %s", pack.Name, want)
-			}
+		if total < 7 || total > 10 {
+			t.Errorf("风格包 %s 词条总数 %d 不符合预期(7~10)", pack.Name, total)
 		}
-		if len(pack.Keys) < 6 || len(pack.Keys) > 9 {
-			t.Errorf("风格包 %s 词条数 %d 不符合预期(6~9)", pack.Name, len(pack.Keys))
-		}
+	}
+	if !seen[defaultPackName] {
+		t.Errorf("默认风格包 %q 不在定稿包列表中", defaultPackName)
+	}
+}
+
+// TestPackValuesAccessor 校验 Pack.Values 维度映射与未知维度兜底。
+func TestPackValuesAccessor(t *testing.T) {
+	p := taxonomy.PresetPacks[0]
+	if len(p.Values(taxonomy.DimStyle)) == 0 || p.Values("nope") != nil {
+		t.Error("Values 维度映射异常")
+	}
+	if taxonomy.PackByName("不存在的包") != nil {
+		t.Error("未知包名应返回 nil")
 	}
 }
 
@@ -129,16 +165,31 @@ func TestFocusSummary(t *testing.T) {
 	}
 }
 
-// TestSurveyRecapText 校验完成页回显: 无喜欢项为空, 有则按维度分组。
+// TestSurveyRecapText 校验完成页回显: 恒含包摘要; 有喜欢项按维度分组。
 func TestSurveyRecapText(t *testing.T) {
-	if got := surveyRecapText(map[string]survey.Attitude{}); got != "" {
-		t.Errorf("无喜欢项应为空串, got %q", got)
+	got := surveyRecapText(map[string]survey.Attitude{}, map[string]bool{})
+	if !strings.Contains(got, "未选") {
+		t.Errorf("无包无喜欢应回显未选状态, got %q", got)
 	}
 	d0 := taxonomy.Dimensions[0]
 	answers := map[string]survey.Attitude{config.Key(d0.ID, d0.Values[0].ID): survey.Like}
-	got := surveyRecapText(answers)
-	if !strings.Contains(got, "你的偏好") || !strings.Contains(got, d0.NameCN) {
-		t.Errorf("回显应含标题与维度名, got %q", got)
+	got = surveyRecapText(answers, map[string]bool{defaultPackName: true})
+	if !strings.Contains(got, defaultPackName) || !strings.Contains(got, "额外微调") || !strings.Contains(got, d0.NameCN) {
+		t.Errorf("回显应含包名/微调分组/维度名, got %q", got)
+	}
+}
+
+// TestPackSummary 校验选中包摘要文案。
+func TestPackSummary(t *testing.T) {
+	if got := packSummary(map[string]bool{}); !strings.Contains(got, "未选") {
+		t.Errorf("空选中应提示未选, got %q", got)
+	}
+	got := packSummary(map[string]bool{"潮酷未来": true, defaultPackName: true})
+	if !strings.Contains(got, "潮酷未来") || !strings.Contains(got, defaultPackName) {
+		t.Errorf("摘要应含全部选中包名, got %q", got)
+	}
+	if packButtonText("包", true) != "✓ 包" || packButtonText("包", false) != "包" {
+		t.Error("包按钮选中态文案异常")
 	}
 }
 
@@ -164,29 +215,62 @@ func TestAnswersFromProfile(t *testing.T) {
 	}
 }
 
-// TestApplyDefaultPack 全新用户(零勾选)进入问卷时应预勾默认风格包"治愈日常"。
-func TestApplyDefaultPack(t *testing.T) {
-	answers := answersFromProfile(config.NewProfile())
-	if n := surveyLikesIn(answers); n != 0 {
-		t.Fatalf("新画像应无喜欢项, got %d", n)
+// TestInitSelectedPacks 校验初始选中包四分支: 全新用户默认包 / 显式选择 / 旧档推断 / 显式清空不推断。
+func TestInitSelectedPacks(t *testing.T) {
+	// 1) 全新用户(nil 画像) → 默认包
+	sel := initSelectedPacks(nil)
+	if !sel[defaultPackName] || len(sel) != 1 {
+		t.Errorf("nil 画像应仅预选默认包, got %v", sel)
 	}
-	applyDefaultPack(answers)
-	var pack *presetPack
-	for i := range presetPacks {
-		if presetPacks[i].Name == defaultPackName {
-			pack = &presetPacks[i]
+
+	// 2) 显式选择 → 原样采用(含失效包名过滤)
+	p := config.NewProfile()
+	p.Packs = []string{"潮酷未来", "不存在的包", defaultPackName}
+	sel = initSelectedPacks(p)
+	if !sel["潮酷未来"] || !sel[defaultPackName] || len(sel) != 2 {
+		t.Errorf("显式选择应被采用并过滤失效名, got %v", sel)
+	}
+
+	// 3) 旧档(packs=nil)且有喜欢 → 按权重推断(整包喜欢 → 推出该包)
+	p = config.NewProfile()
+	var target *taxonomy.Pack
+	for i := range taxonomy.PresetPacks {
+		if taxonomy.PresetPacks[i].Name == defaultPackName {
+			target = &taxonomy.PresetPacks[i]
 		}
 	}
-	if pack == nil {
-		t.Fatalf("找不到默认风格包 %q", defaultPackName)
+	if target == nil {
+		t.Fatal("找不到默认包")
 	}
-	if n := surveyLikesIn(answers); n != len(pack.Keys) {
-		t.Errorf("预勾后喜欢项 = %d, want %d(默认包词条数)", n, len(pack.Keys))
-	}
-	for _, k := range pack.Keys {
-		if answers[k] != survey.Like {
-			t.Errorf("默认包词条 %s 应为 Like, got %v", k, answers[k])
+	for _, d := range taxonomy.Dimensions {
+		for _, v := range target.Values(d.ID) {
+			p.Set(d.ID, v, survey.LikeWeight)
 		}
+	}
+	sel = initSelectedPacks(p)
+	if !sel[defaultPackName] {
+		t.Errorf("旧档整包喜欢应推断出 %q, got %v", defaultPackName, sel)
+	}
+
+	// 4) 显式清空(空数组) → 不推断, 即使权重与整包一致
+	p.Packs = []string{}
+	sel = initSelectedPacks(p)
+	if len(sel) != 0 {
+		t.Errorf("显式清空不应推断, got %v", sel)
+	}
+}
+
+// TestSelectedPackNamesOrder 校验落盘包名顺序与非 nil 契约。
+func TestSelectedPackNamesOrder(t *testing.T) {
+	names := selectedPackNames(map[string]bool{defaultPackName: true, "潮酷未来": true})
+	if names == nil || len(names) != 2 {
+		t.Fatalf("应返回 2 个包名且非 nil, got %v", names)
+	}
+	if names[0] != "潮酷未来" { // 界面顺序: 潮酷未来在治愈日常之前
+		t.Errorf("应按定稿顺序返回, got %v", names)
+	}
+	if empty := selectedPackNames(map[string]bool{}); empty == nil || len(empty) != 0 {
+		t.Errorf("空选中应返回非 nil 空切片, got %v", empty)
 	}
 }
 

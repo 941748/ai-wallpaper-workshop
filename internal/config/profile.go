@@ -12,11 +12,14 @@ import (
 // Profile 偏好画像(profile.json)。
 // Weights 键为 "dim/value"(见 config.Key), 取值 0~1(0.5 为中立)。
 // Disliked 为明显负面值的提示词片段, 合入负面提示词。
+// Packs 为选中的风格包名(一图一包的采样基线): 旧档无此字段 → nil(按权重推断最匹配包);
+// 用户显式清空 → 空数组(不推断, 回退逐维采样)。故此处不可加 omitempty。
 type Profile struct {
 	Version        int                `json:"version"`
 	Weights        map[string]float64 `json:"weights"`
 	Disliked       []string           `json:"disliked"`
 	CustomKeywords []string           `json:"custom_keywords,omitempty"` // 用户自定义关键词(如 猫咪/高达)
+	Packs          []string           `json:"packs"`                     // 选中的风格包名(一图一包)
 	UpdatedAt      time.Time          `json:"updated_at"`
 }
 
