@@ -116,6 +116,10 @@ func (w *wizard) build() error {
 	mw.SetSize(fixedSize)
 	mw.SetMinMaxSize(fixedSize, fixedSize) // 固定尺寸: 不允许拉伸宽高
 	_ = mw.SetLayout(walk.NewVBoxLayout())
+	if bl, ok := mw.Layout().(*walk.BoxLayout); ok {
+		// 去默认边距: 无边框窗贴边渲染, 顶部不留灰底缝(与设置页同修)
+		_ = bl.SetMargins(walk.Margins{})
+	}
 	mw.SetBackground(brushPageBg)
 
 	// 顶栏: 无边框标题栏(青绿渐变 + 产品名 + 拖动热区 + 右上角扁平 ✕)

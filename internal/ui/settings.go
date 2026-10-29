@@ -51,6 +51,7 @@ type settings struct {
 	selectedPacks map[string]bool           // 选中的风格包(一图一包基线; 与筹码微调互不写入)
 	basePacks    map[string]bool            // 未保存修改基线的选中包快照
 	packChips    *packRow                   // 包选择行(自绘, 选中态以颜色表达)
+	dislikesReset bool                      // 重置后保存时需清空画像避让清单(重建自当前勾选)
 	kwLB         *walk.ListBox
 	kwEdit       *walk.LineEdit
 
@@ -122,6 +123,10 @@ func (s *settings) build() error {
 	mw.SetSize(fixedSize)
 	mw.SetMinMaxSize(fixedSize, fixedSize) // 固定尺寸: 不允许拉伸宽高
 	_ = mw.SetLayout(walk.NewVBoxLayout())
+	if bl, ok := mw.Layout().(*walk.BoxLayout); ok {
+		// 去默认边距(~9px): 无边框窗内容贴边渲染, 否则四周露窗口底色灰缝
+		_ = bl.SetMargins(walk.Margins{})
+	}
 
 	// 顶栏: 无边框标题栏(拖动热区 + 右上角扁平 ✕)
 	if _, err := newTitleBar(mw, mw, config.AppNameCN, "设置", 48, func() { s.confirmClose() }); err != nil {
@@ -238,6 +243,9 @@ func (s *settings) buildProfilePage(tab *walk.TabWidget) error {
 			s.mw.Close()
 		}
 	})
+	resetBtn, _ := walk.NewPushButton(btnRow)
+	resetBtn.SetText("重置所有偏好")
+	resetBtn.Clicked().Attach(func() { s.resetAllPreferences() })
 	saveAllBtn, _ := walk.NewPushButton(btnRow)
 	saveAllBtn.SetText("打开数据目录")
 	saveAllBtn.Clicked().Attach(func() { openFolder(s.dir) })
@@ -480,10 +488,41 @@ func (s *settings) togglePack(name string) {
 	}
 }
 
+// resetAllPreferences 清空风格包与五维偏好(喜欢/不喜欢全部回到未选), 页面回到未选状态。
+// 不重跑初始化向导——用户在本页重新选包/勾选后点"保存偏好"即可生效; 自定义关键词保留。
+func (s *settings) resetAllPreferences() {
+	if walk.MsgBox(s.mw, config.AppNameCN,
+		"将清空风格包与五维偏好(喜欢/不喜欢全部回到未选), 自定义关键词保留。\n"+
+			"在本页重新选择后点\"保存偏好\"即可生效, 无需重跑向导。\n\n确定重置吗?",
+		walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) != walk.DlgCmdYes {
+		return
+	}
+	s.selectedPacks = map[string]bool{}
+	for k := range s.answers {
+		s.answers[k] = survey.Neutral
+	}
+	s.dislikesReset = true // 保存时重建避让清单(旧点踩片段随之清空)
+	if s.packChips != nil {
+		s.packChips.refresh()
+	}
+	if s.chips != nil {
+		s.chips.refresh()
+	}
+}
+
 // saveProfileEdits 保存偏好点选; quiet 时不弹"已保存"提示(关闭窗口流程用)。
 // 返回是否保存成功; 成功后基线前移(视为无未保存修改)。
 func (s *settings) saveProfileEdits(quiet bool) bool {
+	if len(s.selectedPacks) == 0 && surveyLikesIn(s.answers) == 0 {
+		showError(s.mw, "请至少选择 1 个风格包或勾选 1 项\"喜欢\", 再保存偏好。")
+		return false
+	}
 	profile, _ := config.LoadProfile(s.dir)
+	if s.dislikesReset {
+		// 重置后重建避让清单: 先清空, 再由 survey.Apply 按当前勾选重新追加
+		profile.Disliked = nil
+		s.dislikesReset = false
+	}
 	// 三态点选 → 画像(喜欢 0.9 / 中立 0.3 / 不喜欢 0.05 + 避让清单)
 	survey.Apply(profile, s.answers)
 	// 显式落盘选中包(非 nil, 即使清空): 引擎按此执行一图一包, 不再推断

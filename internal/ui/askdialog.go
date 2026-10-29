@@ -35,6 +35,10 @@ func ShowAskDialog(req tick.AskRequest) tick.AskChoice {
 	dlg.SetSize(walk.Size{Width: 440, Height: 440})
 	dlg.SetMinMaxSize(walk.Size{Width: 440, Height: 440}, walk.Size{Width: 440, Height: 440}) // 固定尺寸: 不允许拉伸
 	_ = dlg.SetLayout(walk.NewVBoxLayout())
+	if bl, ok := dlg.Layout().(*walk.BoxLayout); ok {
+		// 去默认边距: 无边框窗贴边渲染(与设置/向导同修)
+		_ = bl.SetMargins(walk.Margins{})
+	}
 
 	// 顶栏: 无边框标题栏(拖动热区 + 右上角扁平 ✕; 关闭=“以后再说”)
 	if _, err := newTitleBar(dlg, dlg, config.AppNameCN, "偏好回访", 40, func() { dlg.Cancel() }); err != nil {

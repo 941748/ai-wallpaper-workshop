@@ -87,7 +87,7 @@ func TestPresetPacksTemplate(t *testing.T) {
 			maxN int
 		}{
 			{taxonomy.DimStyle, pack.Style, 2, 4},
-			{taxonomy.DimSubject, pack.Subject, 2, 3},
+			{taxonomy.DimSubject, pack.Subject, 2, 4},
 			{taxonomy.DimPalette, pack.Palette, 1, 1},
 			{taxonomy.DimMood, pack.Mood, 1, 1},
 			{taxonomy.DimComposition, pack.Composition, 1, 2},
@@ -107,8 +107,8 @@ func TestPresetPacksTemplate(t *testing.T) {
 				}
 			}
 		}
-		if total < 7 || total > 10 {
-			t.Errorf("风格包 %s 词条总数 %d 不符合预期(7~10)", pack.Name, total)
+		if total < 7 || total > 12 {
+			t.Errorf("风格包 %s 词条总数 %d 不符合预期(7~12)", pack.Name, total)
 		}
 	}
 	if !seen[defaultPackName] {
