@@ -123,7 +123,7 @@ func (w *wizard) build() error {
 	mw.SetBackground(brushPageBg)
 
 	// 顶栏: 无边框标题栏(青绿渐变 + 产品名 + 拖动热区 + 右上角扁平 ✕)
-	if _, err := newTitleBar(mw, mw, config.AppNameCN, "初始化向导", 52, func() { mw.Close() }); err != nil {
+	if _, err := newTitleBar(mw, mw, config.AppNameCN, "", 52, func() { mw.Close() }); err != nil {
 		return err
 	}
 

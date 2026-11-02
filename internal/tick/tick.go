@@ -294,6 +294,11 @@ func RunOnce(ctx context.Context, env Env) error {
 
 	// 本地备用池优先(换风格轮除外): 已生成未使用, 断网可换
 	if changeOK && !forceShake {
+		// 先清掉旧画像版本的池图: CleanVersion 原本在补池阶段(取图之后), 拦不住这条路;
+		// 不清则"保存偏好→立即换一张"会取到旧偏好时代的成品, 看起来像没生效。
+		if n := pool.CleanVersion(env.Dir, cfg.ProfileVer); n > 0 {
+			st.Log("tick: 清理旧画像版本池图 %d 张", n)
+		}
 		if e, img, err := pool.Take(env.Dir); err == nil && e != nil && desktop.Inspect(img) == nil {
 			imgData = img
 			source = "pool"

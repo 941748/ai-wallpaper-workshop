@@ -41,7 +41,7 @@ func ShowAskDialog(req tick.AskRequest) tick.AskChoice {
 	}
 
 	// 顶栏: 无边框标题栏(拖动热区 + 右上角扁平 ✕; 关闭=“以后再说”)
-	if _, err := newTitleBar(dlg, dlg, config.AppNameCN, "偏好回访", 40, func() { dlg.Cancel() }); err != nil {
+	if _, err := newTitleBar(dlg, dlg, config.AppNameCN, "", 40, func() { dlg.Cancel() }); err != nil {
 		return choice
 	}
 	enableCustomFrame(dlg)

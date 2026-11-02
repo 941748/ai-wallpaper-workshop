@@ -129,7 +129,7 @@ func (s *settings) build() error {
 	}
 
 	// 顶栏: 无边框标题栏(拖动热区 + 右上角扁平 ✕)
-	if _, err := newTitleBar(mw, mw, config.AppNameCN, "设置", 48, func() { s.confirmClose() }); err != nil {
+	if _, err := newTitleBar(mw, mw, config.AppNameCN, "", 48, func() { s.confirmClose() }); err != nil {
 		return err
 	}
 
