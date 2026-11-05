@@ -88,9 +88,9 @@ func TestPresetPacksTemplate(t *testing.T) {
 		}{
 			{taxonomy.DimStyle, pack.Style, 2, 4},
 			{taxonomy.DimSubject, pack.Subject, 2, 5},
-			{taxonomy.DimPalette, pack.Palette, 1, 1},
-			{taxonomy.DimMood, pack.Mood, 1, 1},
-			{taxonomy.DimComposition, pack.Composition, 1, 2},
+			{taxonomy.DimPalette, pack.Palette, 1, 2},
+			{taxonomy.DimMood, pack.Mood, 1, 3},
+			{taxonomy.DimComposition, pack.Composition, 1, 3},
 		}
 		total := 0
 		for _, c := range checks {
@@ -107,8 +107,8 @@ func TestPresetPacksTemplate(t *testing.T) {
 				}
 			}
 		}
-		if total < 7 || total > 12 {
-			t.Errorf("风格包 %s 词条总数 %d 不符合预期(7~12)", pack.Name, total)
+		if total < 7 || total > 16 {
+			t.Errorf("风格包 %s 词条总数 %d 不符合预期(7~16)", pack.Name, total)
 		}
 	}
 	if !seen[defaultPackName] {

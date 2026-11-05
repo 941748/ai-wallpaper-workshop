@@ -29,7 +29,8 @@ const (
 
 // BaseNegative 通用负面提示词。
 const BaseNegative = "lowres, blurry, jpeg artifacts, watermark, text, signature, " +
-	"deformed, disfigured, out of frame, worst quality, low quality"
+	"deformed, disfigured, out of frame, worst quality, low quality, " +
+	"plastic skin, oversaturated, deformed hands, extra fingers, bad anatomy"
 
 // QualitySuffix 正向提示词质量后缀。
 const QualitySuffix = "high detail, sharp focus, professional composition, 4k wallpaper"
@@ -54,6 +55,7 @@ var Dimensions = []Dimension{
 			{ID: "chibi", NameCN: "Q版", Prompt: "chibi q-version style, cute big-head small-body character, kawaii proportions",
 				Negative: "chibi, oversized big head, small childlike proportions"},
 			{ID: "film", NameCN: "复古胶片", Prompt: "retro film photography, 90s kodak film grain, nostalgic analog aesthetic"},
+			{ID: "jpstyle", NameCN: "日系写真", Prompt: "japanese-style photography, airy overexposed tones, soft focus"},
 			{ID: "pixel", NameCN: "像素风", Prompt: "pixel art, retro game graphics, 16-bit style"},
 			{ID: "impressionist", NameCN: "印象派", Prompt: "impressionist painting, soft luminous light, visible brushstrokes, monet style"},
 			{ID: "steampunk", NameCN: "蒸汽朋克", Prompt: "steampunk style, brass gears, steam machinery, victorian sci-fi"},
@@ -105,6 +107,8 @@ var Dimensions = []Dimension{
 			{ID: "guzhuang", NameCN: "唐装美人", Prompt: "portrait of a stunning chinese woman in exquisite tang dynasty hanfu, ornate embroidered silk robes, elaborate jeweled hair ornaments, luxurious period drama aesthetic, regal graceful elegance, opulent golden details"},
 			{ID: "sunshineboy", NameCN: "阳光少年", Prompt: "portrait of a sunny cheerful teenage boy, warm golden sunlight, bright wholesome smile, casual summer style"},
 			{ID: "nextdoorgirl", NameCN: "纯欲清纯", Prompt: "portrait of a gorgeous young adult woman with pure desire aesthetic, fresh pure charm, innocent yet alluring presence, youthful college-age beauty, delicate flawless skin, soft natural makeup, captivating gentle gaze"},
+			{ID: "homelife", NameCN: "居家少女", Prompt: "young adult woman relaxing at home, cozy bedroom scene"},
+			{ID: "campus", NameCN: "校园清纯", Prompt: "young adult woman on a sunny college campus, fresh youthful vibe"},
 			{ID: "cat", NameCN: "猫", Prompt: "cute domestic cat, soft fur, bright curious eyes"},
 			{ID: "dog", NameCN: "狗", Prompt: "lovable pet dog, warm friendly expression"},
 			{ID: "desert", NameCN: "沙漠戈壁", Prompt: "desert sand dunes, red rock canyon"},
@@ -127,6 +131,7 @@ var Dimensions = []Dimension{
 			{ID: "pastel", NameCN: "柔和粉彩", Prompt: "soft pastel palette, gentle pink and cream tones, airy"},
 			{ID: "cinematic", NameCN: "电影级打光", Prompt: "cinematic film lighting, dramatic key light, soft rim light, professional hollywood color grading"},
 			{ID: "monochrome", NameCN: "黑白单色", Prompt: "monochrome black and white palette, rich tonal contrast"},
+			{ID: "softwhite", NameCN: "低饱和柔白", Prompt: "high-key soft white palette, airy low-saturation tones"},
 		},
 	},
 	{
@@ -158,6 +163,7 @@ var Dimensions = []Dimension{
 			{ID: "depth", NameCN: "纵深层次", Prompt: "layered depth composition, foreground midground background layers, immersive perspective"},
 			{ID: "framing", NameCN: "前景框架", Prompt: "natural frame composition, foreground framing element"},
 			{ID: "lowangle", NameCN: "仰视", Prompt: "low-angle worm's-eye view, towering upward perspective"},
+			{ID: "topdown", NameCN: "俯拍斜角", Prompt: "top-down angled shot, diagonal composition"},
 		},
 	},
 }
@@ -211,11 +217,11 @@ var PresetPacks = []Pack{
 		Mood:        []string{"story"},
 		Composition: []string{"closeup", "wide"}},
 	{Name: "写实美女",
-		Style:       []string{"realism", "film"},
-		Subject:     []string{"fashionwoman", "nextdoorgirl", "guzhuang"},
-		Palette:     []string{"cinematic"},
-		Mood:        []string{"story"},
-		Composition: []string{"closeup", "thirds"}},
+		Style:       []string{"realism", "film", "jpstyle"},
+		Subject:     []string{"fashionwoman", "nextdoorgirl", "guzhuang", "homelife", "campus"},
+		Palette:     []string{"cinematic", "softwhite"},
+		Mood:        []string{"serene", "story", "healing"},
+		Composition: []string{"closeup", "thirds", "topdown"}},
 	{Name: "治愈日常",
 		Style:       []string{"realism", "film", "watercolor"},
 		Subject:     []string{"cat", "dog", "child", "plants", "food"},
