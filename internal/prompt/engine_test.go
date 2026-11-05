@@ -210,14 +210,14 @@ func TestComposePackManualStyleUnion(t *testing.T) {
 // TestComposePackDislikeExcluded 包内值被点踩即从基线消失。
 func TestComposePackDislikeExcluded(t *testing.T) {
 	p := packProfile("治愈日常")
-	p.Set(taxonomy.DimSubject, "pet", LowCut-0.1)
+	p.Set(taxonomy.DimSubject, "cat", LowCut-0.1)
 	rng := rand.New(rand.NewSource(4))
 	for i := 0; i < 100; i++ {
 		s := Compose(p, rng, Options{})
-		if s.Combo[taxonomy.DimSubject] == "pet" {
-			t.Fatal("点踩值 pet 不应被采出")
+		if s.Combo[taxonomy.DimSubject] == "cat" {
+			t.Fatal("点踩值 cat 不应被采出")
 		}
-		assertIn(t, taxonomy.DimSubject, s.Combo[taxonomy.DimSubject], []string{"plants", "food"}, "dislike")
+		assertIn(t, taxonomy.DimSubject, s.Combo[taxonomy.DimSubject], []string{"dog", "child", "plants", "food"}, "dislike")
 	}
 }
 

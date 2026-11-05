@@ -87,7 +87,7 @@ func TestPresetPacksTemplate(t *testing.T) {
 			maxN int
 		}{
 			{taxonomy.DimStyle, pack.Style, 2, 4},
-			{taxonomy.DimSubject, pack.Subject, 2, 4},
+			{taxonomy.DimSubject, pack.Subject, 2, 5},
 			{taxonomy.DimPalette, pack.Palette, 1, 1},
 			{taxonomy.DimMood, pack.Mood, 1, 1},
 			{taxonomy.DimComposition, pack.Composition, 1, 2},

@@ -53,11 +53,8 @@ var Dimensions = []Dimension{
 				Negative: "3d cg donghua character, stylized 3d render"},
 			{ID: "chibi", NameCN: "Q版", Prompt: "chibi q-version style, cute big-head small-body character, kawaii proportions",
 				Negative: "chibi, oversized big head, small childlike proportions"},
-			{ID: "print", NameCN: "版画", Prompt: "woodblock print style, ukiyo-e inspired, bold graphic linework"},
-			{ID: "chalk", NameCN: "粉笔画", Prompt: "chalk pastel drawing, soft chalk texture, hand-drawn strokes"},
 			{ID: "film", NameCN: "复古胶片", Prompt: "retro film photography, 90s kodak film grain, nostalgic analog aesthetic"},
 			{ID: "pixel", NameCN: "像素风", Prompt: "pixel art, retro game graphics, 16-bit style"},
-			{ID: "pop", NameCN: "波普艺术", Prompt: "pop art style, bold flat colors, halftone dots, warhol inspired"},
 			{ID: "impressionist", NameCN: "印象派", Prompt: "impressionist painting, soft luminous light, visible brushstrokes, monet style"},
 			{ID: "steampunk", NameCN: "蒸汽朋克", Prompt: "steampunk style, brass gears, steam machinery, victorian sci-fi"},
 			{ID: "lowpoly", NameCN: "低多边形", Prompt: "low-poly 3d render, faceted geometric style"},
@@ -76,7 +73,6 @@ var Dimensions = []Dimension{
 			{ID: "space", NameCN: "星空宇宙", Prompt: "deep space, starfield, nebula clouds, distant galaxy, cosmic vista"},
 			{ID: "abstract", NameCN: "抽象几何", Prompt: "abstract geometric forms, flowing shapes, modern art"},
 			{ID: "plants", NameCN: "植物花卉", Prompt: "lush botanical close-up, blooming flowers, delicate foliage detail"},
-			{ID: "animal", NameCN: "动物", Prompt: "wild animal in natural habitat, wildlife portrait, fur detail"},
 			{ID: "male", NameCN: "男性人像", Prompt: "portrait of a stylish man, masculine fashion photography"},
 			{ID: "careerwoman", NameCN: "职业女性", Prompt: "portrait of a professional career woman, business attire, confident elegant presence"},
 			{ID: "fashionwoman", NameCN: "时尚女性", Prompt: "portrait of a gorgeous stylish woman with celebrity screen presence, glamorous magazine-cover editorial photography, flawless makeup, delicate refined facial features, captivating elegant beauty"},
@@ -84,7 +80,6 @@ var Dimensions = []Dimension{
 			{ID: "moto", NameCN: "摩托机车", Prompt: "motorcycle, powerful motorbike, dynamic automotive photography"},
 			{ID: "racecar", NameCN: "赛车", Prompt: "racing car, motorsport scene, track day action"},
 			{ID: "supercar", NameCN: "超跑", Prompt: "luxury supercar, sleek exotic sports car"},
-			{ID: "weapon", NameCN: "武器枪械", Prompt: "displayed firearm, weapon showcase, detailed metal craftsmanship"},
 			{ID: "jet", NameCN: "战斗机", Prompt: "fighter jet, military aircraft in flight, aviation photography"},
 			{ID: "mecha", NameCN: "机甲", Prompt: "mecha robot, giant sci-fi robot, detailed mechanical armor"},
 			{ID: "food", NameCN: "美食", Prompt: "delicious gourmet food, appetizing culinary photography"},
@@ -93,11 +88,8 @@ var Dimensions = []Dimension{
 			{ID: "aurora", NameCN: "极光", Prompt: "aurora borealis, northern lights dancing over landscape"},
 			{ID: "cloudsea", NameCN: "云海", Prompt: "sea of clouds above mountain peaks, dreamy aerial view"},
 			{ID: "ocean", NameCN: "海洋", Prompt: "ocean seascape, tropical sandy beach, palm-lined coastline, gentle turquoise waves"},
-			{ID: "pet", NameCN: "宠物", Prompt: "adorable pet cat or dog, heartwarming animal portrait"},
 			{ID: "sport", NameCN: "运动", Prompt: "sports action scene, dynamic athlete in motion"},
-			{ID: "mythic", NameCN: "神话生物", Prompt: "mythical creature, dragon or phoenix, epic fantasy creature"},
 			{ID: "xianxia", NameCN: "仙侠意境", Prompt: "xianxia immortal fantasy, flowing-hanfu cultivator on misty sacred peaks, sword flight among celestial palaces, ethereal qi and glowing runes"},
-			{ID: "zhiguai", NameCN: "志异神怪", Prompt: "chinese ghost-folk dark fantasy, ancient temple in night rain, candlelit fox spirit, drifting mist and paper talismans, eerie classical atmosphere"},
 			{ID: "spaceship", NameCN: "太空飞船", Prompt: "spaceship, sci-fi starship, futuristic spacecraft"},
 			{ID: "train", NameCN: "火车飞机", Prompt: "train or airplane, transportation photography, travel scene"},
 			{ID: "oldstreet", NameCN: "老街巷", Prompt: "ancient alley, old street with lanterns, nostalgic townscape"},
@@ -113,7 +105,15 @@ var Dimensions = []Dimension{
 			{ID: "guzhuang", NameCN: "唐装美人", Prompt: "portrait of a stunning chinese woman in exquisite tang dynasty hanfu, ornate embroidered silk robes, elaborate jeweled hair ornaments, luxurious period drama aesthetic, regal graceful elegance, opulent golden details"},
 			{ID: "sunshineboy", NameCN: "阳光少年", Prompt: "portrait of a sunny cheerful teenage boy, warm golden sunlight, bright wholesome smile, casual summer style"},
 			{ID: "nextdoorgirl", NameCN: "纯欲清纯", Prompt: "portrait of a gorgeous young adult woman with pure desire aesthetic, fresh pure charm, innocent yet alluring presence, youthful college-age beauty, delicate flawless skin, soft natural makeup, captivating gentle gaze"},
-			{ID: "cosplay", NameCN: "cosplay", Prompt: "cosplay photography, elaborate anime character costume, convention photoshoot, detailed cosplay outfit"},
+			{ID: "cat", NameCN: "猫", Prompt: "cute domestic cat, soft fur, bright curious eyes"},
+			{ID: "dog", NameCN: "狗", Prompt: "lovable pet dog, warm friendly expression"},
+			{ID: "desert", NameCN: "沙漠戈壁", Prompt: "desert sand dunes, red rock canyon"},
+			{ID: "forest", NameCN: "晨雾森林", Prompt: "misty forest, morning sunbeams through trees"},
+			{ID: "sunset", NameCN: "晚霞火烧云", Prompt: "dramatic sunset sky, fiery glowing clouds"},
+			{ID: "highway", NameCN: "公路旅行", Prompt: "open highway to the horizon, road trip scenery"},
+			{ID: "moon", NameCN: "月夜星辉", Prompt: "full moon night sky, starry moonlit scene"},
+			{ID: "camping", NameCN: "露营篝火", Prompt: "camping tent and campfire under the stars"},
+			{ID: "study", NameCN: "文艺书房", Prompt: "cozy book-lined study, soft reading light"},
 		},
 	},
 	{
@@ -126,6 +126,7 @@ var Dimensions = []Dimension{
 			{ID: "neon", NameCN: "高饱和霓虹", Prompt: "vibrant neon saturated palette, electric magenta and cyan glow"},
 			{ID: "pastel", NameCN: "柔和粉彩", Prompt: "soft pastel palette, gentle pink and cream tones, airy"},
 			{ID: "cinematic", NameCN: "电影级打光", Prompt: "cinematic film lighting, dramatic key light, soft rim light, professional hollywood color grading"},
+			{ID: "monochrome", NameCN: "黑白单色", Prompt: "monochrome black and white palette, rich tonal contrast"},
 		},
 	},
 	{
@@ -164,12 +165,12 @@ var Dimensions = []Dimension{
 // Pack 预设风格包: 每包覆盖五维且组内互相协调(风格同族 × 题材同族的任意组合均成立),
 // 出图按包整体采样(一图一包), 绝不跨包拆混关键词。
 type Pack struct {
-	Name         string   // 界面按钮文案
-	Style        []string // 风格值 ID(2~4, 须同族兼容)
-	Subject      []string // 题材值 ID(2~3, 同族)
-	Palette      []string // 色调值 ID(1)
-	Mood         []string // 情绪值 ID(1)
-	Composition  []string // 构图值 ID(1~2, 由题材反推镜头/场景)
+	Name        string   // 界面按钮文案
+	Style       []string // 风格值 ID(2~4, 须同族兼容)
+	Subject     []string // 题材值 ID(2~3, 同族)
+	Palette     []string // 色调值 ID(1)
+	Mood        []string // 情绪值 ID(1)
+	Composition []string // 构图值 ID(1~2, 由题材反推镜头/场景)
 }
 
 // Values 返回该包在指定维度的值 ID 列表; 未知维度返回 nil。
@@ -205,7 +206,7 @@ var PresetPacks = []Pack{
 		Composition: []string{"wide", "closeup"}},
 	{Name: "国漫3D",
 		Style:       []string{"donghua3d", "anime3d"},
-		Subject:     []string{"mythic", "xianxia"},
+		Subject:     []string{"mecha", "xianxia"},
 		Palette:     []string{"cinematic"},
 		Mood:        []string{"story"},
 		Composition: []string{"closeup", "wide"}},
@@ -217,10 +218,10 @@ var PresetPacks = []Pack{
 		Composition: []string{"closeup", "thirds"}},
 	{Name: "治愈日常",
 		Style:       []string{"realism", "film", "watercolor"},
-		Subject:     []string{"pet", "plants", "food"},
+		Subject:     []string{"cat", "dog", "child", "plants", "food"},
 		Palette:     []string{"warm"},
 		Mood:        []string{"cozy"},
-		Composition: []string{"macro"}},
+		Composition: []string{"macro", "closeup"}},
 	{Name: "极简留白",
 		Style:       []string{"minimal", "neochinese"},
 		Subject:     []string{"abstract", "lake"},
