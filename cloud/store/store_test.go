@@ -61,3 +61,34 @@ func TestPregenTableMigrationFromV1(t *testing.T) {
 		t.Fatalf("count=%d want 2", n)
 	}
 }
+
+// TestProfileSnapshotPacksRoundTrip 画像快照 packs 字段三态往返:
+// ""(旧快照无值)/"[]"(显式清空)/'["写实美女"]'(选中) 必须原样回读,
+// 否则服务端主动预生成会丢包(乱出非偏好题材)。
+func TestProfileSnapshotPacksRoundTrip(t *testing.T) {
+	s, err := Open(t.TempDir() + "/p.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	cases := []string{"", "[]", `["写实美女","自然山河"]`}
+	for _, packs := range cases {
+		if err := s.SaveProfileSnapshot(ProfileSnapshot{
+			UserID: "u_t", ProfileVersion: 3, Profile: `{"style/realism":0.9}`,
+			Packs: packs, ScreenW: 1920, ScreenH: 1080,
+		}); err != nil {
+			t.Fatalf("save packs=%q: %v", packs, err)
+		}
+		got, err := s.LoadProfileSnapshot("u_t")
+		if err != nil || got == nil {
+			t.Fatalf("load packs=%q: %v", packs, err)
+		}
+		if got.Packs != packs {
+			t.Errorf("packs round trip = %q, want %q", got.Packs, packs)
+		}
+		if got.ProfileVersion != 3 || got.ScreenW != 1920 {
+			t.Errorf("other fields mangled: %+v", got)
+		}
+	}
+}

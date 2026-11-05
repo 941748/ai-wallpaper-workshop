@@ -80,7 +80,6 @@ type settings struct {
 	// 更新与回访页
 	versionLbl *walk.Label
 	updateLbl  *walk.Label
-	askLbl     *walk.Label
 	askSpin    *walk.NumberEdit
 }
 
@@ -632,8 +631,6 @@ func (s *settings) buildSettingsPage(tab *walk.TabWidget) error {
 	s.askSpin.SetDecimals(0)
 	s.askSpin.SetRange(1, 365)
 	s.askSpin.SetValue(float64(s.cfg.Satisfaction.IntervalDays))
-	s.askLbl, _ = walk.NewLabel(askGroup)
-	s.refreshAskLabel()
 
 	// ----- 软件更新 -----
 	upGroup, _ := walk.NewGroupBox(page)
@@ -854,7 +851,6 @@ func (s *settings) saveService(quiet bool) bool {
 		showError(s.mw, "保存失败: %v", err)
 		return false
 	}
-	s.refreshAskLabel()
 	s.be, s.cc = makeBackend(s.cfg)
 	exe, err := os.Executable()
 	if err == nil {
@@ -1103,16 +1099,6 @@ func (s *settings) redeemLink() {
 // ---------- 更新与回访页 ----------
 
 // removed: buildUpdatePage (已并入设置页)
-
-func (s *settings) refreshAskLabel() {
-	next := s.cfg.Satisfaction.NextAskTime()
-	if next.IsZero() {
-		s.askLbl.SetText("偏好回访: 尚未安排")
-		return
-	}
-	s.askLbl.SetText(fmt.Sprintf("偏好回访: 下次 %s (记忆曲线 3/7/15/30/60/90 天)",
-		next.Format("2006-01-02 15:04")))
-}
 
 // releaseNotesURL "查看更新内容"跳转的 Gitee Releases 页(国内可达)。
 const releaseNotesURL = "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases"

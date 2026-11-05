@@ -43,7 +43,7 @@ func DefaultRegistry() *Registry {
 		Checkpoint: "z_image_turbo_int8_convrot.safetensors",
 		Steps:      8, CFG: 1.0,
 		SamplerName: "res_multistep", Scheduler: "simple",
-		MinSide: 512, MaxSide: 1920,
+		MinSide: 512, MaxSide: 2560, // 上限覆盖 2.2K(2240x1400)/2K/1440p 原生屏
 	})
 	return r
 }
@@ -65,7 +65,7 @@ func (r *Registry) add(w Workflow) {
 		w.MinSide = 512
 	}
 	if w.MaxSide <= 0 {
-		w.MaxSide = 1920
+		w.MaxSide = 2560
 	}
 	r.workflows[w.ID] = w
 }
@@ -172,7 +172,18 @@ func round8(v int) int {
 	return n
 }
 
-// BucketSize 兜底尺寸: 固定 1920x1080(默认出图尺寸)。
+// BucketSize 出图尺寸: 优先按客户端主屏物理分辨率原生出图(8 倍数、受工作流上下限约束),
+// 超上限时等比缩放保持纵横比; 无有效屏幕值时退回 1920x1080。
 func BucketSize(screenW, screenH int, w Workflow) (int, int) {
+	if screenW >= 320 && screenH >= 320 {
+		if screenW <= w.MaxSide && screenH <= w.MaxSide {
+			return ClampSize(w, screenW, screenH)
+		}
+		r := float64(w.MaxSide) / float64(screenW)
+		if r2 := float64(w.MaxSide) / float64(screenH); r2 < r {
+			r = r2
+		}
+		return ClampSize(w, int(float64(screenW)*r+0.5), int(float64(screenH)*r+0.5))
+	}
 	return ClampSize(w, 1920, 1080)
 }

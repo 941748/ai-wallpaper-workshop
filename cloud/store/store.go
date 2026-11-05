@@ -77,6 +77,7 @@ var migrations = []migration{
 	{3, m003UserProfiles},
 	{4, m004Pregen},
 	{5, m005SiteEventIP},
+	{6, m006ProfilePacks},
 }
 
 // m001BaselineSchema 基线表结构(全部 IF NOT EXISTS, 对新库建表/对旧库无操作)。
@@ -247,6 +248,21 @@ func m005SiteEventIP(db *sql.DB) error {
 	return err
 }
 
+// m006ProfilePacks 画像快照表补 packs 列: 风格包(一图一包)必须随快照同步,
+// 否则服务端主动预生成在包党画像(权重全 0.3、推不出包)下逐维采样, 满词典乱出
+// (枪械/飞机/漫画等非偏好题材)。守卫式 ALTER(与 m005 同式), 重放安全。
+func m006ProfilePacks(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('user_profiles') WHERE name='packs'`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := db.Exec(`ALTER TABLE user_profiles ADD COLUMN packs TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
 const timeFmt = time.RFC3339
 
 // ---------- users / devices ----------
@@ -323,6 +339,7 @@ type ProfileSnapshot struct {
 	Profile        string // JSON map[string]float64
 	Disliked       string // JSON []string
 	Custom         string // JSON []string
+	Packs          string // JSON []string 风格包名(""=旧快照无此字段, nil→权重反推)
 	ScreenW        int
 	ScreenH        int
 }
@@ -330,12 +347,12 @@ type ProfileSnapshot struct {
 // SaveProfileSnapshot upsert 画像快照。
 func (s *Store) SaveProfileSnapshot(p ProfileSnapshot) error {
 	_, err := s.db.Exec(`INSERT INTO user_profiles
-(user_id, profile_version, profile, disliked, custom, screen_w, screen_h, updated_at)
-VALUES(?,?,?,?,?,?,?,?)
+(user_id, profile_version, profile, disliked, custom, packs, screen_w, screen_h, updated_at)
+VALUES(?,?,?,?,?,?,?,?,?)
 ON CONFLICT(user_id) DO UPDATE SET profile_version=excluded.profile_version, profile=excluded.profile,
- disliked=excluded.disliked, custom=excluded.custom, screen_w=excluded.screen_w,
- screen_h=excluded.screen_h, updated_at=excluded.updated_at`,
-		p.UserID, p.ProfileVersion, p.Profile, p.Disliked, p.Custom,
+ disliked=excluded.disliked, custom=excluded.custom, packs=excluded.packs,
+ screen_w=excluded.screen_w, screen_h=excluded.screen_h, updated_at=excluded.updated_at`,
+		p.UserID, p.ProfileVersion, p.Profile, p.Disliked, p.Custom, p.Packs,
 		p.ScreenW, p.ScreenH, time.Now().Format(timeFmt))
 	return err
 }
@@ -343,9 +360,9 @@ ON CONFLICT(user_id) DO UPDATE SET profile_version=excluded.profile_version, pro
 // LoadProfileSnapshot 读取画像快照(无则返回 nil)。
 func (s *Store) LoadProfileSnapshot(userID string) (*ProfileSnapshot, error) {
 	row := s.db.QueryRow(`SELECT user_id, profile_version, COALESCE(profile,''), COALESCE(disliked,''),
-COALESCE(custom,''), screen_w, screen_h FROM user_profiles WHERE user_id=?`, userID)
+COALESCE(custom,''), COALESCE(packs,''), screen_w, screen_h FROM user_profiles WHERE user_id=?`, userID)
 	var p ProfileSnapshot
-	if err := row.Scan(&p.UserID, &p.ProfileVersion, &p.Profile, &p.Disliked, &p.Custom, &p.ScreenW, &p.ScreenH); err != nil {
+	if err := row.Scan(&p.UserID, &p.ProfileVersion, &p.Profile, &p.Disliked, &p.Custom, &p.Packs, &p.ScreenW, &p.ScreenH); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}

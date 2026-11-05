@@ -11,6 +11,7 @@ type AdminPromptRow struct {
 	Source     string
 	WorkflowID string
 	Positive   string
+	Negative   string
 	Width      int
 	Height     int
 	Success    bool
@@ -18,7 +19,7 @@ type AdminPromptRow struct {
 
 // AdminRecentPrompts 最近 n 条出图记录。
 func (s *Store) AdminRecentPrompts(n int) ([]AdminPromptRow, error) {
-	rows, err := s.db.Query(`SELECT at, user_id, COALESCE(source,''), COALESCE(workflow_id,''), COALESCE(positive,''), width, height, success
+	rows, err := s.db.Query(`SELECT at, user_id, COALESCE(source,''), COALESCE(workflow_id,''), COALESCE(positive,''), COALESCE(negative,''), width, height, success
 FROM prompt_records ORDER BY id DESC LIMIT ?`, n)
 	if err != nil {
 		return nil, err
@@ -28,7 +29,7 @@ FROM prompt_records ORDER BY id DESC LIMIT ?`, n)
 	for rows.Next() {
 		var r AdminPromptRow
 		var success int
-		if err := rows.Scan(&r.At, &r.UserID, &r.Source, &r.WorkflowID, &r.Positive, &r.Width, &r.Height, &success); err != nil {
+		if err := rows.Scan(&r.At, &r.UserID, &r.Source, &r.WorkflowID, &r.Positive, &r.Negative, &r.Width, &r.Height, &success); err != nil {
 			return nil, err
 		}
 		r.Success = success != 0

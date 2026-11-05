@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/json"
 	"time"
+
+	"wallpaper/internal/config"
+	"wallpaper/internal/prompt"
 )
 
 // 空闲主动预生成参数: 每用户 ready 目标 / 活跃窗口 / 单次调度上限。
@@ -49,6 +52,23 @@ func (a *API) proactivePregen() {
 		_ = json.Unmarshal([]byte(snap.Profile), &req.Profile)
 		_ = json.Unmarshal([]byte(snap.Disliked), &req.Disliked)
 		_ = json.Unmarshal([]byte(snap.Custom), &req.CustomKeywords)
+		_ = json.Unmarshal([]byte(snap.Packs), &req.Packs)
+		// 无包防线: 包党画像(权重全 0.3)推不出包时逐维采样会满词典乱出
+		// (枪械/飞机/漫画等非偏好题材), 此时代下单只会污染 ready 图, 直接跳过;
+		// "[]"=用户显式清空 → 交由客户端自行下单。
+		if req.Packs != nil {
+			if len(req.Packs) == 0 {
+				continue
+			}
+		} else if len(req.Profile) == 0 {
+			continue
+		} else {
+			tmp := config.NewProfile()
+			tmp.Weights = req.Profile
+			if len(prompt.InferPacks(tmp)) == 0 {
+				continue
+			}
+		}
 		if a.submitPregenOrder(u, req) != "" {
 			submitted++
 		}

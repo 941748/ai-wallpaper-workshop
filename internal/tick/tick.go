@@ -547,9 +547,30 @@ func recentRounds(history []prompt.HistoryEntry, n int) []cloud.RoundItem {
 	return out
 }
 
-// chooseGenSize 本地兜底出图尺寸: 固定 1920x1080(默认出图尺寸, 适配交给 FitToScreen)。
+// chooseGenSize 本地兜底出图尺寸: 主屏物理分辨率对齐 8 倍数(下取整, 不超屏),
+// 同分辨率时 FitToScreen 为无损直贴; 超 2560 上限时等比缩放(与云端 workflows 上限对齐);
+// 无效屏幕值退回 1920x1080。
 func chooseGenSize(sw, sh int) (int, int) {
-	return 1920, 1080
+	if sw < 320 || sh < 320 {
+		return 1920, 1080
+	}
+	w, h := sw/8*8, sh/8*8
+	if w < 512 {
+		w = 512
+	}
+	if h < 512 {
+		h = 512
+	}
+	const maxSide = 2560
+	if w > maxSide || h > maxSide {
+		r := float64(maxSide) / float64(w)
+		if r2 := float64(maxSide) / float64(h); r2 < r {
+			r = r2
+		}
+		w = int(float64(w)*r+0.5) / 8 * 8
+		h = int(float64(h)*r+0.5) / 8 * 8
+	}
+	return w, h
 }
 
 // taskTickHours 计划任务理想节律(小时); 与 scheduler.TickHours 统一, 换图频率由 tick 内部节流完成。

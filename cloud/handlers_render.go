@@ -141,6 +141,12 @@ func (a *API) saveProfileSnapshot(userID string, req nextReq) {
 			snap.Custom = string(b)
 		}
 	}
+	// 风格包必须随快照落库(nil=旧客户端/未设置→留空走权重反推; "[]"=显式清空)
+	if req.Packs != nil {
+		if b, err := json.Marshal(req.Packs); err == nil {
+			snap.Packs = string(b)
+		}
+	}
 	if err := a.st.SaveProfileSnapshot(snap); err != nil {
 		a.logf("画像快照保存失败 user=%s: %v", userID, err)
 	}

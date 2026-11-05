@@ -12,7 +12,8 @@ var adminTmpl = template.Must(template.New("admin").Parse(`<!doctype html><html 
 <title>{{.App}} 管理看板</title>
 <style>body{font-family:system-ui;margin:24px;background:#0f172a;color:#e2e8f0}
 table{border-collapse:collapse;width:100%;margin:12px 0}td,th{border:1px solid #334155;padding:6px 10px;font-size:13px;text-align:left}
-th{background:#1e293b}h2{margin-top:28px}code{color:#7dd3fc}</style></head><body>
+th{background:#1e293b}h2{margin-top:28px}code{color:#7dd3fc}
+.p{white-space:pre-wrap;word-break:break-all;max-width:560px}</style></head><body>
 <h1>{{.App}} 云服务 · v{{.Version}}</h1>
 <h2>核心指标</h2>
 <p>出图总数 <b>{{.GenTotal}}</b> · 成功 <b>{{.GenOK}}</b> · 图片下载 <b>{{.SiteImgDL}}</b> · 官网浏览 <b>{{.SitePV}}</b> · 官网访客 <b>{{.SiteUV}}</b> · 客户端下载 <b>{{.SiteDL}}</b></p>
@@ -26,8 +27,8 @@ th{background:#1e293b}h2{margin-top:28px}code{color:#7dd3fc}</style></head><body
 <table><tr><th>user_id</th><th>注册时间</th><th>今日 LLM</th><th>今日出图</th><th>禁用</th></tr>
 {{range .Users}}<tr><td><code>{{.UserID}}</code></td><td>{{.CreatedAt}}</td><td>{{.LLM}}</td><td>{{.Gen}}</td><td>{{.Disabled}}</td></tr>{{end}}</table>
 <h2>最近出图记录 (20)</h2>
-<table><tr><th>时间</th><th>user</th><th>来源</th><th>工作流</th><th>尺寸</th><th>成功</th><th>提示词(截断)</th></tr>
-{{range .Prompts}}<tr><td>{{.At}}</td><td><code>{{.User}}</code></td><td>{{.Source}}</td><td>{{.WorkflowID}}</td><td>{{.W}}x{{.H}}</td><td>{{.Success}}</td><td>{{.Positive}}</td></tr>{{end}}</table>
+<table><tr><th>时间</th><th>user</th><th>来源</th><th>工作流</th><th>尺寸</th><th>成功</th><th>正向提示词(完整)</th><th>负向提示词(完整)</th></tr>
+{{range .Prompts}}<tr><td>{{.At}}</td><td><code>{{.User}}</code></td><td>{{.Source}}</td><td>{{.WorkflowID}}</td><td>{{.W}}x{{.H}}</td><td>{{.Success}}</td><td class="p">{{.Positive}}</td><td class="p">{{.Negative}}</td></tr>{{end}}</table>
 <h2>最近漂移事件 (30)</h2>
 <table><tr><th>时间</th><th>user</th><th>类型</th><th>详情</th></tr>
 {{range .Signals}}<tr><td>{{.At}}</td><td><code>{{.User}}</code></td><td>{{.Type}}</td><td>{{.Detail}}</td></tr>{{end}}</table>
@@ -116,18 +117,15 @@ func (a *API) handleAdmin(w http.ResponseWriter, r *http.Request) {
 
 	// 最近记录/信号/任务: 通过 db 直查简化(只读)
 	type pr struct {
-		At, User, Source, WorkflowID, Positive string
-		W, H                                   int
-		Success                                bool
+		At, User, Source, WorkflowID, Positive, Negative string
+		W, H                                             int
+		Success                                          bool
 	}
 	var prompts []pr
 	if rows, err := a.st.AdminRecentPrompts(20); err == nil {
 		for _, x := range rows {
-			pos := x.Positive
-			if len(pos) > 80 {
-				pos = pos[:80] + "…"
-			}
-			prompts = append(prompts, pr{x.At, x.UserID, x.Source, x.WorkflowID, pos, x.Width, x.Height, x.Success})
+			// 完整输出正/负向提示词, 不截断(看板排查配图问题需要全文)
+			prompts = append(prompts, pr{x.At, x.UserID, x.Source, x.WorkflowID, x.Positive, x.Negative, x.Width, x.Height, x.Success})
 		}
 	}
 	data["Prompts"] = prompts
