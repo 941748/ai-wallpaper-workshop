@@ -210,3 +210,258 @@ FROM prompt_records WHERE at >= ? GROUP BY d ORDER BY d DESC`, since)
 	err = rows.Err()
 	return
 }
+
+// ---------- P0 看板改版(2026-11-06): 分页签 + 统计图表 ----------
+
+// GrowthRow 某日新增用户行。
+type GrowthRow struct {
+	Day string
+	New int64
+}
+
+// UserGrowthDaily 近 n 天每日新增用户(日期升序)。
+func (s *Store) UserGrowthDaily(n int) ([]GrowthRow, error) {
+	since := time.Now().AddDate(0, 0, -n).Format(timeFmt)
+	rows, err := s.db.Query(`SELECT substr(created_at,1,10) AS d, COUNT(*)
+FROM users WHERE created_at >= ? GROUP BY d ORDER BY d`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GrowthRow
+	for rows.Next() {
+		var r GrowthRow
+		if err := rows.Scan(&r.Day, &r.New); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UserPrefRow 看板用户行(含画像原料, 供偏好列与聚合分析)。
+type UserPrefRow struct {
+	UserID       string
+	CreatedAt    string
+	Disabled     bool
+	PromptCount  int64
+	LastPromptAt string
+	Profile      string // JSON map[string]float64, ""=无画像
+	Packs        string // JSON []string, ""=旧档未设置, "[]"=显式清空
+	Disliked     string // JSON []string
+	ClientVer    string // 最近上报的客户端版本, ""=尚未上报
+}
+
+// AdminUserPrefRows 全部用户 LEFT JOIN 画像快照 + 出图数/最近出图(最近出图倒序, 无出图按注册倒序)。
+func (s *Store) AdminUserPrefRows() ([]UserPrefRow, error) {
+	rows, err := s.db.Query(`SELECT u.user_id, u.created_at, u.disabled,
+  COALESCE((SELECT COUNT(*) FROM prompt_records p WHERE p.user_id = u.user_id), 0),
+  COALESCE((SELECT MAX(at) FROM prompt_records p WHERE p.user_id = u.user_id), '') AS last_at,
+  COALESCE(pr.profile, ''), COALESCE(pr.packs, ''), COALESCE(pr.disliked, ''), u.client_ver
+FROM users u LEFT JOIN user_profiles pr ON pr.user_id = u.user_id
+ORDER BY last_at DESC, u.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserPrefRow
+	for rows.Next() {
+		var r UserPrefRow
+		var disabled int
+		if err := rows.Scan(&r.UserID, &r.CreatedAt, &disabled, &r.PromptCount,
+			&r.LastPromptAt, &r.Profile, &r.Packs, &r.Disliked, &r.ClientVer); err != nil {
+			return nil, err
+		}
+		r.Disabled = disabled != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ClientVerRow 客户端版本分布行。
+type ClientVerRow struct {
+	Ver    string
+	N      int64
+	LastAt string
+}
+
+// ClientVerDist 各客户端版本的用户数与最近上报时间。
+func (s *Store) ClientVerDist() ([]ClientVerRow, error) {
+	rows, err := s.db.Query(`SELECT client_ver, COUNT(*), COALESCE(MAX(client_ver_at),'')
+FROM users WHERE client_ver <> '' GROUP BY client_ver`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ClientVerRow
+	for rows.Next() {
+		var r ClientVerRow
+		if err := rows.Scan(&r.Ver, &r.N, &r.LastAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GenSourceRow 某日某来源的出图行。
+type GenSourceRow struct {
+	Day     string
+	Source  string
+	Total   int64
+	Success int64
+}
+
+// GenDailyBySource 近 n 天按天×来源出图统计(日期升序; 空来源归 unknown)。
+func (s *Store) GenDailyBySource(n int) ([]GenSourceRow, error) {
+	since := time.Now().AddDate(0, 0, -n).Format(timeFmt)
+	rows, err := s.db.Query(`SELECT substr(at,1,10) AS d, COALESCE(NULLIF(source,''),'unknown') AS src,
+  COUNT(*), COALESCE(SUM(success),0)
+FROM prompt_records WHERE at >= ? GROUP BY d, src ORDER BY d`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GenSourceRow
+	for rows.Next() {
+		var r GenSourceRow
+		if err := rows.Scan(&r.Day, &r.Source, &r.Total, &r.Success); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ResRow 分辨率统计行。
+type ResRow struct {
+	W, H int
+	N    int64
+}
+
+// ResolutionTop 近 n 天成功出图的分辨率 Top(按量倒序)。
+func (s *Store) ResolutionTop(n, limit int) ([]ResRow, error) {
+	since := time.Now().AddDate(0, 0, -n).Format(timeFmt)
+	rows, err := s.db.Query(`SELECT width, height, COUNT(*) AS n FROM prompt_records
+WHERE at >= ? AND success = 1 AND width > 0 AND height > 0
+GROUP BY width, height ORDER BY n DESC LIMIT ?`, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ResRow
+	for rows.Next() {
+		var r ResRow
+		if err := rows.Scan(&r.W, &r.H, &r.N); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ComboCountRow combo 频次行(combo JSON 原文 + 次数)。
+type ComboCountRow struct {
+	Combo string
+	N     int64
+}
+
+// ComboFreq 近 n 天成功出图的 combo 频次(按维聚合在调用侧做)。
+func (s *Store) ComboFreq(n int) ([]ComboCountRow, error) {
+	since := time.Now().AddDate(0, 0, -n).Format(timeFmt)
+	rows, err := s.db.Query(`SELECT combo, COUNT(*) AS n FROM prompt_records
+WHERE at >= ? AND success = 1 AND combo <> '' GROUP BY combo`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ComboCountRow
+	for rows.Next() {
+		var r ComboCountRow
+		if err := rows.Scan(&r.Combo, &r.N); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UsageDayRow 某日用量行。
+type UsageDayRow struct {
+	Day string
+	LLM int64
+	Gen int64
+}
+
+// UsageDaily 近 n 天用量按天(日期升序)。
+func (s *Store) UsageDaily(n int) ([]UsageDayRow, error) {
+	since := time.Now().AddDate(0, 0, -n).Format(timeFmt)
+	rows, err := s.db.Query(`SELECT substr(hour,1,10) AS d, COALESCE(SUM(llm_count),0), COALESCE(SUM(gen_count),0)
+FROM usage_counters WHERE hour >= ? GROUP BY d ORDER BY d`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UsageDayRow
+	for rows.Next() {
+		var r UsageDayRow
+		if err := rows.Scan(&r.Day, &r.LLM, &r.Gen); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// PregenStats 预生成池统计(总数 / 就绪数)。
+func (s *Store) PregenStats() (total, ready int64, err error) {
+	err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(ready),0) FROM pregen`).Scan(&total, &ready)
+	return
+}
+
+// CurrentSchema 当前迁移版本号(导出给看板)。
+func (s *Store) CurrentSchema() (int, error) {
+	return s.schemaVersion()
+}
+
+// AdminDeviceRow 设备行。
+type AdminDeviceRow struct {
+	Device, UserID, CreatedAt          string
+	Type, Model, OS, OSVersion, AppVer string
+	ScreenW, ScreenH                   int
+}
+
+// AdminDeviceRows 最近 n 条设备记录(注册/配对上报)。
+func (s *Store) AdminDeviceRows(n int) ([]AdminDeviceRow, error) {
+	rows, err := s.db.Query(`SELECT device, user_id, created_at, device_type, model, os, os_version,
+  app_version, screen_w, screen_h FROM devices
+ORDER BY COALESCE(NULLIF(last_seen,''), created_at) DESC LIMIT ?`, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AdminDeviceRow
+	for rows.Next() {
+		var r AdminDeviceRow
+		if err := rows.Scan(&r.Device, &r.UserID, &r.CreatedAt, &r.Type, &r.Model, &r.OS,
+			&r.OSVersion, &r.AppVer, &r.ScreenW, &r.ScreenH); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SiteEventCount 某类官网事件总数(如 dl / apk_dl)。
+func (s *Store) SiteEventCount(kind string) (int64, error) {
+	var n int64
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM site_events WHERE kind=?`, kind).Scan(&n)
+	return n, err
+}
+
+// HasPCDevice 用户是否登记过 PC 设备(= 已与电脑端配对)。
+func (s *Store) HasPCDevice(userID string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM devices WHERE user_id=? AND device_type='pc'`, userID).Scan(&n)
+	return n > 0, err
+}

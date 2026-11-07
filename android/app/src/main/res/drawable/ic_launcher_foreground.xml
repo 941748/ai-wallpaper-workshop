@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 远山 -->
+    <path
+        android:fillColor="#7DD3FC"
+        android:pathData="M26,68 L44,44 L56,60 L64,50 L82,68 Z" />
+    <!-- 太阳 -->
+    <path
+        android:fillColor="#FBBF24"
+        android:pathData="M66,34 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <!-- 地平线 -->
+    <path
+        android:fillColor="#4ADE80"
+        android:pathData="M26,72 L82,72 L82,76 L26,76 Z" />
+</vector>

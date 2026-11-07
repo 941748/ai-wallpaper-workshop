@@ -244,6 +244,13 @@ func RunOnce(ctx context.Context, env Env) error {
 			cloudOK = true
 			cc.FlushQueue(ctx, env.Dir) // 尽力补传历史离线记录
 			be = &cloud.Backend{C: cc}
+			// 双端同步(下行): 服务端画像更新(如安卓点选编辑) → 备份本地后拉取替换
+			if remote, err := cc.GetProfile(ctx); err == nil {
+				if np, ok := pullRemoteProfile(env.Dir, cfg, remote); ok {
+					profile = np
+					st.Log("tick: 拉取服务端新画像 pv=%d, 本地已同步(旧档备份 profile.json.bak)", cfg.ProfileVer)
+				}
+			}
 		}
 	}
 

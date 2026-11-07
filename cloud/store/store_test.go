@@ -92,3 +92,103 @@ func TestProfileSnapshotPacksRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestM008DeviceDedupAndAttrs 迁移 v8: 存量重复设备行先去重再建唯一索引(索引先于去重会崩),
+// 旧设备回填 type=pc, AddDevice 幂等, 属性 upsert 空值不覆盖, 屏幕/类型查询正确。
+func TestM008DeviceDedupAndAttrs(t *testing.T) {
+	path := t.TempDir() + "/m8.db"
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 撤索引+删版本号, 忠实模拟"有重复行的未迁移旧库"
+	if _, err := s.db.Exec(`DROP INDEX idx_devices_du`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO devices(device,user_id,created_at)
+VALUES('h1','u1','2026-01-01T00:00:00Z'),('h1','u1','2026-01-02T00:00:00Z'),('h2','u1','2026-01-03T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(path) // 重放全部迁移 → v8
+	if err != nil {
+		t.Fatalf("迁移重放失败: %v", err)
+	}
+	defer s2.Close()
+	var n int
+	if err := s2.db.QueryRow(`SELECT COUNT(*) FROM devices`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("去重后应 2 行, got %d", n)
+	}
+	var typ string
+	if err := s2.db.QueryRow(`SELECT device_type FROM devices WHERE device='h1'`).Scan(&typ); err != nil {
+		t.Fatal(err)
+	}
+	if typ != "pc" {
+		t.Fatalf("存量设备应回填 pc, got %q", typ)
+	}
+	// AddDevice 幂等(唯一索引 + upsert)
+	if err := s2.AddDevice("h1", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.db.QueryRow(`SELECT COUNT(*) FROM devices WHERE device='h1' AND user_id='u1'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("AddDevice 应幂等, got %d", n)
+	}
+	// 属性 upsert: 首次写入 + 空值不覆盖
+	if err := s2.UpsertDeviceAttrs(DeviceAttr{
+		Device: "a1", UserID: "u1", Type: "android", Model: "Xiaomi 14",
+		OS: "Android", OSVersion: "14", AppVer: "1.0.0", ScreenW: 1080, ScreenH: 2400,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.UpsertDeviceAttrs(DeviceAttr{Device: "a1", UserID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s2.AdminDeviceRows(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var a1 *AdminDeviceRow
+	for i := range rows {
+		if rows[i].Device == "a1" {
+			a1 = &rows[i]
+		}
+	}
+	if a1 == nil || a1.Type != "android" || a1.Model != "Xiaomi 14" || a1.ScreenW != 1080 {
+		t.Fatalf("空值覆盖了属性: %+v", a1)
+	}
+	// 类型判定与 PC 屏幕查询
+	if ok, err := s2.DeviceIsAndroid("a1", "u1"); err != nil || !ok {
+		t.Fatalf("DeviceIsAndroid: %v %v", ok, err)
+	}
+	if ok, _ := s2.DeviceIsAndroid("h1", "u1"); ok {
+		t.Fatal("pc 设备不应判为安卓")
+	}
+	if w, h, _ := s2.RecentPCScreen("u1"); w != 0 || h != 0 {
+		t.Fatalf("尚无带屏幕的 PC 设备: %dx%d", w, h)
+	}
+	if err := s2.UpsertDeviceAttrs(DeviceAttr{Device: "pc1", UserID: "u1", Type: "pc", ScreenW: 2240, ScreenH: 1400}); err != nil {
+		t.Fatal(err)
+	}
+	if w, h, _ := s2.RecentPCScreen("u1"); w != 2240 || h != 1400 {
+		t.Fatalf("RecentPCScreen: %dx%d", w, h)
+	}
+	// TouchDeviceScreen
+	if err := s2.TouchDeviceScreen("a1", "u1", 1080, 2400); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.TouchDeviceScreen("ghost", "u1", 1, 1); err != nil {
+		t.Fatalf("未登记设备 touch 不应报错: %v", err)
+	}
+}

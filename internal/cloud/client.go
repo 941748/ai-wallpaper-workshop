@@ -437,6 +437,24 @@ func (c *Client) ClientLatest(ctx context.Context, currentVersion string) (*Late
 	return &out, nil
 }
 
+// RemoteProfile 服务端画像快照(双端同步下行; packs 三态: nil=推断/[]=清空/列表=选中)。
+type RemoteProfile struct {
+	ProfileVersion int                `json:"profile_version"`
+	Profile        map[string]float64 `json:"profile"`
+	Disliked       []string           `json:"disliked"`
+	Custom         []string           `json:"custom"`
+	Packs          []string           `json:"packs"`
+}
+
+// GetProfile 拉取服务端画像快照(GET /api/v1/profile)。
+func (c *Client) GetProfile(ctx context.Context) (*RemoteProfile, error) {
+	var out RemoteProfile
+	if err := c.doJSON(ctx, c.meta, http.MethodGet, "/api/v1/profile", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // allowedDownloadPrefixes 更新包下载的允许来源前缀(自有云端 + 官方软件源镜像)。
 // Gitee/GitHub 直链需放行; 重定向后的真实域名不检查(以初始链接为准)。
 var allowedDownloadPrefixes = []string{

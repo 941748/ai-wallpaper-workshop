@@ -31,8 +31,26 @@ func (a *API) handlePolicy(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 客户端版本分发 ----------
 
+// releaseManifest releases/manifest*.json 结构(Windows 与安卓共用字段; url 可覆盖下载地址)。
+type releaseManifest struct {
+	Version string `json:"version"`
+	File    string `json:"file"`
+	SHA256  string `json:"sha256"`
+	Size    int64  `json:"size"`
+	Notes   string `json:"notes"`
+	URL     string `json:"url"` // 可选: 覆盖下载地址(如 /go/dl 计数中转)
+}
+
 func (a *API) handleClientLatest(w http.ResponseWriter, r *http.Request) {
 	current := r.URL.Query().Get("version")
+	// 更新检查是客户端最高频携带自身版本的时机(tick 尾部+手动检查), 顺手上报落库供看板版本分布。
+	if current != "" {
+		if u := a.authUser(r); u != nil {
+			if err := a.st.SetClientVersion(u.UserID, current); err != nil {
+				a.logf("客户端版本记录失败 user=%s: %v", u.UserID, err)
+			}
+		}
+	}
 	manifestPath := filepath.Join(a.dataDir, "releases", "manifest.json")
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -40,14 +58,7 @@ func (a *API) handleClientLatest(w http.ResponseWriter, r *http.Request) {
 		writeOK(w, map[string]any{"version": current, "notes": ""})
 		return
 	}
-	var m struct {
-		Version string `json:"version"`
-		File    string `json:"file"`
-		SHA256  string `json:"sha256"`
-		Size    int64  `json:"size"`
-		Notes   string `json:"notes"`
-		URL     string `json:"url"` // 可选: 覆盖下载地址(如 Gitee 直链)
-	}
+	var m releaseManifest
 	if err := json.Unmarshal(raw, &m); err != nil || m.Version == "" || m.File == "" {
 		writeOK(w, map[string]any{"version": current, "notes": ""})
 		return
@@ -102,4 +113,30 @@ func parseVer(v string) [3]int {
 		out[i] = n
 	}
 	return out
+}
+
+// handleAndroidLatest GET /api/v1/android/latest 安卓客户端检查更新。
+// 数据源 AW_DATA/releases/manifest-android.json(version/sha256/size/url),
+// url 统一指 /go/apk 计数中转; 未发布过 APK 时返回同版本(无更新)。
+func (a *API) handleAndroidLatest(w http.ResponseWriter, r *http.Request) {
+	current := r.URL.Query().Get("version")
+	raw, err := os.ReadFile(filepath.Join(a.dataDir, "releases", "manifest-android.json"))
+	if err != nil {
+		writeOK(w, map[string]any{"version": current, "notes": ""})
+		return
+	}
+	var m releaseManifest
+	if err := json.Unmarshal(raw, &m); err != nil || m.Version == "" || m.URL == "" {
+		writeOK(w, map[string]any{"version": current, "notes": ""})
+		return
+	}
+	if compareVer(m.Version, current) <= 0 {
+		writeOK(w, map[string]any{"version": current, "notes": ""})
+		return
+	}
+	writeOK(w, map[string]any{
+		"version": m.Version,
+		"url":     m.URL,
+		"sha256":  m.SHA256, "size": m.Size, "notes": m.Notes,
+	})
 }

@@ -78,6 +78,8 @@ var migrations = []migration{
 	{4, m004Pregen},
 	{5, m005SiteEventIP},
 	{6, m006ProfilePacks},
+	{7, m007UserClientVer},
+	{8, m008DeviceAttrs},
 }
 
 // m001BaselineSchema 基线表结构(全部 IF NOT EXISTS, 对新库建表/对旧库无操作)。
@@ -263,6 +265,141 @@ func m006ProfilePacks(db *sql.DB) error {
 	return err
 }
 
+// m007UserClientVer users 加客户端版本两列(更新检查时上报)。逐列守卫: 任一列缺失即补, 避免半途失败后早退。
+func m007UserClientVer(db *sql.DB) error {
+	for _, col := range []struct{ name, ddl string }{
+		{"client_ver", `ALTER TABLE users ADD COLUMN client_ver TEXT NOT NULL DEFAULT ''`},
+		{"client_ver_at", `ALTER TABLE users ADD COLUMN client_ver_at TEXT NOT NULL DEFAULT ''`},
+	} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name=?`, col.name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(col.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetClientVersion 记录用户最近一次上报的客户端版本(更新检查 /client/latest 时调用)。
+func (s *Store) SetClientVersion(userID, ver string) error {
+	_, err := s.db.Exec(`UPDATE users SET client_ver=?, client_ver_at=? WHERE user_id=?`,
+		ver, time.Now().Format(timeFmt), userID)
+	return err
+}
+
+// m008DeviceAttrs devices 加设备属性/屏幕列(安卓配套, 方案A: screen 按设备存)。
+// 顺序: 逐列加 → 旧数据回填 type=pc(现存设备全为 Windows 客户端) → 去重 → 建 (device,user_id) 唯一索引
+// (索引必须在去重之后, 否则存量重复行会令 CREATE UNIQUE INDEX 失败)。
+func m008DeviceAttrs(db *sql.DB) error {
+	for _, col := range []struct{ name, ddl string }{
+		{"device_type", `ALTER TABLE devices ADD COLUMN device_type TEXT NOT NULL DEFAULT ''`},
+		{"model", `ALTER TABLE devices ADD COLUMN model TEXT NOT NULL DEFAULT ''`},
+		{"os", `ALTER TABLE devices ADD COLUMN os TEXT NOT NULL DEFAULT ''`},
+		{"os_version", `ALTER TABLE devices ADD COLUMN os_version TEXT NOT NULL DEFAULT ''`},
+		{"app_version", `ALTER TABLE devices ADD COLUMN app_version TEXT NOT NULL DEFAULT ''`},
+		{"screen_w", `ALTER TABLE devices ADD COLUMN screen_w INTEGER NOT NULL DEFAULT 0`},
+		{"screen_h", `ALTER TABLE devices ADD COLUMN screen_h INTEGER NOT NULL DEFAULT 0`},
+		{"last_seen", `ALTER TABLE devices ADD COLUMN last_seen TEXT NOT NULL DEFAULT ''`},
+	} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('devices') WHERE name=?`, col.name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(col.ddl); err != nil {
+			return err
+		}
+	}
+	if _, err := db.Exec(`UPDATE devices SET device_type='pc' WHERE device_type=''`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`DELETE FROM devices WHERE rowid NOT IN
+(SELECT MIN(rowid) FROM devices GROUP BY device, user_id)`); err != nil {
+		return err
+	}
+	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_du ON devices(device, user_id)`)
+	return err
+}
+
+// DeviceAttr 设备属性(register/link 携带的 device_info)。
+type DeviceAttr struct {
+	Device, UserID                     string
+	Type, Model, OS, OSVersion, AppVer string
+	ScreenW, ScreenH                   int
+}
+
+// AddDevice 登记设备(兼容旧调用): 按 (device,user_id) 幂等插入, 仅刷新活跃时间; 存量流量全为 PC。
+func (s *Store) AddDevice(device, userID string) error {
+	now := time.Now().Format(timeFmt)
+	_, err := s.db.Exec(`INSERT INTO devices(device, user_id, created_at, last_seen, device_type)
+VALUES(?,?,?,?, 'pc')
+ON CONFLICT(device, user_id) DO UPDATE SET last_seen=excluded.last_seen`,
+		device, userID, now, now)
+	return err
+}
+
+// UpsertDeviceAttrs 登记/更新设备属性与屏幕(device_info 上报; 空值字段不覆盖已有值)。
+func (s *Store) UpsertDeviceAttrs(d DeviceAttr) error {
+	now := time.Now().Format(timeFmt)
+	_, err := s.db.Exec(`INSERT INTO devices
+(device, user_id, created_at, last_seen, device_type, model, os, os_version, app_version, screen_w, screen_h)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(device, user_id) DO UPDATE SET
+  device_type=CASE WHEN excluded.device_type<>'' THEN excluded.device_type ELSE devices.device_type END,
+  model=CASE WHEN excluded.model<>'' THEN excluded.model ELSE devices.model END,
+  os=CASE WHEN excluded.os<>'' THEN excluded.os ELSE devices.os END,
+  os_version=CASE WHEN excluded.os_version<>'' THEN excluded.os_version ELSE devices.os_version END,
+  app_version=CASE WHEN excluded.app_version<>'' THEN excluded.app_version ELSE devices.app_version END,
+  screen_w=CASE WHEN excluded.screen_w>0 THEN excluded.screen_w ELSE devices.screen_w END,
+  screen_h=CASE WHEN excluded.screen_h>0 THEN excluded.screen_h ELSE devices.screen_h END,
+  last_seen=excluded.last_seen`,
+		d.Device, d.UserID, now, now, d.Type, d.Model, d.OS, d.OSVersion, d.AppVer, d.ScreenW, d.ScreenH)
+	return err
+}
+
+// TouchDeviceScreen 出图请求随行 device_id: 刷新屏幕(仅正值)与活跃时间; 只更新已登记行。
+func (s *Store) TouchDeviceScreen(device, userID string, w, h int) error {
+	now := time.Now().Format(timeFmt)
+	if w > 0 && h > 0 {
+		_, err := s.db.Exec(`UPDATE devices SET screen_w=?, screen_h=?, last_seen=? WHERE device=? AND user_id=?`,
+			w, h, now, device, userID)
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE devices SET last_seen=? WHERE device=? AND user_id=?`, now, device, userID)
+	return err
+}
+
+// DeviceIsAndroid 设备是否安卓端(device_info 上报过 type=android); 未登记返回 false。
+func (s *Store) DeviceIsAndroid(device, userID string) (bool, error) {
+	var t string
+	err := s.db.QueryRow(`SELECT device_type FROM devices WHERE device=? AND user_id=?`, device, userID).Scan(&t)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return t == "android", nil
+}
+
+// RecentPCScreen 最近活跃 PC 设备的屏幕尺寸(无则 0,0)。预生成池只服务 PC, 以设备维度为准。
+func (s *Store) RecentPCScreen(userID string) (w, h int, err error) {
+	err = s.db.QueryRow(`SELECT screen_w, screen_h FROM devices
+WHERE user_id=? AND device_type='pc' AND screen_w>0 AND screen_h>0
+ORDER BY COALESCE(NULLIF(last_seen,''), created_at) DESC LIMIT 1`, userID).Scan(&w, &h)
+	if err == sql.ErrNoRows {
+		return 0, 0, nil
+	}
+	return
+}
+
 const timeFmt = time.RFC3339
 
 // ---------- users / devices ----------
@@ -372,11 +509,7 @@ COALESCE(custom,''), COALESCE(packs,''), screen_w, screen_h FROM user_profiles W
 }
 
 // AddDevice 记录设备。
-func (s *Store) AddDevice(device, userID string) error {
-	_, err := s.db.Exec(`INSERT INTO devices(device, user_id, created_at) VALUES(?,?,?)`,
-		device, userID, time.Now().Format(timeFmt))
-	return err
-}
+// (旧 AddDevice 已由下方带 upsert 的实现替代, 迁移 v8 建 (device,user_id) 唯一索引后幂等)
 
 // ---------- prompt records ----------
 

@@ -17,6 +17,7 @@ import (
 
 	"wallpaper/cloud/llm"
 	"wallpaper/cloud/store"
+	"wallpaper/internal/taxonomy"
 )
 
 // ---------- mock ComfyUI ----------
@@ -109,7 +110,7 @@ func newTestServer(t *testing.T, llmBase string, withLLM bool) *testServer {
 		logf: func(string, ...any) {}, idleDelay: time.Millisecond}
 	api := &API{st: st, llm: llmClient, reg: reg, q: q, dataDir: data,
 		version: "test", logf: func(string, ...any) {},
-		genHour: 12, genDay: 60, llmHour: 16, llmDay: 90}
+		genHour: 12, genDay: 60, llmHour: 16, llmDay: 90, androidGenDay: 12}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go q.Run(ctx)
@@ -616,6 +617,45 @@ func TestClientLatestURLOverride(t *testing.T) {
 	}
 }
 
+// TestClientVersionRecorded 更新检查带鉴权时应把客户端版本落库(看板版本分布数据源); 无鉴权不记录。
+func TestClientVersionRecorded(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	uid, tok := ts.register(t)
+
+	resp, _ := ts.do(t, "GET", "/api/v1/client/latest?version=9.9.7", tok, nil)
+	_ = resp.Body.Close()
+
+	rows, err := ts.st.AdminUserPrefRows()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.UserID == uid {
+			found = true
+			if r.ClientVer != "9.9.7" {
+				t.Fatalf("版本未落库: got %q, want 9.9.7", r.ClientVer)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("注册用户未出现在看板用户行")
+	}
+
+	// 无鉴权的更新检查不应写入(也绝不 panic)
+	resp2, _ := ts.do(t, "GET", "/api/v1/client/latest?version=8.8.8", "", nil)
+	_ = resp2.Body.Close()
+	rows, err = ts.st.AdminUserPrefRows()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.UserID == uid && r.ClientVer != "9.9.7" {
+			t.Fatalf("无鉴权请求覆盖了版本: got %q", r.ClientVer)
+		}
+	}
+}
+
 type latestResp struct {
 	Version string `json:"version"`
 	URL     string `json:"url"`
@@ -681,5 +721,398 @@ func TestPolicyEndpoint(t *testing.T) {
 	}
 	if env.Data.Version != 5 || env.Data.PoolTarget != 4 || len(env.Data.PauseOptions) != 2 {
 		t.Fatalf("custom policy not applied: %+v", env.Data)
+	}
+}
+
+// ---------- P1-a 安卓配套服务端基座 ----------
+
+// TestProfileDownlink 画像下行: 字段齐全、packs 三态透传、screen 不下发(方案A)。
+func TestProfileDownlink(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	uid, tok := ts.register(t)
+	if err := ts.st.SaveProfileSnapshot(store.ProfileSnapshot{
+		UserID: uid, ProfileVersion: 5,
+		Profile:  `{"style/realism":0.9}`,
+		Disliked: `["subject/weapons"]`,
+		Custom:   `["subject/cat"]`,
+		Packs:    `[]`,
+		ScreenW:  2240, ScreenH: 1400,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, raw := ts.do(t, "GET", "/api/v1/profile", tok, nil)
+	var env struct {
+		Success bool           `json:"success"`
+		Data    map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || !env.Success {
+		t.Fatalf("响应异常: %s", raw)
+	}
+	d := env.Data
+	if int(d["profile_version"].(float64)) != 5 {
+		t.Fatalf("profile_version: %v", d["profile_version"])
+	}
+	if d["profile"].(map[string]any)["style/realism"].(float64) != 0.9 {
+		t.Fatalf("profile 内容: %v", d["profile"])
+	}
+	if len(d["disliked"].([]any)) != 1 || len(d["custom"].([]any)) != 1 {
+		t.Fatalf("disliked/custom: %v %v", d["disliked"], d["custom"])
+	}
+	if d["packs"] == nil {
+		t.Fatal("显式清空的 packs 应为 [] 而非 null")
+	}
+	if len(d["packs"].([]any)) != 0 {
+		t.Fatalf("packs 应为空数组: %v", d["packs"])
+	}
+	if _, has := d["screen_w"]; has {
+		t.Fatal("screen 属设备维度, 不应下发")
+	}
+
+	// packs 未设置(旧档): 应为 null(三态的"推断"语义)
+	if err := ts.st.SaveProfileSnapshot(store.ProfileSnapshot{UserID: uid, ProfileVersion: 6}); err != nil {
+		t.Fatal(err)
+	}
+	_, raw = ts.do(t, "GET", "/api/v1/profile", tok, nil)
+	_ = json.Unmarshal(raw, &env)
+	if env.Data["packs"] != nil {
+		t.Fatalf("未设置 packs 应为 null: %v", env.Data["packs"])
+	}
+}
+
+// TestDeviceInfoRegister device_info 上报应落 devices 新列(安卓属性)。
+func TestDeviceInfoRegister(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	resp, raw := ts.do(t, "POST", "/api/v1/users/register", "", map[string]any{
+		"device": "and-1",
+		"device_info": map[string]any{
+			"type": "android", "model": "Xiaomi 14", "os": "Android", "os_version": "14",
+			"app_version": "1.0.0", "screen_w": 1080, "screen_h": 2400,
+		},
+	})
+	_ = resp.Body.Close()
+	var env struct {
+		Data struct {
+			UserID string `json:"user_id"`
+			Token  string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || env.Data.UserID == "" {
+		t.Fatalf("注册失败: %s", raw)
+	}
+	rows, err := ts.st.AdminDeviceRows(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.Device == "and-1" {
+			found = true
+			if r.Type != "android" || r.Model != "Xiaomi 14" || r.OS != "Android" ||
+				r.OSVersion != "14" || r.AppVer != "1.0.0" || r.ScreenW != 1080 || r.ScreenH != 2400 {
+				t.Fatalf("device_info 未落库: %+v", r)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("设备未登记")
+	}
+}
+
+// TestAndroidSnapshotGuard 安卓渲染带 device_id: 屏幕进 devices, 不回写共享快照 screen(方案A)。
+func TestAndroidSnapshotGuard(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	uid, _ := ts.register(t)
+	// PC 先绘(无 device_id): 快照 screen=PC 主屏
+	ts.api.saveProfileSnapshot(uid, nextReq{
+		ProfileVersion: 1, ScreenW: 2240, ScreenH: 1400,
+		Profile: map[string]float64{"style/realism": 0.9},
+	})
+	// 安卓设备登记(带 screen)
+	if err := ts.st.UpsertDeviceAttrs(store.DeviceAttr{
+		Device: "and-1", UserID: uid, Type: "android",
+		Model: "Xiaomi 14", ScreenW: 1080, ScreenH: 2400,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 安卓渲染(带 device_id): 快照 screen 应保持 PC 值, 设备行更新
+	ts.api.saveProfileSnapshot(uid, nextReq{
+		ProfileVersion: 2, ScreenW: 1080, ScreenH: 2400, DeviceID: "and-1",
+		Profile: map[string]float64{"style/realism": 0.9},
+	})
+	snap, err := ts.st.LoadProfileSnapshot(uid)
+	if err != nil || snap == nil {
+		t.Fatal("快照缺失")
+	}
+	if snap.ScreenW != 2240 || snap.ScreenH != 1400 {
+		t.Fatalf("共享快照 screen 被安卓污染: %dx%d", snap.ScreenW, snap.ScreenH)
+	}
+	if snap.ProfileVersion != 2 {
+		t.Fatalf("画像版本应随渲染更新: %d", snap.ProfileVersion)
+	}
+	rows, _ := ts.st.AdminDeviceRows(10)
+	for _, r := range rows {
+		if r.Device == "and-1" && (r.ScreenW != 1080 || r.ScreenH != 2400) {
+			t.Fatalf("设备屏幕未更新: %+v", r)
+		}
+	}
+	// RecentPCScreen: 安卓不算 PC
+	if w, h, _ := ts.st.RecentPCScreen(uid); w != 0 || h != 0 {
+		t.Fatalf("纯安卓不应返回 PC 屏幕: %dx%d", w, h)
+	}
+	// PC 设备登记后可取
+	if err := ts.st.UpsertDeviceAttrs(store.DeviceAttr{
+		Device: "pc-1", UserID: uid, Type: "pc", ScreenW: 2240, ScreenH: 1400,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if w, h, _ := ts.st.RecentPCScreen(uid); w != 2240 || h != 1400 {
+		t.Fatalf("RecentPCScreen: %dx%d", w, h)
+	}
+}
+
+// TestAndroidLatestAndGoAPK 安卓检查更新 + /go/apk 计数 302 中转。
+func TestAndroidLatestAndGoAPK(t *testing.T) {
+	ts := newTestServer(t, "", false)
+
+	// 未发布: 返回同版本(无更新)
+	_, raw := ts.do(t, "GET", "/api/v1/android/latest?version=1.0.0", "", nil)
+	var env struct {
+		Data map[string]any `json:"data"`
+	}
+	_ = json.Unmarshal(raw, &env)
+	if env.Data["version"] != "1.0.0" || env.Data["url"] != nil {
+		t.Fatalf("未发布语义: %v", env.Data)
+	}
+
+	body := `{"version":"1.0.1","file":"AIWallpaper-Android-1.0.1.apk","sha256":"ab","size":9,` +
+		`"notes":"n","url":"https://www.cybermesh.space/go/apk"}`
+	if err := os.WriteFile(ts.data+"/releases/manifest-android.json", []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, raw = ts.do(t, "GET", "/api/v1/android/latest?version=1.0.0", "", nil)
+	env.Data = nil // 重置 map: json.Unmarshal 不会清除上一轮残留 key
+	_ = json.Unmarshal(raw, &env)
+	if env.Data["version"] != "1.0.1" || env.Data["url"] != "https://www.cybermesh.space/go/apk" {
+		t.Fatalf("更新下发: %v", env.Data)
+	}
+	_, raw = ts.do(t, "GET", "/api/v1/android/latest?version=1.0.1", "", nil)
+	env.Data = nil
+	_ = json.Unmarshal(raw, &env)
+	if env.Data["version"] != "1.0.1" || env.Data["url"] != nil {
+		t.Fatalf("同版本不应有更新: %v", env.Data)
+	}
+
+	// /go/apk: 302 到 Gitee 资产约定 URL + 记 apk_dl(不跟随跳转)
+	cli := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	req, err := http.NewRequest(http.MethodGet, ts.srv.URL+"/go/apk", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := cli.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("状态码: %d", resp.StatusCode)
+	}
+	want := "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/android-v1.0.1/AIWallpaper-Android-1.0.1.apk"
+	if loc := resp.Header.Get("Location"); loc != want {
+		t.Fatalf("Location: got %q want %q", loc, want)
+	}
+	if n, _ := ts.st.SiteEventCount("apk_dl"); n != 1 {
+		t.Fatalf("apk_dl 计数: %d", n)
+	}
+
+	// 未发布 manifest: 404
+	if err := os.Remove(ts.data + "/releases/manifest-android.json"); err != nil {
+		t.Fatal(err)
+	}
+	resp2, err := cli.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Fatalf("无 manifest 应 404: %d", resp2.StatusCode)
+	}
+}
+
+// TestAndroidQuotaScope 安卓出图配额独立计数(uid@android 作用域), PC 共享池不受影响;
+// profile.paired 按是否存在 PC 设备判定(安卓据此隐藏配对框)。
+func TestAndroidQuotaScope(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	uid, tok := ts.register(t)
+	if err := ts.st.UpsertDeviceAttrs(store.DeviceAttr{Device: "and-q", UserID: uid, Type: "android"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.st.UpsertDeviceAttrs(store.DeviceAttr{Device: "pc-q", UserID: uid, Type: "pc"}); err != nil {
+		t.Fatal(err)
+	}
+	u, err := ts.st.UserByID(uid)
+	if err != nil || u == nil {
+		t.Fatal("用户缺失")
+	}
+
+	// 作用域判定
+	if got := ts.api.genScope(u, "and-q"); got != uid+"@android" {
+		t.Fatalf("安卓 scope: %q", got)
+	}
+	if got := ts.api.genScope(u, "pc-q"); got != uid {
+		t.Fatalf("PC scope 应共享: %q", got)
+	}
+	if got := ts.api.genScope(u, ""); got != uid {
+		t.Fatalf("无设备应共享: %q", got)
+	}
+
+	// 用尽安卓日配额(12), PC 共享池应不受影响
+	for i := 0; i < 12; i++ {
+		if err := ts.st.BumpUsage(uid+"@android", "gen"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ts.api.checkGenQuota(u, "and-q") {
+		t.Fatal("安卓配额应已用尽(12/天)")
+	}
+	if !ts.api.checkGenQuota(u, "pc-q") {
+		t.Fatal("PC 共享池不应被安卓用量挤占")
+	}
+	if !ts.api.checkGenQuota(u, "") {
+		t.Fatal("无设备作用域不应受影响")
+	}
+
+	// profile.paired: 有 PC 设备 → true
+	_, raw := ts.do(t, "GET", "/api/v1/profile", tok, nil)
+	var env struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data["paired"] != true {
+		t.Fatalf("paired 应为 true: %v", env.Data["paired"])
+	}
+
+	// 纯安卓用户(无 PC 设备) → false
+	resp, raw2 := ts.do(t, "POST", "/api/v1/users/register", "", map[string]any{
+		"device": "and-only", "device_info": map[string]any{"type": "android"},
+	})
+	_ = resp.Body.Close()
+	var reg struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw2, &reg); err != nil || reg.Data.Token == "" {
+		t.Fatalf("注册失败: %s", raw2)
+	}
+	_, raw3 := ts.do(t, "GET", "/api/v1/profile", reg.Data.Token, nil)
+	env.Data = nil
+	if err := json.Unmarshal(raw3, &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data["paired"] != false {
+		t.Fatalf("纯安卓用户 paired 应为 false: %v", env.Data["paired"])
+	}
+}
+
+// TestProfilePushAndGuard 画像编辑推送(安卓点选→双端同步): pv 服务端授版、
+// 落后版本的出图上传被守卫拦住不覆盖、校验≥1包或≥1喜欢、labels/dict 下发。
+func TestProfilePushAndGuard(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	uid, tok := ts.register(t)
+
+	// 1) 校验: 空画像+空包 → 400
+	resp, raw := ts.do(t, "POST", "/api/v1/profile", tok, map[string]any{
+		"profile": map[string]float64{},
+		"packs":   []string{},
+	})
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("空画像应 400, got %d (%s)", resp.StatusCode, raw)
+	}
+
+	// 2) 正常推送: 一个喜欢 + 一个包
+	resp, raw = ts.do(t, "POST", "/api/v1/profile", tok, map[string]any{
+		"profile": map[string]float64{"style/realism": 0.9},
+		"packs":   []string{"写实美女"},
+	})
+	_ = resp.Body.Close()
+	var env struct {
+		Success bool           `json:"success"`
+		Data    map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || !env.Success {
+		t.Fatalf("推送失败: %s", raw)
+	}
+	if int(env.Data["profile_version"].(float64)) != 1 {
+		t.Fatalf("首推 pv 应为1: %v", env.Data)
+	}
+
+	// 3) GET 应回带 labels/dict/packs
+	_, raw = ts.do(t, "GET", "/api/v1/profile", tok, nil)
+	env.Data = nil
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data["profile_version"].(float64) != 1 {
+		t.Fatalf("GET pv: %v", env.Data["profile_version"])
+	}
+	labels := env.Data["labels"].(map[string]any)
+	if labels["style/realism"] != "写实" {
+		t.Fatalf("labels 应含中文: %v", labels)
+	}
+	dict := env.Data["dict"].(map[string]any)
+	dims := dict["dimensions"].([]any)
+	if len(dims) != len(taxonomy.Dimensions) {
+		t.Fatalf("dict 维度数: %d", len(dims))
+	}
+	dpacks := dict["packs"].([]any)
+	if len(dpacks) != len(taxonomy.PresetPacks) {
+		t.Fatalf("dict 包数: %d", len(dpacks))
+	}
+	firstPack := dpacks[0].(map[string]any)
+	if len(firstPack["covers"].([]any)) == 0 {
+		t.Fatal("包 covers 不应为空")
+	}
+
+	// 4) 落后版本的出图上传(如 PC 旧本地画像) → 守卫: 画像保持推送值
+	ts.api.saveProfileSnapshot(uid, nextReq{
+		ProfileVersion: 0, // 落后于 pv=1
+		Profile:        map[string]float64{"subject/weapons": 0.9},
+		ScreenW:        2240, ScreenH: 1400,
+	})
+	snap, err := ts.st.LoadProfileSnapshot(uid)
+	if err != nil || snap == nil {
+		t.Fatal("快照缺失")
+	}
+	if snap.ProfileVersion != 1 {
+		t.Fatalf("守卫应保持 pv=1, got %d", snap.ProfileVersion)
+	}
+	var pm map[string]float64
+	_ = json.Unmarshal([]byte(snap.Profile), &pm)
+	if _, hit := pm["subject/weapons"]; hit {
+		t.Fatal("旧画像不应覆盖新编辑")
+	}
+	if _, ok := pm["style/realism"]; !ok {
+		t.Fatal("推送的画像应保留")
+	}
+	// screen 仍随上传更新(设备维度不受画像守卫影响)
+	if snap.ScreenW != 2240 || snap.ScreenH != 1400 {
+		t.Fatalf("screen 应随请求更新: %dx%d", snap.ScreenW, snap.ScreenH)
+	}
+
+	// 5) 二次推送: pv 递增
+	resp, raw = ts.do(t, "POST", "/api/v1/profile", tok, map[string]any{
+		"profile": map[string]float64{"style/realism": 0.9, "subject/cat": 0.9},
+		"packs":   []string{"治愈日常"},
+	})
+	_ = resp.Body.Close()
+	env.Data = nil
+	_ = json.Unmarshal(raw, &env)
+	if int(env.Data["profile_version"].(float64)) != 2 {
+		t.Fatalf("二推 pv 应为2: %v", env.Data)
 	}
 }

@@ -58,15 +58,16 @@ func main() {
 
 	api := &API{
 		st: st, llm: llmClient, reg: reg, q: q, dataDir: dataDir,
-		siteDir:    env("AW_SITE", "/opt/aiwallpaper/site"),
-		dlDir:      env("AW_DL", "/opt/aiwallpaper/downloads"),
-		adminToken: env("AW_ADMIN_TOKEN", ""),
-		version:    serverVersion,
-		logf:       logf,
-		genHour:    envInt("AW_QUOTA_GEN_HOUR", 6),
-		genDay:     envInt("AW_QUOTA_GEN_DAY", 40),
-		llmHour:    envInt("AW_QUOTA_LLM_HOUR", 8),
-		llmDay:     envInt("AW_QUOTA_LLM_DAY", 60),
+		siteDir:       env("AW_SITE", "/opt/aiwallpaper/site"),
+		dlDir:         env("AW_DL", "/opt/aiwallpaper/downloads"),
+		adminToken:    env("AW_ADMIN_TOKEN", ""),
+		version:       serverVersion,
+		logf:          logf,
+		genHour:       envInt("AW_QUOTA_GEN_HOUR", 6),
+		genDay:        envInt("AW_QUOTA_GEN_DAY", 40),
+		llmHour:       envInt("AW_QUOTA_LLM_HOUR", 8),
+		llmDay:        envInt("AW_QUOTA_LLM_DAY", 60),
+		androidGenDay: envInt("AW_QUOTA_ANDROID_DAY", 12),
 	}
 	// 空闲主动预生成: 队列 worker 空闲分支周期调用, 为活跃用户保持 ready 库存
 	q.idleHook = api.proactivePregen

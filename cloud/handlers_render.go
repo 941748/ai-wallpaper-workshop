@@ -19,16 +19,21 @@ func (a *API) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var p backend.GenParams
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&p); err != nil {
+	// device_id 仅用于配额作用域判定(安卓独立12/天), 不参与出图参数
+	var raw struct {
+		backend.GenParams
+		DeviceID string `json:"device_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&raw); err != nil {
 		writeFail(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}
-	if !a.checkQuota(u, "gen") {
+	p := raw.GenParams
+	if !a.checkGenQuota(u, raw.DeviceID) {
 		quotaFail(w)
 		return
 	}
-	_ = a.st.BumpUsage(u.UserID, "gen")
+	a.bumpGen(u, raw.DeviceID)
 
 	wf := a.reg.Resolve(p.WorkflowID)
 	width, height := ClampSize(wf, p.Width, p.Height)
@@ -122,9 +127,28 @@ func (a *API) saveProfileSnapshot(userID string, req nextReq) {
 	if req.ProfileVersion <= 0 && len(req.Profile) == 0 {
 		return
 	}
+	oldSnap, _ := a.st.LoadProfileSnapshot(userID)
+	// 方案A: 携带 device_id 的请求把屏幕写进 devices(设备维度); 安卓设备不回写共享快照的
+	// screen 字段 —— 快照 screen 语义保留为"PC 主屏", 供预生成兜底, 避免双端比例互相污染。
+	keepScreen := false
+	if req.DeviceID != "" {
+		if isAndroid, err := a.st.DeviceIsAndroid(req.DeviceID, userID); err == nil && isAndroid {
+			keepScreen = true
+		}
+		if err := a.st.TouchDeviceScreen(req.DeviceID, userID, req.ScreenW, req.ScreenH); err != nil {
+			a.logf("设备屏幕记录失败 user=%s device=%s: %v", userID, req.DeviceID, err)
+		}
+	}
 	snap := store.ProfileSnapshot{
 		UserID: userID, ProfileVersion: req.ProfileVersion,
 		ScreenW: req.ScreenW, ScreenH: req.ScreenH,
+	}
+	if keepScreen {
+		if oldSnap != nil {
+			snap.ScreenW, snap.ScreenH = oldSnap.ScreenW, oldSnap.ScreenH
+		} else {
+			snap.ScreenW, snap.ScreenH = 0, 0
+		}
 	}
 	if len(req.Profile) > 0 {
 		if b, err := json.Marshal(req.Profile); err == nil {
@@ -146,6 +170,15 @@ func (a *API) saveProfileSnapshot(userID string, req nextReq) {
 		if b, err := json.Marshal(req.Packs); err == nil {
 			snap.Packs = string(b)
 		}
+	}
+	// 版本守卫(双端同步): 上传 pv 落后于服务端(安卓编辑经 POST /profile 已授更高 pv)时,
+	// 画像字段保持服务端现值, 只让 screen/设备随请求更新 —— 防旧画像覆盖新编辑。
+	if oldSnap != nil && req.ProfileVersion < oldSnap.ProfileVersion {
+		snap.Profile = oldSnap.Profile
+		snap.Disliked = oldSnap.Disliked
+		snap.Custom = oldSnap.Custom
+		snap.Packs = oldSnap.Packs
+		snap.ProfileVersion = oldSnap.ProfileVersion
 	}
 	if err := a.st.SaveProfileSnapshot(snap); err != nil {
 		a.logf("画像快照保存失败 user=%s: %v", userID, err)

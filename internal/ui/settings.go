@@ -45,15 +45,15 @@ type settings struct {
 	curPath string
 
 	// 偏好页
-	chips        *surveyChips
-	answers      map[string]survey.Attitude
-	baseAnswers  map[string]survey.Attitude // 关闭窗口时判断"未保存修改"的基线
-	selectedPacks map[string]bool           // 选中的风格包(一图一包基线; 与筹码微调互不写入)
-	basePacks    map[string]bool            // 未保存修改基线的选中包快照
-	packChips    *packRow                   // 包选择行(自绘, 选中态以颜色表达)
-	dislikesReset bool                      // 重置后保存时需清空画像避让清单(重建自当前勾选)
-	kwLB         *walk.ListBox
-	kwEdit       *walk.LineEdit
+	chips         *surveyChips
+	answers       map[string]survey.Attitude
+	baseAnswers   map[string]survey.Attitude // 关闭窗口时判断"未保存修改"的基线
+	selectedPacks map[string]bool            // 选中的风格包(一图一包基线; 与筹码微调互不写入)
+	basePacks     map[string]bool            // 未保存修改基线的选中包快照
+	packChips     *packRow                   // 包选择行(自绘, 选中态以颜色表达)
+	dislikesReset bool                       // 重置后保存时需清空画像避让清单(重建自当前勾选)
+	kwLB          *walk.ListBox
+	kwEdit        *walk.LineEdit
 
 	// 设置页
 	directCheck *walk.CheckBox
@@ -1061,6 +1061,9 @@ func (s *settings) createLink() {
 				return
 			}
 			s.syncLbl.SetText(fmt.Sprintf("配对码 %s 已生成(5 分钟内有效)", resp.Code))
+			if f, err := walk.NewFont("Consolas", 11, walk.FontBold); err == nil {
+				s.syncLbl.SetFont(f)
+			}
 			showQRDialog(s.mw, resp.URL, resp.Code)
 		})
 	}()
@@ -1257,7 +1260,7 @@ func showQRDialog(owner walk.Form, pageURL, code string) {
 		return
 	}
 	dlg.SetTitle(config.AppNameCN + " — 扫码配对")
-	dlg.SetSize(walk.Size{Width: 360, Height: 460})
+	dlg.SetSize(walk.Size{Width: 360, Height: 500})
 	_ = dlg.SetLayout(walk.NewVBoxLayout())
 
 	if pngData, err := qrcode.Encode(pageURL, qrcode.Medium, 256); err == nil {
@@ -1269,8 +1272,16 @@ func showQRDialog(owner walk.Form, pageURL, code string) {
 			}
 		}
 	}
+	// 配对码单独成行: 大号加粗居中, 一眼可读(用户反馈原内联小字太不明显)
 	codeLbl, _ := walk.NewLabel(dlg)
-	codeLbl.SetText("配对码: " + code + "  (5 分钟内有效)")
+	codeLbl.SetTextAlignment(walk.AlignCenter)
+	codeLbl.SetText(code)
+	if f, err := walk.NewFont("Consolas", 36, walk.FontBold); err == nil {
+		codeLbl.SetFont(f)
+	}
+	caption, _ := walk.NewLabel(dlg)
+	caption.SetTextAlignment(walk.AlignCenter)
+	caption.SetText("配对码 · 5 分钟内有效")
 	hint, _ := walk.NewLabel(dlg)
 	hint.SetText("手机扫码打开中转页可转发配对码;\n或直接在新设备处输入上面的 6 位码。")
 	closeBtn, _ := walk.NewPushButton(dlg)

@@ -25,6 +25,7 @@ type nextReq struct {
 	PendingSignals []signalItem       `json:"pending_signals"`
 	ScreenW        int                `json:"screen_w"`
 	ScreenH        int                `json:"screen_h"`
+	DeviceID       string             `json:"device_id"` // 可选: 设备标识(安卓必带/新 PC 带), 旧客户端不带则忽略
 	ForceShake     bool               `json:"force_shake"`
 	DisableContext bool               `json:"disable_context"`
 }
@@ -228,6 +229,7 @@ func (a *API) systemPrompt() string {
 		"7. 写实人像质感与叙事(风格为写实/复古胶片/日系写真且画面含人物时优先遵循): 强调真实皮肤纹理与发丝细节, 忌磨皮塑料感; " +
 		"环境整体低饱和, 唇色作为画面唯一高饱和色点; 镜头偏 85mm 定焦人像感与浅景深, 面部置于画面上 1/3; " +
 		"服装倾向白色系(衬衫/针织/睡裙等), 动作优先安静的\"手与头部互动\"(托腮/撩发/抱头)或无手姿态(闭眼侧卧/直视镜头), 避免高难度手部特写; " +
+		"四肢与手部遵循自然解剖(手臂与腿部比例正常、五指清晰), 忌扭曲残缺; " +
 		"躺卧场景可用俯拍对角线构图; 场景在纯色影棚/卧室床品/窗边逆光/户外自然光之间按组合与语境择优。" +
 		"以上均为倾向, 请结合画面合理性灵活取舍, 不必逐条硬套。\n" +
 		"8. 输出必须是 JSON 对象: {\"positive\": \"...\", \"reason\": \"一句中文理由\"}, 不得输出 JSON 以外的任何内容。"

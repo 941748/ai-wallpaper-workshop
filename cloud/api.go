@@ -33,6 +33,7 @@ type API struct {
 
 	genHour, genDay int
 	llmHour, llmDay int
+	androidGenDay   int // 安卓端独立出图日配额(与 PC 同账号但分开计数)
 }
 
 // Routes 注册全部路由(Go 1.22 方法路由)。
@@ -54,14 +55,20 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/client/latest", a.handleClientLatest)
 	mux.HandleFunc("POST /api/v1/devices/link", a.handleLink)
 	mux.HandleFunc("GET /api/v1/profile/drift", a.handleDrift)
+	mux.HandleFunc("GET /api/v1/profile", a.handleProfile)
+	mux.HandleFunc("POST /api/v1/profile", a.handleProfileSave)
+	mux.HandleFunc("GET /api/v1/android/latest", a.handleAndroidLatest)
 	mux.HandleFunc("GET /d/{code}", a.handleLinkPage)
 	mux.HandleFunc("GET /admin", a.handleAdmin)
+	mux.HandleFunc("GET /admin/echarts.min.js", a.handleEcharts)
 	// 客户端自更新分发
 	mux.Handle("GET /releases/", http.StripPrefix("/releases/",
 		http.FileServer(http.Dir(filepath.Join(a.dataDir, "releases")))))
 	// 官网(推广与客户端下载)
 	mux.HandleFunc("GET /", a.handleSite)
 	mux.HandleFunc("GET /download/AIWallpaper.exe", a.handleDownload)
+	mux.HandleFunc("GET /go/dl", a.handleGoDL)
+	mux.HandleFunc("GET /go/apk", a.handleGoAPK)
 	return mux
 }
 
@@ -123,6 +130,41 @@ func (a *API) checkQuota(u *store.User, kind string) bool {
 		return llmH < a.llmHour && llmD < a.llmDay
 	}
 	return genH < a.genHour && genD < a.genDay
+}
+
+// genScope 安卓设备的出图计数独立作用域(uid+@android), PC/未知设备保持同账号共享。
+// 移动端与 PC 配额互不影响(移动端默认 12 张/天, 见 AW_QUOTA_ANDROID_DAY)。
+func (a *API) genScope(u *store.User, deviceID string) string {
+	if deviceID == "" {
+		return u.UserID
+	}
+	if ok, err := a.st.DeviceIsAndroid(deviceID, u.UserID); err == nil && ok {
+		return u.UserID + "@android"
+	}
+	return u.UserID
+}
+
+// checkGenQuota 按设备作用域检查出图配额(小时上限共用 genHour, 日上限安卓用 androidGenDay)。
+func (a *API) checkGenQuota(u *store.User, deviceID string) bool {
+	scope := a.genScope(u, deviceID)
+	_, genH, err := a.st.UsageHour(scope)
+	if err != nil {
+		return true
+	}
+	_, genD, err := a.st.UsageToday(scope)
+	if err != nil {
+		return true
+	}
+	day := a.genDay
+	if scope != u.UserID {
+		day = a.androidGenDay
+	}
+	return genH < a.genHour && genD < day
+}
+
+// bumpGen 按设备作用域记一次出图用量。
+func (a *API) bumpGen(u *store.User, deviceID string) {
+	_ = a.st.BumpUsage(a.genScope(u, deviceID), "gen")
 }
 
 func randomHex(nBytes int) string {

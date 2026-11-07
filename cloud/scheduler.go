@@ -45,9 +45,21 @@ func (a *API) proactivePregen() {
 		if !a.checkQuota(u, "llm") || !a.checkQuota(u, "gen") {
 			continue // 配额不足不代下, 避免挤占用户自用额度
 		}
+		// 预生成屏幕尺寸(池只服务 PC): 优先最近活跃 PC 设备的屏幕(方案A 设备维度),
+		// 兜底共享快照但仅信横向值(快照 screen 语义=PC 主屏; 竖屏多为未知/安卓写入)。
+		// 两者皆无(如纯安卓用户, 安卓 MVP 不消费池)则跳过, 不浪费配额。
+		sw, sh := 0, 0
+		if w, h, err := a.st.RecentPCScreen(uid); err == nil && w > 0 && h > 0 {
+			sw, sh = w, h
+		} else if snap.ScreenW > 0 && snap.ScreenW >= snap.ScreenH {
+			sw, sh = snap.ScreenW, snap.ScreenH
+		}
+		if sw == 0 {
+			continue
+		}
 		req := nextReq{
 			ProfileVersion: snap.ProfileVersion,
-			ScreenW:        snap.ScreenW, ScreenH: snap.ScreenH,
+			ScreenW:        sw, ScreenH: sh,
 		}
 		_ = json.Unmarshal([]byte(snap.Profile), &req.Profile)
 		_ = json.Unmarshal([]byte(snap.Disliked), &req.Disliked)

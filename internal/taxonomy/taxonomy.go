@@ -30,7 +30,8 @@ const (
 // BaseNegative 通用负面提示词。
 const BaseNegative = "lowres, blurry, jpeg artifacts, watermark, text, signature, " +
 	"deformed, disfigured, out of frame, worst quality, low quality, " +
-	"plastic skin, oversaturated, deformed hands, extra fingers, bad anatomy"
+	"plastic skin, oversaturated, deformed hands, extra fingers, fused fingers, mutated hands, " +
+	"deformed arms, deformed legs, malformed limbs, extra limbs, bad anatomy"
 
 // QualitySuffix 正向提示词质量后缀。
 const QualitySuffix = "high detail, sharp focus, professional composition, 4k wallpaper"
