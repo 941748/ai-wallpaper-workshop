@@ -43,6 +43,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import kotlinx.coroutines.launch
+import space.cybermesh.wallpaper.net.Api
 import space.cybermesh.wallpaper.net.RenderEngine
 import space.cybermesh.wallpaper.net.RenderState
 import space.cybermesh.wallpaper.net.Session
@@ -294,17 +295,31 @@ fun GalleryScreen(session: Session) {
         }
         quotaMsg?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 
-        // 长按删除确认: 移出本地「最近生成」(不影响已设置的壁纸, 服务端不感知)
+        // 长按删除确认: 移出本地「最近生成」并同步清理云端副本(旧时间戳名反查不到任务, 只删本地)
         confirmDelete?.let { f ->
+            val mid = f.name.removePrefix("wp-").removeSuffix(".jpg")
+            val jobId = mid.takeIf { s ->
+                s.length == 24 && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+            }
             AlertDialog(
                 onDismissRequest = { confirmDelete = null },
                 title = { Text("删除这张图片？") },
-                text = { Text("将从「最近生成」中移除，删除后无法恢复。已设置的壁纸不受影响。") },
+                text = {
+                    Text(
+                        if (jobId != null) "将从「最近生成」中移除并清理云端副本，删除后无法恢复。已设置的壁纸不受影响。"
+                        else "将从「最近生成」中移除，删除后无法恢复。已设置的壁纸不受影响。"
+                    )
+                },
                 confirmButton = {
                     TextButton(onClick = {
                         confirmDelete = null
-                        f.delete()
-                        refresh()
+                        scope.launch {
+                            if (jobId != null) {
+                                runCatching { Api.deleteImage(session.state.value.token, jobId) }
+                            }
+                            f.delete()
+                            refresh()
+                        }
                     }) { Text("删除", color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = {

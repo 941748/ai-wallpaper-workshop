@@ -129,6 +129,9 @@ data class JobIdResp(@SerialName("job_id") val jobId: String)
 data class JobResp(val status: String, val error: String = "")
 
 @Serializable
+data class DeleteImageResp(val deleted: Boolean = false)
+
+@Serializable
 data class HealthResp(
     val ok: Boolean = false,
     @SerialName("quota_ok") val quotaOk: Boolean = true,
@@ -203,6 +206,11 @@ object Api {
 
     suspend fun job(token: String, id: String): JobResp = withIO {
         call("GET", "/api/v1/generate/$id", token)
+    }
+
+    /** 删除云端图片副本(OSS 对象+服务端本地文件); 失败由调用方降级只删本地。 */
+    suspend fun deleteImage(token: String, jobId: String) = withIO {
+        call<DeleteImageResp>("POST", "/api/v1/images/delete", token, json.encodeToString(mapOf("job_id" to jobId)))
     }
 
     /** 下载字节(url 为 /api/v1 相对路径或完整 URL; token 非空时带 Bearer)。 */

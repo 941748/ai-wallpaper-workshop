@@ -91,7 +91,8 @@ object RenderEngine {
         val bytes = Api.download(sess.token, "/api/v1/generate/$jobId/image")
 
         val dir = File(ctx.filesDir, "wallpapers").apply { mkdirs() }
-        val file = File(dir, "wp-${System.currentTimeMillis()}.jpg")
+        // 文件名携带 jobId: 删除时可反查任务同步清理云端副本(旧文件为时间戳名, 只删本地)
+        val file = File(dir, "wp-$jobId.jpg")
         file.writeBytes(bytes)
 
         onState(RenderState.Applying)
@@ -124,11 +125,11 @@ object RenderEngine {
         bmp.recycle()
     }
 
-    /** 最近生成的壁纸(新→旧)。 */
+    /** 最近生成的壁纸(新→旧; 新命名携带 jobId 无时间序, 统一按修改时间排)。 */
     fun recent(ctx: Context, limit: Int = 12): List<File> {
         val dir = File(ctx.filesDir, "wallpapers")
         return dir.listFiles { f -> f.extension.equals("jpg", true) }
-            ?.sortedByDescending { it.name }
+            ?.sortedByDescending { it.lastModified() }
             ?.take(limit)
             ?: emptyList()
     }
