@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -83,14 +84,153 @@ func (a *API) handleJobImage(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, http.StatusNotFound, "任务不存在")
 		return
 	}
-	if job.Status != "done" || job.ImagePath == "" {
+	if job.Status != "done" || (job.ImagePath == "" && job.OssKey == "") {
 		writeFail(w, http.StatusConflict, "成品尚未就绪")
 		return
 	}
 	if err := a.st.RecordSiteEvent("img_dl", u.UserID, siteVisitorIP(r)); err != nil {
 		a.logf("下载图计数失败: %v", err)
 	}
+	// 双模: 图片在 OSS → 302 签名 URL 直下(云服不碰字节); 否则回退本地文件
+	if job.OssKey != "" {
+		if u, err := presignOSSGET(job.OssKey, 15*time.Minute); err == nil {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Redirect(w, r, u, http.StatusFound)
+			return
+		} else {
+			a.logf("OSS 预签名失败, 回退本地文件: %v", err)
+		}
+	}
 	serveFile(w, job.ImagePath)
+}
+
+// handleImageDelete 用户删除图片: 清 OSS 对象+本地文件+归档/任务引用(幂等, 仅本人)。
+// 归档为长期真相(jobs 7 天即 Purge), 两行并存时都校验属主;
+// OSS 清理失败返回500且不改任何行(客户端据此降级只删本地, 云端留待重试)。
+func (a *API) handleImageDelete(w http.ResponseWriter, r *http.Request) {
+	u, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || req.JobID == "" {
+		writeFail(w, http.StatusBadRequest, "请求体解析失败")
+		return
+	}
+	job, _ := a.st.Job(req.JobID)     // 可能已被 7 天清理
+	arc, _ := a.st.Archive(req.JobID) // 归档长期存活
+	if job == nil && arc == nil {
+		writeFail(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	if (job != nil && job.UserID != u.UserID) || (arc != nil && arc.UserID != u.UserID) {
+		writeFail(w, http.StatusNotFound, "任务不存在")
+		return
+	}
+	ossKey, imagePath := "", ""
+	if arc != nil {
+		ossKey, imagePath = arc.OssKey, arc.ImagePath
+	}
+	if job != nil {
+		if ossKey == "" {
+			ossKey = job.OssKey
+		}
+		if imagePath == "" {
+			imagePath = job.ImagePath
+		}
+	}
+	if ossKey == "" && imagePath == "" {
+		if job != nil {
+			_ = a.st.ClearJobImage(job.JobID)
+		}
+		writeOK(w, map[string]bool{"deleted": true})
+		return
+	}
+	if ossKey != "" {
+		if err := ossDeleteObject(ossKey); err != nil {
+			a.logf("删除 OSS 对象失败 job=%s: %v", req.JobID, err)
+			writeFail(w, http.StatusInternalServerError, "云端清理失败, 请稍后再试")
+			return
+		}
+	}
+	if arc != nil {
+		_ = a.st.DeleteArchive(arc.JobID)
+	}
+	if job != nil {
+		_ = a.st.ClearJobImage(job.JobID)
+		if job.Kind == "pregen" {
+			_ = a.st.ClearPregenImage(job.JobID)
+		}
+	}
+	if imagePath != "" {
+		if err := os.Remove(imagePath); err != nil {
+			a.logf("删除本地文件失败 job=%s: %v", req.JobID, err)
+		}
+	}
+	a.logf("删除图片 user=%s job=%s", u.UserID, req.JobID)
+	writeOK(w, map[string]bool{"deleted": true})
+}
+
+// handleHistory 用户图片历史(归档表): jobs 7 天即 Purge, 历史独立存活。
+// image_url: OSS 行=15分钟预签名直链; 本地行=历史取图端点(带 Bearer)。
+func (a *API) handleHistory(w http.ResponseWriter, r *http.Request) {
+	u, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := a.st.ListArchive(u.UserID, limit)
+	if err != nil {
+		writeFail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	items := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		imgURL := "/api/v1/history/" + row.JobID + "/image"
+		if row.OssKey != "" {
+			if signed, err := presignOSSGET(row.OssKey, 15*time.Minute); err == nil {
+				imgURL = signed
+			}
+		}
+		items = append(items, map[string]any{
+			"job_id": row.JobID, "created_at": row.CreatedAt,
+			"width": row.Width, "height": row.Height, "kind": row.Kind,
+			"fav": row.Fav == 1, "image_url": imgURL,
+		})
+	}
+	writeOK(w, map[string]any{"items": items})
+}
+
+// handleHistoryImage 历史取图(归档双模: OSS 302 / 本地文件; jobs 清理后仍可用)。
+func (a *API) handleHistoryImage(w http.ResponseWriter, r *http.Request) {
+	u, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	row, err := a.st.Archive(r.PathValue("id"))
+	if err != nil || row == nil || row.UserID != u.UserID {
+		writeFail(w, http.StatusNotFound, "记录不存在")
+		return
+	}
+	if row.OssKey != "" {
+		if signed, err := presignOSSGET(row.OssKey, 15*time.Minute); err == nil {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Redirect(w, r, signed, http.StatusFound)
+			return
+		} else {
+			a.logf("历史 OSS 预签名失败, 回退本地文件: %v", err)
+		}
+	}
+	if row.ImagePath == "" {
+		writeFail(w, http.StatusNotFound, "图片不存在")
+		return
+	}
+	serveFile(w, row.ImagePath)
 }
 
 // ---------- 预生成(空闲队列) ----------
@@ -263,12 +403,26 @@ func (a *API) handlePregenImage(w http.ResponseWriter, r *http.Request) {
 	} else {
 		p, err = a.st.PopPregenReady(u.UserID)
 	}
-	if err != nil || p == nil || !p.Ready || p.ImagePath == "" {
+	if err != nil || p == nil || !p.Ready || (p.ImagePath == "" && p.OssKey == "") {
 		writeFail(w, http.StatusNotFound, "暂无预生成成品")
 		return
 	}
+	// 提货即归档: pregen 成品被取走=进入用户历史(未提货的不算)
+	if err := a.st.ArchivePregen(*p); err != nil {
+		a.logf("pregen 归档失败 job=%s: %v", p.JobID, err)
+	}
 	if err := a.st.RecordSiteEvent("img_dl", u.UserID, siteVisitorIP(r)); err != nil {
 		a.logf("下载图计数失败: %v", err)
+	}
+	// 双模: 图片在 OSS → 302 签名 URL 直下(提货即删语义不变, 行已弹出)
+	if p.OssKey != "" {
+		if u, err := presignOSSGET(p.OssKey, 15*time.Minute); err == nil {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Redirect(w, r, u, http.StatusFound)
+			return
+		} else {
+			a.logf("OSS 预签名失败, 回退本地文件: %v", err)
+		}
 	}
 	serveFile(w, p.ImagePath)
 }

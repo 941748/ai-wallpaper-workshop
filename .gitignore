@@ -2,6 +2,9 @@
 dist/
 rsrc_windows_amd64.syso
 
+# 出图机上传代理的本地构建副本(源码在 aw-uploader/)
+/aw-uploader.exe
+
 # 日志与本地测试数据
 *.log
 

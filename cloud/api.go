@@ -48,6 +48,9 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/generate", a.handleGenerate)
 	mux.HandleFunc("GET /api/v1/generate/{id}", a.handleJob)
 	mux.HandleFunc("GET /api/v1/generate/{id}/image", a.handleJobImage)
+	mux.HandleFunc("POST /api/v1/images/delete", a.handleImageDelete)
+	mux.HandleFunc("GET /api/v1/history", a.handleHistory)
+	mux.HandleFunc("GET /api/v1/history/{id}/image", a.handleHistoryImage)
 	mux.HandleFunc("POST /api/v1/pregen", a.handlePregenSubmit)
 	mux.HandleFunc("GET /api/v1/pregen", a.handlePregenFetch)
 	mux.HandleFunc("GET /api/v1/pregen/image", a.handlePregenImage)
@@ -60,6 +63,7 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/android/latest", a.handleAndroidLatest)
 	mux.HandleFunc("GET /d/{code}", a.handleLinkPage)
 	mux.HandleFunc("GET /admin", a.handleAdmin)
+	mux.HandleFunc("GET /admin/migrate-oss", a.handleMigrateOSS)
 	mux.HandleFunc("GET /admin/echarts.min.js", a.handleEcharts)
 	// 客户端自更新分发
 	mux.Handle("GET /releases/", http.StripPrefix("/releases/",
@@ -69,6 +73,8 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("GET /download/AIWallpaper.exe", a.handleDownload)
 	mux.HandleFunc("GET /go/dl", a.handleGoDL)
 	mux.HandleFunc("GET /go/apk", a.handleGoAPK)
+	mux.HandleFunc("POST /api/v1/agent/pending", a.handleAgentPending)
+	mux.HandleFunc("POST /api/v1/agent/done", a.handleAgentDone)
 	return mux
 }
 

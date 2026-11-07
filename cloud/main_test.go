@@ -1116,3 +1116,163 @@ func TestProfilePushAndGuard(t *testing.T) {
 		t.Fatalf("二推 pv 应为2: %v", env.Data)
 	}
 }
+
+// TestOssUploadAgentFlow P1 直传全链路: 开关开 → 队列只提交等完成(oss_pending) →
+// 代理 pending/done 协议(鉴权/幂等/服务端重算 oss_key) → 超时兜底 reclaim 落盘。
+func TestOssUploadAgentFlow(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	uid, _ := ts.register(t)
+	t.Setenv("AW_OSS_UPLOAD", "1")
+	setOSSEnv(t)
+	t.Setenv("AW_AGENT_TOKEN", "test-agent-token")
+
+	// 1) 建任务并走队列处理(开关开 → 不拉图, 置 oss_pending)
+	if err := ts.st.CreateJob(store.Job{
+		JobID: "j-oss1", UserID: uid, Kind: "gen", Priority: "normal",
+		Positive: "p", Width: 512, Height: 512,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := ts.st.Job("j-oss1")
+	if err != nil || job == nil {
+		t.Fatal("job missing")
+	}
+	ts.api.q.process(context.Background(), job)
+
+	tasks, err := ts.st.ListOssPending()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task *store.OssTask
+	for i := range tasks {
+		if tasks[i].JobID == "j-oss1" {
+			task = &tasks[i]
+		}
+	}
+	if task == nil {
+		t.Fatal("应为 oss_pending 待传任务")
+	}
+	if task.OssKey != "u/"+uid+"/j-oss1.jpg" || task.ImageName != "out.png" || task.PromptID != "p1" {
+		t.Fatalf("任务字段: %+v", task)
+	}
+
+	// 2) pending 鉴权: 错 token401, 对 token200 且带任务
+	body := bytes.NewReader([]byte(`{}`))
+	req, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/pending", body)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("错 token 应401, got %d", resp.StatusCode)
+	}
+	_, raw := ts.do(t, "POST", "/api/v1/agent/pending", "", nil)
+	_ = raw // ts.do 带用户 token 而非 agent token, 单独构造:
+	req2, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/pending", bytes.NewReader([]byte(`{}`)))
+	req2.Header.Set("Authorization", "Bearer test-agent-token")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pendEnv struct {
+		Data struct {
+			Tasks []map[string]string `json:"tasks"`
+		} `json:"data"`
+	}
+	raw2 := readAll(resp2)
+	if resp2.StatusCode != 200 || json.Unmarshal(raw2, &pendEnv) != nil {
+		t.Fatalf("pending 失败: %d %s", resp2.StatusCode, raw2)
+	}
+	found := false
+	for _, tk := range pendEnv.Data.Tasks {
+		if tk["job_id"] == "j-oss1" && tk["oss_key"] == "u/"+uid+"/j-oss1.jpg" && tk["filename"] == "out.png" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("pending 清单缺任务: %s", raw2)
+	}
+
+	// 3) done → done + oss_key; 幂等重报
+	req3, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/done",
+		bytes.NewReader([]byte(`{"job_id":"j-oss1"}`)))
+	req3.Header.Set("Authorization", "Bearer test-agent-token")
+	resp3, err := http.DefaultClient.Do(req3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp3.Body.Close()
+	if resp3.StatusCode != 200 {
+		t.Fatalf("done 应200, got %d", resp3.StatusCode)
+	}
+	job, _ = ts.st.Job("j-oss1")
+	if job.Status != "done" || job.OssKey != "u/"+uid+"/j-oss1.jpg" {
+		t.Fatalf("done 后状态: status=%s key=%s", job.Status, job.OssKey)
+	}
+	// 幂等: 重复 done 仍200
+	req4, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/done",
+		bytes.NewReader([]byte(`{"job_id":"j-oss1"}`)))
+	req4.Header.Set("Authorization", "Bearer test-agent-token")
+	resp4, err := http.DefaultClient.Do(req4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp4.Body.Close()
+	if resp4.StatusCode != 200 {
+		t.Fatalf("重复 done 应200, got %d", resp4.StatusCode)
+	}
+
+	// 4) 兜底: 第二个任务 oss_pending → 超时回收 → 隧道拉图落盘(mock comfy) → done+本地文件
+	if err := ts.st.CreateJob(store.Job{
+		JobID: "j-oss2", UserID: uid, Kind: "gen", Priority: "normal",
+		Positive: "p", Width: 512, Height: 512,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job2, _ := ts.st.Job("j-oss2")
+	ts.api.q.process(context.Background(), job2)
+	ts.api.q.reclaimBefore(context.Background(), time.Now().Add(time.Hour)) // cutoff 未来 = 视为已超时
+	job2, _ = ts.st.Job("j-oss2")
+	if job2.Status != "done" || job2.ImagePath == "" {
+		t.Fatalf("兜底后: status=%s path=%s", job2.Status, job2.ImagePath)
+	}
+	if data, err := os.ReadFile(job2.ImagePath); err != nil || len(data) == 0 {
+		t.Fatalf("兜底落盘文件异常: %v", err)
+	}
+
+	// 5) pregen 任务 done → pregen 行 ready + oss_key
+	if err := ts.st.CreateJob(store.Job{
+		JobID: "j-osspg", UserID: uid, Kind: "pregen", Priority: "idle",
+		Positive: "p", Width: 512, Height: 512,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.st.InsertPregen(store.Pregen{
+		JobID: "j-osspg", UserID: uid, ProfileVersion: 1, Positive: "p", Negative: "n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job3, _ := ts.st.Job("j-osspg")
+	ts.api.q.process(context.Background(), job3)
+	req5, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/done",
+		bytes.NewReader([]byte(`{"job_id":"j-osspg"}`)))
+	req5.Header.Set("Authorization", "Bearer test-agent-token")
+	resp5, err := http.DefaultClient.Do(req5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp5.Body.Close()
+	p, err := ts.st.PeekPregenByJob(uid, "j-osspg")
+	if err != nil || p == nil || !p.Ready || p.OssKey != "u/"+uid+"/j-osspg.jpg" {
+		t.Fatalf("pregen done 后: %+v err=%v", p, err)
+	}
+}
+
+func readAll(resp *http.Response) []byte {
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(resp.Body)
+	return buf.Bytes()
+}

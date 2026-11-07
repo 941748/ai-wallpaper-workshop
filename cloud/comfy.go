@@ -73,71 +73,118 @@ func NewComfy(base, token string) *Comfy {
 	}
 }
 
-// Generate 执行一次出图: 渲染工作流 → /prompt → 轮询 /history → /view 下载。
+// imageRef ComfyUI 输出图像引用(/view 的入参)。
+type imageRef struct {
+	Filename  string
+	Subfolder string
+	Type      string
+}
+
+// Submit 提交工作流到 /prompt, 返回 prompt_id(不等待完成)。
 // 工作流固定为 Z-Image Turbo: 仅注入提示词/尺寸/seed, 其余参数冻结在模板内。
-func (c *Comfy) Generate(ctx context.Context, positive string, width, height int, seed int64) ([]byte, error) {
+func (c *Comfy) Submit(ctx context.Context, positive string, width, height int, seed int64) (string, error) {
 	workflow, err := buildWorkflow(assets.WorkflowTemplate, positive, width, height, seed)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	reqBody, err := json.Marshal(map[string]any{"prompt": json.RawMessage(workflow)})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+"/prompt", bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.auth(req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("ComfyUI 不可达: %w", err)
+		return "", fmt.Errorf("ComfyUI 不可达: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
-		return nil, fmt.Errorf("ComfyUI /prompt HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return "", fmt.Errorf("ComfyUI /prompt HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var out struct {
 		PromptID string `json:"prompt_id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.PromptID == "" {
-		return nil, fmt.Errorf("ComfyUI /prompt 响应异常")
+		return "", fmt.Errorf("ComfyUI /prompt 响应异常")
 	}
+	return out.PromptID, nil
+}
 
-	// 轮询(3s 间隔, 总超时 10 分钟)
+// WaitDone 轮询 /history 直到完成, 返回图像引用(只取文件名不取字节; 3s 间隔, 10 分钟超时)。
+func (c *Comfy) WaitDone(ctx context.Context, promptID string) (imageRef, error) {
 	deadline := time.Now().Add(10 * time.Minute)
 	for time.Now().Before(deadline) {
-		img, done, err := c.tryFetch(ctx, out.PromptID)
+		ref, done, err := c.tryHistory(ctx, promptID)
 		if err != nil {
-			return nil, err
+			return imageRef{}, err
 		}
 		if done {
-			return img, nil
+			return ref, nil
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return imageRef{}, ctx.Err()
 		case <-time.After(3 * time.Second):
 		}
 	}
-	return nil, fmt.Errorf("ComfyUI 任务 %s 超时", out.PromptID)
+	return imageRef{}, fmt.Errorf("ComfyUI 任务 %s 超时", promptID)
 }
 
-func (c *Comfy) tryFetch(ctx context.Context, promptID string) ([]byte, bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+"/history/"+url.PathEscape(promptID), nil)
+// FetchView 按图像引用从 /view 下载字节(兜底拉图用)。
+func (c *Comfy) FetchView(ctx context.Context, ref imageRef) ([]byte, error) {
+	q := url.Values{}
+	q.Set("filename", ref.Filename)
+	q.Set("subfolder", ref.Subfolder)
+	q.Set("type", ref.Type)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+"/view?"+q.Encode(), nil)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	c.auth(req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, false, nil // 抖动重试
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// Generate 一体路径(未开 OSS 直传时的现网行为): Submit → WaitDone → FetchView。
+func (c *Comfy) Generate(ctx context.Context, positive string, width, height int, seed int64) ([]byte, error) {
+	pid, err := c.Submit(ctx, positive, width, height, seed)
+	if err != nil {
+		return nil, err
+	}
+	ref, err := c.WaitDone(ctx, pid)
+	if err != nil {
+		return nil, err
+	}
+	return c.FetchView(ctx, ref)
+}
+
+// tryHistory 单次 /history 查询: 完成则返回首个图像引用(网络抖动按"未完成"重试)。
+func (c *Comfy) tryHistory(ctx context.Context, promptID string) (imageRef, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+"/history/"+url.PathEscape(promptID), nil)
+	if err != nil {
+		return imageRef{}, false, err
+	}
+	c.auth(req)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return imageRef{}, false, nil // 抖动重试
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, false, nil
+		return imageRef{}, false, nil
 	}
 	var hist map[string]struct {
 		Status struct {
@@ -152,36 +199,18 @@ func (c *Comfy) tryFetch(ctx context.Context, promptID string) ([]byte, bool, er
 		} `json:"outputs"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&hist); err != nil {
-		return nil, false, nil
+		return imageRef{}, false, nil
 	}
 	entry, ok := hist[promptID]
 	if !ok {
-		return nil, false, nil
+		return imageRef{}, false, nil
 	}
 	for _, o := range entry.Outputs {
 		for _, im := range o.Images {
-			q := url.Values{}
-			q.Set("filename", im.Filename)
-			q.Set("subfolder", im.Subfolder)
-			q.Set("type", im.Type)
-			req2, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+"/view?"+q.Encode(), nil)
-			if err != nil {
-				return nil, false, err
-			}
-			c.auth(req2)
-			resp2, err := c.HTTP.Do(req2)
-			if err != nil {
-				return nil, false, err
-			}
-			data, err := io.ReadAll(resp2.Body)
-			resp2.Body.Close()
-			if err != nil {
-				return nil, false, err
-			}
-			return data, true, nil
+			return imageRef{Filename: im.Filename, Subfolder: im.Subfolder, Type: im.Type}, true, nil
 		}
 	}
-	return nil, false, nil
+	return imageRef{}, false, nil
 }
 
 func (c *Comfy) auth(req *http.Request) {

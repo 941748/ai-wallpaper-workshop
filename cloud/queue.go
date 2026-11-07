@@ -42,6 +42,10 @@ func (q *queue) Run(ctx context.Context) {
 }
 
 func (q *queue) tick(ctx context.Context) {
+	// OSS 直传兜底: 代理超时未回报的任务回退隧道拉图
+	if ossUploadEnabled() {
+		q.reclaim(ctx)
+	}
 	// 优先 normal
 	job, err := q.st.NextQueuedJob(false)
 	if err != nil {
@@ -79,13 +83,39 @@ func (q *queue) process(ctx context.Context, job *store.Job) {
 	_ = q.st.SetJobStatus(job.JobID, "running", "", "")
 	ctx2, cancel := context.WithTimeout(ctx, 12*time.Minute)
 	defer cancel()
+
+	// P1 OSS 直传(AW_OSS_UPLOAD=1): 只提交+等完成, 字节由出图机本地代理直传 OSS;
+	// 30s 未回报由 reclaim 兜底拉图。开关关闭 = 现网一体 Generate 行为(零变化)。
+	if ossUploadEnabled() {
+		pid, err := q.comfy.Submit(ctx2, job.Positive, job.Width, job.Height, job.Seed)
+		if err == nil {
+			var ref imageRef
+			ref, err = q.comfy.WaitDone(ctx2, pid)
+			if err == nil {
+				if rerr := q.st.SetJobRender(job.JobID, pid, ref.Filename, ref.Subfolder); rerr != nil {
+					q.logf("记录渲染引用失败 job=%s: %v", job.JobID, rerr)
+					return
+				}
+				q.logf("任务渲染完成,等待代理上传 job=%s kind=%s file=%s", job.JobID, job.Kind, ref.Filename)
+				return
+			}
+		}
+		_ = q.st.SetJobStatus(job.JobID, "failed", err.Error(), "")
+		q.logf("任务失败 job=%s kind=%s: %v", job.JobID, job.Kind, err)
+		return
+	}
+
 	img, err := q.comfy.Generate(ctx2, job.Positive, job.Width, job.Height, job.Seed)
 	if err != nil {
 		_ = q.st.SetJobStatus(job.JobID, "failed", err.Error(), "")
 		q.logf("任务失败 job=%s kind=%s: %v", job.JobID, job.Kind, err)
 		return
 	}
+	q.finish(job, img)
+}
 
+// finish 落盘收尾: 转码 JPEG → 写文件 → done(pregen 同步置 ready)。直传兜底路径复用。
+func (q *queue) finish(job *store.Job, img []byte) {
 	// 落盘前转码 JPEG: 云端→客户端下载体积缩至 PNG 的约 1/4~1/5(带宽瓶颈在这一段)。
 	// 失败时保留原 PNG, 由后缀决定下发 MIME。
 	data := img
@@ -118,8 +148,40 @@ func (q *queue) process(ctx context.Context, job *store.Job) {
 
 	if job.Kind == "pregen" {
 		_ = q.st.SetPregenReady(job.JobID, path)
+	} else if err := q.st.ArchiveJob(job.JobID); err != nil {
+		q.logf("归档失败 job=%s: %v", job.JobID, err)
 	}
 	q.logf("任务完成 job=%s kind=%s -> %s", job.JobID, job.Kind, path)
+}
+
+// reclaim OSS 直传兜底: oss_pending 超 30s 未获代理确认 → 回退隧道拉图落盘(现网路径)。
+// 图仍留在 Comfy(未删), 失败保持 oss_pending 下轮再试。
+func (q *queue) reclaim(ctx context.Context) {
+	q.reclaimBefore(ctx, time.Now().Add(-30*time.Second))
+}
+
+// reclaimBefore 按截止时间回收(时间参数化供测试)。
+func (q *queue) reclaimBefore(ctx context.Context, cutoff time.Time) {
+	tasks, err := q.st.ListStaleOssPending(cutoff)
+	if err != nil || len(tasks) == 0 {
+		return
+	}
+	for _, t := range tasks {
+		q.logf("代理未回报, 兜底拉图 job=%s", t.JobID)
+		cctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		ref, rerr := q.comfy.WaitDone(cctx, t.PromptID) // 已完成 → 立即返回
+		if rerr == nil {
+			var img []byte
+			img, rerr = q.comfy.FetchView(cctx, ref)
+			if rerr == nil {
+				q.finish(&store.Job{JobID: t.JobID, Kind: t.Kind}, img)
+				cancel()
+				continue
+			}
+		}
+		q.logf("兜底拉图失败 job=%s: %v", t.JobID, rerr)
+		cancel()
+	}
 }
 
 // jpegQuality 下发成品的 JPEG 质量(体积与画质折中; 客户端设壁纸前还会转码, 此处无二次损失)。

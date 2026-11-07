@@ -80,6 +80,9 @@ var migrations = []migration{
 	{6, m006ProfilePacks},
 	{7, m007UserClientVer},
 	{8, m008DeviceAttrs},
+	{9, m009OssKey},
+	{10, m0010JobRender},
+	{11, m011Archive},
 }
 
 // m001BaselineSchema 基线表结构(全部 IF NOT EXISTS, 对新库建表/对旧库无操作)。
@@ -325,6 +328,49 @@ func m008DeviceAttrs(db *sql.DB) error {
 		return err
 	}
 	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_du ON devices(device, user_id)`)
+	return err
+}
+
+// m009OssKey jobs/pregen 加 oss_key(OSS 对象键; 非空=图片在 OSS, 端点302签名直下, 空=本地文件回退)。
+func m009OssKey(db *sql.DB) error {
+	for _, c := range []struct{ table, name string }{
+		{"jobs", "oss_key"},
+		{"pregen", "oss_key"},
+	} {
+		var n int
+		q := fmt.Sprintf(`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name=?`, c.table)
+		if err := db.QueryRow(q, c.name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		ddl := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN oss_key TEXT NOT NULL DEFAULT ''`, c.table)
+		if _, err := db.Exec(ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetJobOssKey 记录任务成品的 OSS 对象键(出图机代理上传完成后回报)。
+func (s *Store) SetJobOssKey(id, ossKey string) error {
+	_, err := s.db.Exec(`UPDATE jobs SET oss_key=?, updated_at=? WHERE job_id=?`,
+		ossKey, time.Now().Format(timeFmt), id)
+	return err
+}
+
+// SetPregenOssKey 记录预生成成品的 OSS 对象键。
+func (s *Store) SetPregenOssKey(jobID, ossKey string) error {
+	_, err := s.db.Exec(`UPDATE pregen SET oss_key=?, updated_at=? WHERE job_id=?`,
+		ossKey, time.Now().Format(timeFmt), jobID)
+	return err
+}
+
+// ClearJobImage 清除任务成品引用(用户删除图片: OSS 对象与本地文件已删, 行保留供统计)。
+func (s *Store) ClearJobImage(id string) error {
+	_, err := s.db.Exec(`UPDATE jobs SET image_path='', oss_key='', updated_at=? WHERE job_id=?`,
+		time.Now().Format(timeFmt), id)
 	return err
 }
 
@@ -671,6 +717,7 @@ type Job struct {
 	Seed       int64
 	WorkflowID string
 	ImagePath  string
+	OssKey     string // OSS 对象键(非空=图片在 OSS, 下发302签名URL)
 }
 
 // CreateJob 建任务。
@@ -686,11 +733,11 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 // Job 查询任务。
 func (s *Store) Job(id string) (*Job, error) {
 	row := s.db.QueryRow(`SELECT job_id, user_id, kind, priority, status, COALESCE(error,''),
-positive, negative, COALESCE(combo,''), width, height, seed, workflow_id, COALESCE(image_path,'')
+positive, negative, COALESCE(combo,''), width, height, seed, workflow_id, COALESCE(image_path,''), COALESCE(oss_key,'')
 FROM jobs WHERE job_id=?`, id)
 	var j Job
 	if err := row.Scan(&j.JobID, &j.UserID, &j.Kind, &j.Priority, &j.Status, &j.Error,
-		&j.Positive, &j.Negative, &j.Combo, &j.Width, &j.Height, &j.Seed, &j.WorkflowID, &j.ImagePath); err != nil {
+		&j.Positive, &j.Negative, &j.Combo, &j.Width, &j.Height, &j.Seed, &j.WorkflowID, &j.ImagePath, &j.OssKey); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -771,15 +818,16 @@ type Pregen struct {
 	Width          int
 	Height         int
 	ImagePath      string
+	OssKey         string // OSS 对象键(非空=图片在 OSS)
 }
 
-const pregenCols = `job_id, user_id, profile_version, ready, positive, negative, COALESCE(combo,''), seed, workflow_id, width, height, COALESCE(image_path,'')`
+const pregenCols = `job_id, user_id, profile_version, ready, positive, negative, COALESCE(combo,''), seed, workflow_id, width, height, COALESCE(image_path,''), COALESCE(oss_key,'')`
 
 func scanPregen(row *sql.Row) (*Pregen, error) {
 	var p Pregen
 	var ready int
 	if err := row.Scan(&p.JobID, &p.UserID, &p.ProfileVersion, &ready, &p.Positive, &p.Negative,
-		&p.Combo, &p.Seed, &p.WorkflowID, &p.Width, &p.Height, &p.ImagePath); err != nil {
+		&p.Combo, &p.Seed, &p.WorkflowID, &p.Width, &p.Height, &p.ImagePath, &p.OssKey); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -974,4 +1022,121 @@ func b2i(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ---------- P1 OSS 直传(出图机代理) ----------
+
+// m0010JobRender jobs 加渲染引用(prompt_id+Comfy 文件名), 供代理取图与超时兜底。
+func m0010JobRender(db *sql.DB) error {
+	for _, c := range []struct{ name, ddl string }{
+		{"prompt_id", `ALTER TABLE jobs ADD COLUMN prompt_id TEXT NOT NULL DEFAULT ''`},
+		{"image_name", `ALTER TABLE jobs ADD COLUMN image_name TEXT NOT NULL DEFAULT ''`},
+		{"image_sub", `ALTER TABLE jobs ADD COLUMN image_sub TEXT NOT NULL DEFAULT ''`},
+	} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name=?`, c.name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(c.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetJobRender 渲染完成待上传: 记录 prompt/文件引用并置 oss_pending(updated_at 作为代理时效起点)。
+func (s *Store) SetJobRender(jobID, promptID, imageName, imageSub string) error {
+	_, err := s.db.Exec(`UPDATE jobs SET status='oss_pending', error='', prompt_id=?, image_name=?, image_sub=?, updated_at=?
+WHERE job_id=?`, promptID, imageName, imageSub, time.Now().Format(timeFmt), jobID)
+	return err
+}
+
+// m011Archive 归档表(用户图片历史): jobs 7 天即 Purge, 历史须独立存活;
+// 回填存量 done 任务(pregen 仅回填已提货的=行已从 pregen 弹出), fav 列为 S2④ 收藏预留。
+func m011Archive(db *sql.DB) error {
+	_, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS archive (
+  job_id     TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  kind       TEXT NOT NULL DEFAULT 'gen',
+  created_at TEXT NOT NULL,
+  width      INTEGER NOT NULL DEFAULT 0,
+  height     INTEGER NOT NULL DEFAULT 0,
+  seed       INTEGER NOT NULL DEFAULT 0,
+  positive   TEXT NOT NULL DEFAULT '',
+  workflow_id TEXT NOT NULL DEFAULT '',
+  oss_key    TEXT NOT NULL DEFAULT '',
+  image_path TEXT NOT NULL DEFAULT '',
+  fav        INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_archive_user ON archive(user_id, created_at);
+INSERT OR IGNORE INTO archive
+(job_id, user_id, kind, created_at, width, height, seed, positive, workflow_id, oss_key, image_path)
+SELECT job_id, user_id, kind, created_at, width, height, seed,
+       COALESCE(positive,''), COALESCE(workflow_id,''), COALESCE(oss_key,''), COALESCE(image_path,'')
+FROM jobs
+WHERE status='done'
+  AND (COALESCE(image_path,'')<>'' OR COALESCE(oss_key,'')<>'')
+  AND (kind<>'pregen' OR NOT EXISTS (SELECT 1 FROM pregen p WHERE p.job_id=jobs.job_id))`)
+	return err
+}
+
+// OssTask 代理待传任务。
+type OssTask struct {
+	JobID     string
+	UserID    string
+	Kind      string
+	OssKey    string // 服务端指定的对象键(代理按此上传)
+	ImageName string
+	ImageSub  string
+	PromptID  string
+}
+
+// OssKeyFor 按用户生成对象键(S2 起统一为 u/{user_id}/{jobID}.jpg: 便于按用户
+// 列举/删除/归档保留; kind 不再体现在键上, 类型信息在库里)。
+func OssKeyFor(userID, jobID string) string {
+	return "u/" + userID + "/" + jobID + ".jpg"
+}
+
+// ListOssPending 代理拉取的待传清单(oss_pending 全部)。
+func (s *Store) ListOssPending() ([]OssTask, error) {
+	rows, err := s.db.Query(`SELECT job_id, user_id, kind, prompt_id, image_name, COALESCE(image_sub,'')
+FROM jobs WHERE status='oss_pending' ORDER BY updated_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OssTask
+	for rows.Next() {
+		var t OssTask
+		if err := rows.Scan(&t.JobID, &t.UserID, &t.Kind, &t.PromptID, &t.ImageName, &t.ImageSub); err != nil {
+			return nil, err
+		}
+		t.OssKey = OssKeyFor(t.UserID, t.JobID)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ListStaleOssPending 超时未获代理确认的任务(兜底拉图用)。
+func (s *Store) ListStaleOssPending(cutoff time.Time) ([]OssTask, error) {
+	rows, err := s.db.Query(`SELECT job_id, user_id, kind, prompt_id, image_name, COALESCE(image_sub,'')
+FROM jobs WHERE status='oss_pending' AND updated_at < ? ORDER BY updated_at ASC`, cutoff.Format(timeFmt))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OssTask
+	for rows.Next() {
+		var t OssTask
+		if err := rows.Scan(&t.JobID, &t.UserID, &t.Kind, &t.PromptID, &t.ImageName, &t.ImageSub); err != nil {
+			return nil, err
+		}
+		t.OssKey = OssKeyFor(t.UserID, t.JobID)
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
