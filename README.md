@@ -29,6 +29,7 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 - 系统要求: Windows 10 / 11(64 位)。
 - 下载后双击 `AIWallpaper.exe` 进入初始化向导; 走完向导即开始自动换图。
 - **已装用户无需手动升级**: 客户端每次换图时会静默检查更新, 自动下载校验并换装。
+- **安卓版**: 官网点「下载安卓版」或 Gitee Release 的 `AIWallpaper-Android-*.apk`; 应用内同样静默检查更新。
 
 ## 特性
 
@@ -60,21 +61,27 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 ## 工作原理
 
 ```
-┌──────────────── Windows 客户端(单文件 ~10MB)────────────────┐
-│  向导 / 设置(walk 自绘)          计划任务秒级进程 --tick        │
-│  本地提示词引擎(LLM 不可达时兜底)  画像 / 历史 / 漂移信号       │
-└─────────────────────────┬──────────────────────────────────┘
-                  HTTPS(匿名 token, 仅出站)
-┌─────────────────────────▼──────────────────────────────────┐
-│  云服务(Go + SQLite 单二进制, 自托管)                         │
-│  匿名注册 / 配额 / 限流          LLM 规划(默认小米 MiMo,       │
-│  出图队列 normal / idle          可换任意 OpenAI 兼容服务)      │
-│  预生成池 / 静默自更新分发                                 │
-└─────────────────────────┬──────────────────────────────────┘
-                  内网 HTTP(出图机)
-┌─────────────────────────▼──────────────────────────────────┐
-│  ComfyUI(Z-Image Turbo, 消费级显卡 1080p 约 30 秒/张)          │
-└────────────────────────────────────────────────────────────┘
+┌────────── 客户端(Windows 单文件 ~10MB / 安卓 APK)──────────┐
+│ 向导·设置·历史收藏    计划任务 tick · 断点续传 · 静默自更新    │
+│ 本地提示词引擎(LLM 不可达时兜底)   画像 / 漂移信号           │
+└────────────────────────┬──────────────────────────────────┘
+                 HTTPS(匿名 token, 仅出站)
+┌────────────────────────▼──────────────────────────────────┐
+│  云服务(Go + SQLite 单二进制, 自托管)                        │
+│  匿名注册/配额/限流      LLM 写正向提示词, 规则合成反向提示词  │
+│  出图任务队列(normal/idle)  预生成池·画像历史/收藏·自更新分发 │
+└────────────────────────┬──────────────────────────────────┘
+            领任务与回报(出图机 aw-agent 主动外拨, 仅出站)
+┌────────────────────────▼──────────────────────────────────┐
+│  出图机 aw-agent(单进程, 取代 frpc 隧道)                    │
+│  领任务→本地工作流模板注入→ComfyUI(Z-Image Turbo)→转码上传   │
+│  ComfyUI 看门狗自动拉起 · 崩溃自愈 · 版本管理与自动更新      │
+└────────────────────────┬──────────────────────────────────┘
+                  PUT 直传(国内链路)
+┌────────────────────────▼──────────────────────────────────┐
+│  阿里云 OSS(私有桶, 对象键 u/{user}/{job}.jpg)               │
+│  客户端经签名 URL 302 直下; 云服务只签 URL, 不碰图片字节      │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### 偏好是怎么"学"到的
@@ -97,8 +104,9 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 
 ### 方式二: 云端模式(推荐, 无显卡设备也能用)
 
-1. 一台出图机: ComfyUI + 消费级 NVIDIA 显卡(Z-Image Turbo 1080p 约 30 秒/张)。
-2. 一台服务器(可与出图机同机): 编译运行云服务(见「云服务部署」), 配置 LLM key。
+1. 一台服务器(可与出图机同机): 编译运行云服务(见「云服务部署」), 配置 LLM 密钥与 OSS 密钥。
+2. 一台出图机: ComfyUI + 消费级 NVIDIA 显卡(Z-Image Turbo 1080p 约 30 秒/张),
+   再运行 `aw-agent.exe`(见「ComfyUI 准备清单」)——领任务、出图、上传全由它完成, 无需任何入站端口。
 3. 客户端向导第 1 步填云服务地址 → 完成。
 
 ## 构建
@@ -112,12 +120,15 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 # 云服务部署到 Linux 服务器时, 构建 Linux 版二进制
 $env:AW_BUILD_OS = "linux"; powershell -ExecutionPolicy Bypass -File build.ps1
+
+# 出图机统一代理(领任务渲染 + OSS 上传 + 看门狗 + 自动更新)
+go build -trimpath -ldflags "-s -w" -o distw-agent.exe ./aw-agent
 ```
 
 日常开发:
 
 ```powershell
-go test ./...     # 全部单元/集成测试(含跨模块端到端: 真实 tick ↔ 真实云服务 ↔ mock ComfyUI/LLM)
+go test ./...     # 全部单元/集成测试(含跨模块端到端: 真实 tick ↔ 真实云服务 ↔ 模拟出图机代理/LLM)
 go vet ./...
 go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\AIWallpaper.exe .
 ```
@@ -132,7 +143,8 @@ go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\AIWallpaper.exe .
 wallpaper/
 ├── main.go                       # 无参=GUI(向导/设置);--tick=静默单次;--apply-update=换装助手
 ├── build.ps1                     # 一键构建(测试 → 客户端 → 云服务)
-├── assets/workflow_template.json # Z-Image Turbo 工作流模板(仅注入提示词/尺寸/seed)
+├── assets/workflow_template.json # Z-Image Turbo 工作流模板(占位符注入; 出图机 aw-agent 的 default.json 与其同源)
+├── aw-agent/                    # 出图机统一代理(领任务渲染+OSS上传+看门狗+自动更新)
 ├── internal/
 │   ├── config/                   # 配置与画像读写(%LOCALAPPDATA%\AIWallpaper)
 │   ├── taxonomy/                 # 5 维属性词典(风格/题材/色调/情绪/构图)
@@ -149,11 +161,12 @@ wallpaper/
 ├── cloud/                        # 独立云服务(单独编译部署)
 │   ├── main.go                   # 装配 + 管理看板 /admin?token=
 │   ├── api.go                    # /api/v1 全部接口
-│   ├── comfy.go / queue.go       # ComfyUI 转发 + normal/idle 队列(空闲预生成)
+│   ├── handlers_agent.go         # 出图机代理协议(claim/rendered/版本上报)
+│   ├── queue.go                  # 协调器(主动预生成钩子 + 代理卡死回收)
 │   ├── prompts.go                # LLM 规划 + 容错解析 + 本地引擎兜底
 │   ├── workflows.go              # 出图工作流注册表(白名单)
 │   ├── llm/client.go             # OpenAI 兼容 LLM 客户端(默认小米 MiMo)
-│   └── store/                    # SQLite: users/prompt_records/signals/jobs/pregen/...
+│   └── store/                    # SQLite: users/prompt_records/signals/jobs/pregen/archive/...
 ├── site/                         # 官网静态页(推广与客户端下载)
 └── docs/screenshots/             # README 截图
 ```
@@ -189,19 +202,20 @@ logs\runtime.log     运行日志(1MB × 3 份轮转)
 
 ## ComfyUI 准备清单
 
-云服务通过 HTTP API 转发出图, ComfyUI 侧只需:
+出图由出图机上的 `aw-agent` 领取云端任务后本地渲染, ComfyUI 侧只需:
 
-1. ComfyUI 启动时监听可被云服务访问的地址(内网/隧道), 例如 `--listen 0.0.0.0 --port 8188`;
-   若有反向代理或鉴权, 设置 `AW_COMFY_TOKEN` 为 Bearer 令牌。
-2. 安装 Z-Image Turbo 工作流所需模型(出图工作流固定为 `z_image_wallpaper`, 仅注入提示词/尺寸/seed,
-   其余参数冻结在模板内):
+1. 本机可访问即可: aw-agent 探测 `127.0.0.1` 的 8188/18188 端口,
+   **无需对云服务或局域网开放任何入站端口**(frpc 隧道已退役)。
+2. 安装 Z-Image Turbo 工作流所需模型:
 
    - `models/diffusion_models/z_image_turbo_int8_convrot.safetensors`(UNet)
    - `models/text_encoders/qwen_3_4b_fp4_mixed.safetensors`(CLIP, lumina2)
    - `models/vae/ae.safetensors`(VAE)
 
-3. 追加更多工作流(可选): 编辑 `clouddata/workflows.json`(首次启动自动生成)。
-   模型与采样参数已固定在工作流模板内, 注册表仅约束出图尺寸范围(min_side/max_side):
+3. **工作流模板随 aw-agent 分发**: 与 exe 同目录的 `default.json` 即模板, 含
+   `{{POSITIVE}}/{{NEGATIVE}}/{{WIDTH}}/{{HEIGHT}}/{{SEED}}` 占位符——换模型、换工作流只改这一个文件, 不动程序。
+   云端 `clouddata/workflows.json` 注册表(首次启动生成)负责工作流 ID 与出图尺寸范围(min_side/max_side),
+   未知 ID 自动回落 `default.json`; 注册表示例:
 
    ```json
    [
@@ -212,10 +226,11 @@ logs\runtime.log     运行日志(1MB × 3 份轮转)
    ]
    ```
 
-   保存后重启云服务生效; LLM 仅在白名单内选择工作流, 未知 ID 自动回退 `wf-base`。
-   客户端无需任何改动。默认出图尺寸为 1920×1080。
-4. 无需安装 ComfyUI 节点插件: 云服务内置 Z-Image Turbo 标准工作流(CLIP 编码 →
-   AuraFlow 采样 → KSampler → VAEDecode → SaveImage), 只要求上述标准节点与模型存在。
+   保存后重启云服务生效; LLM 仅在白名单内选择工作流。客户端无需任何改动, 默认出图尺寸 1920×1080。
+4. 无需安装 ComfyUI 节点插件: 模板为标准节点(CLIP 编码 → AuraFlow 采样 → KSampler → VAEDecode → SaveImage),
+   只要求上述标准节点与模型存在。
+5. aw-agent 自带看门狗: 连续心跳失败会按 `aw-agent.json` 的 `comfyui_cmd`(同目录批处理名)自动拉起 ComfyUI,
+   并定期经 `agent/latest` 检查、自动更新自身。
 
 ## 云服务部署
 
@@ -228,12 +243,17 @@ logs\runtime.log     运行日志(1MB × 3 份轮转)
 | `AW_LLM_BASE` | `https://token-plan-cn.xiaomimimo.com/v1` | OpenAI 兼容 LLM 地址(默认小米 MiMo, 可换任意兼容服务) |
 | `AW_LLM_KEY` | 空 | LLM 密钥(**仅存服务端**; 留空则提示词回退本地引擎, 仍可出图) |
 | `AW_LLM_MODEL` | `mimo-v2.6-flash` | 模型名 |
-| `AW_COMFY_BASE` | `http://127.0.0.1:8188` | 出图机 ComfyUI 地址(内网) |
-| `AW_COMFY_TOKEN` | 空 | 访问 ComfyUI 的 Bearer 令牌(可选) |
 | `AW_ADMIN_TOKEN` | 空 | 管理看板口令; 为空时看板关闭(404) |
 | `AW_SITE` | `/opt/aiwallpaper/site` | 官网静态页目录(内置官网托管) |
-| `AW_QUOTA_GEN_HOUR` / `AW_QUOTA_GEN_DAY` | `6` / `40` | 每用户出图配额(超出返回 429) |
-| `AW_QUOTA_LLM_HOUR` / `AW_QUOTA_LLM_DAY` | `8` / `60` | 每用户 LLM 调用配额 |
+| `AW_OSS_AK_ID` / `AW_OSS_AK_SECRET` | 空 | 阿里云 OSS 密钥(**仅存服务端**; 云模式必需——图片存 OSS、签名 URL 直下) |
+| `AW_OSS_BUCKET` / `AW_OSS_ENDPOINT` | 空 | OSS 桶名与接入点(如 `oss-cn-hangzhou.aliyuncs.com`) |
+| `AW_AGENT_TOKEN` | 空 | 出图机代理 aw-agent 鉴权口令(与 aw-agent.json 同值; 为空时代理接口 503) |
+| `AW_QUOTA_GEN_HOUR` / `AW_QUOTA_GEN_DAY` | `10` / `40` | 每用户出图配额(超出返回 429; 安卓另有独立日配额) |
+| `AW_QUOTA_ANDROID_DAY` | `40` | 安卓端独立出图日配额(与 PC 分开计数) |
+| `AW_QUOTA_LLM_HOUR` / `AW_QUOTA_LLM_DAY` | `10` / `40` | 每用户 LLM 调用配额(双端独立作用域) |
+
+> 配额等数值可用 systemd `EnvironmentFile`(如 `quota.env` drop-in)覆盖——改文件重启即生效, 无需重新编译;
+> 密钥类变量也建议放 EnvironmentFile, 避免明文进 unit 文件。
 
 ### systemd 部署
 
@@ -249,8 +269,9 @@ WorkingDirectory=/opt/aiwallpaper
 Environment=AW_ADDR=127.0.0.1:8707
 Environment=AW_DATA=/var/lib/aiwallpaper
 Environment=AW_LLM_KEY=<你的 LLM 密钥>
-Environment=AW_COMFY_BASE=http://10.0.0.8:8188
 Environment=AW_ADMIN_TOKEN=change-me
+# 另需 AW_OSS_*(图片存储) 与 AW_AGENT_TOKEN(代理鉴权), 见上表;
+# 密钥建议放 EnvironmentFile drop-in 而非写进本文件
 ExecStart=/opt/aiwallpaper/aiwallpaper-cloud
 Restart=on-failure
 
@@ -287,7 +308,7 @@ server {
 ### 管理看板
 
 浏览器访问 `https://<你的域名>/admin?token=<AW_ADMIN_TOKEN>`:
-查看全部用户(今日 LLM/出图用量、禁用状态)、最近出图记录、漂移事件、任务队列状态、官网访问统计(PV/UV/下载)。
+查看全部用户(今日 LLM/出图用量、禁用状态)、最近出图记录、漂移事件、任务队列状态、出图机代理在线状态与版本、官网访问统计(PV/UV/下载)。
 
 ## 客户端版本发布(静默自更新)
 
@@ -314,12 +335,14 @@ server {
    `/api/v1/client/latest`, 有新版本即静默下载 → sha256 + 大小校验 → 助手进程
    (`--apply-update`)在 tick 退出后原子换装, 下次 tick 生效。
    任一步失败保留旧版、记日志、下轮重试; 自更新位于换壁纸之后, 绝不中断主线。
+4. 同一模式还有两份清单: `releases/manifest-android.json`(安卓 APK, 经 `/api/v1/android/latest` 与 `/go/apk` 分发)、
+   `releases/manifest-agent.json`(出图机代理 aw-agent, 经 `/api/v1/agent/latest` 与 `/go/agent` 分发, 代理据此自动更新自己)。
 
 ## 数据与隐私
 
 - 匿名 `user_id` + 每设备独立 token, 零注册零登录; 不采集任何个人身份信息。
 - 云端存储: 按 user_id 的每轮提示词/属性/seed/成败、漂移事件与用量计数(用于偏好演化与配额)。
-- 生成图仅在本机落盘(壁纸留档 30 张)与云端队列暂存(预生成, 取走后定期清理)。
+- 生成图存于阿里云 OSS(私有桶、按用户隔离的 `u/{user}/` 前缀), 客户端经一次性签名 URL 直下; 本机另留档最近 30 张, 云端归档支撑历史浏览与收藏, 用户删除即连带清理云端副本。
 - 跨设备同步: 旧设备设置页展示 6 位配对码(5 分钟有效, 一次性), 新设备输入即领回
   `user_id + token + 画像`。
 - 更新包仅从 manifest 指定的 HTTPS 地址下载并做 sha256 + 大小校验, 不执行任何其他来源文件。
@@ -336,7 +359,7 @@ server {
 
 ## 开发与验收
 
-- `go test ./...` 全绿(含跨模块端到端: 真实 tick ↔ 真实云服务 ↔ mock ComfyUI/LLM)
+- `go test ./...` 全绿(含跨模块端到端: 真实 tick ↔ 真实云服务 ↔ 模拟出图机代理/LLM)
 - 双击 `dist\AIWallpaper.exe` 进入向导; 走完后壁纸立即更换、计划任务注册成功
 - 关窗后 `tasklist | findstr /I AIWallpaper` 无残留; `schtasks /Run /TN AIWallpaper` 静默换图、无窗口
 - 断网运行: 保留旧壁纸、事件入补传队列, 恢复后自动补报

@@ -29,6 +29,7 @@ No sign-up, no login, no tray icon, no resident process — close the window and
 - Requirements: Windows 10 / 11 (64-bit).
 - After downloading, double-click `AIWallpaper.exe` to run the setup wizard; automatic wallpaper changes begin once the wizard is done.
 - **Existing users never upgrade manually**: the client checks for updates silently on each cycle, then downloads, verifies and swaps itself in.
+- **Android**: click "Download for Android" on the website, or grab `AIWallpaper-Android-*.apk` from Gitee Release; in-app update check included.
 
 ## Features
 
@@ -60,22 +61,32 @@ Four-step wizard: connect to the service → preference questionnaire (five-dime
 ## How it works
 
 ```
-┌──────────── Windows client (single file, ~10 MB) ────────────┐
-│  Wizard / Settings (walk, self-drawn)   Scheduled task --tick  │
-│  Local prompt engine (fallback)         Profile / history /    │
-│                                         drift signals          │
-└─────────────────────────┬─────────────────────────────────────┘
-                  HTTPS (anonymous token, outbound only)
-┌─────────────────────────▼─────────────────────────────────────┐
-│  Cloud service (Go + SQLite single binary, self-hosted)        │
-│  Anonymous signup / quota / rate limit   LLM planning (default │
-│  Render queue normal / idle              Xiaomi MiMo; any      │
-│  Pre-gen pool / silent update             OpenAI-compatible) │
-└─────────────────────────┬─────────────────────────────────────┘
-                  LAN HTTP (render machine)
-┌─────────────────────────▼─────────────────────────────────────┐
-│  ComfyUI (Z-Image Turbo, ~30 s/image at 1080p on a consumer GPU)│
-└────────────────────────────────────────────────────────────────┘
+┌──────── Clients (Windows single file ~10 MB / Android APK) ────────┐
+│ Wizard · Settings · History favorites   Scheduled tick · resume · │
+│ Local prompt engine (LLM fallback)      silent self-update        │
+│                             Profile / drift signals               │
+└──────────────────────────┬────────────────────────────────────────┘
+                 HTTPS (anonymous token, outbound only)
+┌──────────────────────────▼────────────────────────────────────────┐
+│  Cloud service (Go + SQLite single binary, self-hosted)            │
+│  Anonymous signup / quota / rate limit   LLM writes positive      │
+│  Render task queue (normal / idle)       prompts; rules compose   │
+│  Pre-gen pool · history/favorites        negatives                │
+│             silent update distribution                            │
+└──────────────────────────┬────────────────────────────────────────┘
+          Claim & report (render machine aw-agent dials out, outbound only)
+┌──────────────────────────▼────────────────────────────────────────┐
+│  Render machine aw-agent (single process, replaces frpc tunnel)   │
+│  claim → inject local workflow template → ComfyUI (Z-Image Turbo) │
+│  → JPEG transcode → upload   ComfyUI watchdog auto-restart ·      │
+│  crash self-heal · versioning & auto-update                       │
+└──────────────────────────┬────────────────────────────────────────┘
+                     PUT direct (domestic link)
+┌──────────────────────────▼────────────────────────────────────────┐
+│  Alibaba Cloud OSS (private bucket, key u/{user}/{job}.jpg)       │
+│  clients fetch via one-time signed URL 302; the cloud only signs  │
+│  URLs and never touches image bytes                               │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ### How preferences are "learned"
@@ -98,8 +109,8 @@ Four-step wizard: connect to the service → preference questionnaire (five-dime
 
 ### Option 2: Cloud mode (recommended, works even without a GPU)
 
-1. A render machine: ComfyUI + a consumer NVIDIA GPU (Z-Image Turbo, ~30 s/image at 1080p).
-2. A server (may be the same machine): compile and run the cloud service (see "Cloud service deployment"), configure the LLM key.
+1. A server (may be the same machine): compile and run the cloud service (see "Cloud service deployment"), configure the LLM key and OSS credentials.
+2. A render machine: ComfyUI + a consumer NVIDIA GPU (Z-Image Turbo, ~30 s/image at 1080p), plus `aw-agent.exe` (see "ComfyUI checklist") — it claims tasks, renders and uploads; no inbound ports needed.
 3. In wizard step 1, enter the cloud service address → done.
 
 ## Build
@@ -113,12 +124,15 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 # When deploying the cloud service to a Linux server, build the Linux binary
 $env:AW_BUILD_OS = "linux"; powershell -ExecutionPolicy Bypass -File build.ps1
+
+# Render-machine unified agent (claim & render + OSS upload + watchdog + auto-update)
+go build -trimpath -ldflags "-s -w" -o dist\aw-agent.exe ./aw-agent
 ```
 
 Day-to-day development:
 
 ```powershell
-go test ./...     # all unit/integration tests (incl. cross-module end-to-end: real tick ↔ real cloud ↔ mock ComfyUI/LLM)
+go test ./...     # all unit/integration tests (incl. cross-module end-to-end: real tick ↔ real cloud ↔ simulated render agent / LLM)
 go vet ./...
 go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\AIWallpaper.exe .
 ```
@@ -133,7 +147,8 @@ go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\AIWallpaper.exe .
 wallpaper/
 ├── main.go                       # no args = GUI (wizard/settings); --tick = one silent run; --apply-update = swap helper
 ├── build.ps1                     # one-shot build (tests → client → cloud service)
-├── assets/workflow_template.json # Z-Image Turbo workflow template (only prompt/size/seed injected)
+├── assets/workflow_template.json # Z-Image Turbo workflow template (placeholder injection; aw-agent default.json shares it)
+├── aw-agent/                    # render-machine unified agent (claim & render + OSS upload + watchdog + auto-update)
 ├── internal/
 │   ├── config/                   # config & profile read/write (%LOCALAPPDATA%\AIWallpaper)
 │   ├── taxonomy/                 # 5-dimension attribute dictionary (style/subject/palette/mood/composition)
@@ -150,11 +165,12 @@ wallpaper/
 ├── cloud/                        # standalone cloud service (compiled & deployed separately)
 │   ├── main.go                   # wiring + admin dashboard /admin?token=
 │   ├── api.go                    # all /api/v1 endpoints
-│   ├── comfy.go / queue.go       # ComfyUI forwarding + normal/idle queue (idle pre-generation)
+│   ├── handlers_agent.go         # render-agent protocol (claim/rendered/version)
+│   ├── queue.go                  # coordinator (proactive pre-gen hook + agent stale reclaim)
 │   ├── prompts.go                # LLM planning + fault-tolerant parsing + local-engine fallback
 │   ├── workflows.go              # render-workflow registry (whitelist)
 │   ├── llm/client.go             # OpenAI-compatible LLM client (default Xiaomi MiMo)
-│   └── store/                    # SQLite: users/prompt_records/signals/jobs/pregen/...
+│   └── store/                    # SQLite: users/prompt_records/signals/jobs/pregen/archive/...
 ├── site/                         # website static pages (promotion & client download)
 └── docs/screenshots/             # README screenshots
 ```
@@ -190,19 +206,20 @@ Uninstall: Settings → Service & Schedule → delete the scheduled task, then d
 
 ## ComfyUI checklist
 
-The cloud service forwards rendering over the HTTP API; on the ComfyUI side you only need:
+Rendering is performed locally by `aw-agent` on the render machine after it claims tasks from the cloud; on the ComfyUI side you only need:
 
-1. Start ComfyUI listening on an address reachable by the cloud service (LAN/tunnel), e.g. `--listen 0.0.0.0 --port 8188`;
-   if there is a reverse proxy or auth, set `AW_COMFY_TOKEN` to a Bearer token.
-2. Install the models required by the Z-Image Turbo workflow (the render workflow is fixed as `z_image_wallpaper`; only prompt/size/seed are injected,
-   all other parameters are frozen in the template):
+1. Local reachability is enough: aw-agent probes `127.0.0.1` on ports 8188/18188 —
+   **no inbound ports may be opened to the cloud or LAN** (the frpc tunnel has been retired).
+2. Install the models required by the Z-Image Turbo workflow:
 
    - `models/diffusion_models/z_image_turbo_int8_convrot.safetensors` (UNet)
    - `models/text_encoders/qwen_3_4b_fp4_mixed.safetensors` (CLIP, lumina2)
    - `models/vae/ae.safetensors` (VAE)
 
-3. Add more workflows (optional): edit `clouddata/workflows.json` (auto-generated on first start).
-   Models and sampling parameters are fixed in the workflow template; the registry only constrains the output size range (min_side/max_side):
+3. **The workflow template ships with aw-agent**: `default.json` next to the exe is the template, carrying
+   `{{POSITIVE}}/{{NEGATIVE}}/{{WIDTH}}/{{HEIGHT}}/{{SEED}}` placeholders — swap models or workflows by editing this one file, no code changes.
+   The server-side `clouddata/workflows.json` registry (auto-generated on first start) selects workflow IDs and the output size range (min_side/max_side);
+   unknown IDs fall back to `default.json`. Registry example:
 
    ```json
    [
@@ -213,10 +230,12 @@ The cloud service forwards rendering over the HTTP API; on the ComfyUI side you 
    ]
    ```
 
-   Restart the cloud service after saving; the LLM only picks workflows within the whitelist, and an unknown ID falls back to `wf-base`.
+   Restart the cloud service after saving; the LLM only picks workflows from the whitelist.
    No client-side change is needed. The default output size is 1920×1080.
-4. No ComfyUI node plugins to install: the cloud service ships the standard Z-Image Turbo workflow (CLIP encode →
-   AuraFlow sample → KSampler → VAEDecode → SaveImage); only the standard nodes and models above must exist.
+4. No ComfyUI node plugins to install: the template uses standard nodes (CLIP encode → AuraFlow sampling → KSampler → VAEDecode → SaveImage);
+   only the standard nodes and models above must exist.
+5. aw-agent ships a watchdog: after repeated failed heartbeats it relaunches ComfyUI via `comfyui_cmd` in aw-agent.json
+   (a same-directory bat name), and periodically checks `agent/latest` to update itself.
 
 ## Cloud service deployment
 
@@ -229,12 +248,17 @@ The cloud service forwards rendering over the HTTP API; on the ComfyUI side you 
 | `AW_LLM_BASE` | `https://token-plan-cn.xiaomimimo.com/v1` | OpenAI-compatible LLM endpoint (default Xiaomi MiMo; any compatible service works) |
 | `AW_LLM_KEY` | empty | LLM key (**server-side only**; if empty, prompts fall back to the local engine and images still render) |
 | `AW_LLM_MODEL` | `mimo-v2.6-flash` | Model name |
-| `AW_COMFY_BASE` | `http://127.0.0.1:8188` | Render machine ComfyUI address (LAN) |
-| `AW_COMFY_TOKEN` | empty | Bearer token for accessing ComfyUI (optional) |
 | `AW_ADMIN_TOKEN` | empty | Admin dashboard password; when empty the dashboard is disabled (404) |
 | `AW_SITE` | `/opt/aiwallpaper/site` | Website static-page directory (built-in site hosting) |
-| `AW_QUOTA_GEN_HOUR` / `AW_QUOTA_GEN_DAY` | `6` / `40` | Per-user render quota (429 when exceeded) |
-| `AW_QUOTA_LLM_HOUR` / `AW_QUOTA_LLM_DAY` | `8` / `60` | Per-user LLM call quota |
+| `AW_OSS_AK_ID` / `AW_OSS_AK_SECRET` | empty | Alibaba Cloud OSS credentials (**server-side only**; required in cloud mode - images live in OSS and are served via signed URLs) |
+| `AW_OSS_BUCKET` / `AW_OSS_ENDPOINT` | empty | OSS bucket and endpoint (e.g. `oss-cn-hangzhou.aliyuncs.com`) |
+| `AW_AGENT_TOKEN` | empty | Render-agent (aw-agent) auth token (same value as in aw-agent.json; agent endpoints return 503 when empty) |
+| `AW_QUOTA_GEN_HOUR` / `AW_QUOTA_GEN_DAY` | `10` / `40` | Per-user render quota (429 when exceeded; Android has its own daily quota) |
+| `AW_QUOTA_ANDROID_DAY` | `40` | Android-specific daily render quota (counted separately from PC) |
+| `AW_QUOTA_LLM_HOUR` / `AW_QUOTA_LLM_DAY` | `10` / `40` | Per-user LLM call quota (separate scopes per platform) |
+
+> Quota values can also be overridden via a systemd `EnvironmentFile` (e.g. a `quota.env` drop-in) - edit the file and restart, no rebuild needed;
+> keep secrets in an EnvironmentFile too rather than inline in the unit file.
 
 ### systemd deployment
 
@@ -250,8 +274,9 @@ WorkingDirectory=/opt/aiwallpaper
 Environment=AW_ADDR=127.0.0.1:8707
 Environment=AW_DATA=/var/lib/aiwallpaper
 Environment=AW_LLM_KEY=<your LLM key>
-Environment=AW_COMFY_BASE=http://10.0.0.8:8188
 Environment=AW_ADMIN_TOKEN=change-me
+# Also required: AW_OSS_* (image storage) and AW_AGENT_TOKEN (render agent) - see the table above;
+# put secrets in an EnvironmentFile drop-in instead of this file
 ExecStart=/opt/aiwallpaper/aiwallpaper-cloud
 Restart=on-failure
 
@@ -288,7 +313,7 @@ server {
 ### Admin dashboard
 
 Visit `https://<your-domain>/admin?token=<AW_ADMIN_TOKEN>` in a browser:
-see all users (today's LLM/render usage, disabled state), recent render records, drift events, task-queue status, and website traffic stats (PV/UV/downloads).
+see all users (today's LLM/render usage, disabled state), recent render records, drift events, task-queue status, the render agent's online status & version, and website traffic stats (PV/UV/downloads).
 
 ## Client releases (silent self-update)
 
@@ -315,12 +340,14 @@ see all users (today's LLM/render usage, disabled state), recent render records,
    `/api/v1/client/latest`; if there is a new version it silently downloads → verifies sha256 + size → a helper process
    (`--apply-update`) atomically swaps it in after the tick exits, taking effect on the next tick.
    Any failed step keeps the old version, logs, and retries next round; self-update runs after the wallpaper swap and never interrupts the main line.
+4. Two more manifests follow the same pattern: `releases/manifest-android.json` (Android APK, served via `/api/v1/android/latest` and `/go/apk`)
+   and `releases/manifest-agent.json` (the render agent, served via `/api/v1/agent/latest` and `/go/agent` - the agent updates itself from it).
 
 ## Data & privacy
 
 - Anonymous `user_id` + a per-device token, zero sign-up/login; no personally identifiable information is collected.
 - Cloud storage: per-user prompt/attributes/seed/success per round, drift events, and usage counters (for preference evolution and quota).
-- Generated images land only on your machine (30 archived wallpapers) and are temporarily held in the cloud queue (pre-generation, cleaned periodically after pickup).
+- Generated images are stored in a private, per-user OSS bucket (`u/{user}/` prefix) and fetched through one-time signed URLs; the machine keeps the last 30 wallpapers locally, while a cloud archive powers history & favorites - deleting an image cleans its cloud copy too.
 - Cross-device sync: the old device shows a 6-digit pairing code in Settings (valid 5 minutes, one-time); a new device enters it to reclaim
   `user_id + token + profile`.
 - Update packages are downloaded only from the HTTPS address specified in the manifest and verified by sha256 + size; no file from any other source is executed.
@@ -337,7 +364,7 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
 ## Development & acceptance
 
-- `go test ./...` all green (incl. cross-module end-to-end: real tick ↔ real cloud ↔ mock ComfyUI/LLM)
+- `go test ./...` all green (incl. cross-module end-to-end: real tick ↔ real cloud ↔ simulated render agent / mock LLM)
 - Double-click `dist\AIWallpaper.exe` to enter the wizard; after finishing, the wallpaper changes immediately and the scheduled task is registered
 - After closing the window, `tasklist | findstr /I AIWallpaper` shows no leftover; `schtasks /Run /TN AIWallpaper` swaps silently with no window
 - Run offline: the old wallpaper is kept, events enter the retry queue, and are reported automatically once reconnected

@@ -62,11 +62,11 @@ func main() {
 		adminToken:    env("AW_ADMIN_TOKEN", ""),
 		version:       serverVersion,
 		logf:          logf,
-		genHour:       envInt("AW_QUOTA_GEN_HOUR", 6),
+		genHour:       envInt("AW_QUOTA_GEN_HOUR", 10),
 		genDay:        envInt("AW_QUOTA_GEN_DAY", 40),
-		llmHour:       envInt("AW_QUOTA_LLM_HOUR", 8),
-		llmDay:        envInt("AW_QUOTA_LLM_DAY", 60),
-		androidGenDay: envInt("AW_QUOTA_ANDROID_DAY", 12),
+		llmHour:       envInt("AW_QUOTA_LLM_HOUR", 10),
+		llmDay:        envInt("AW_QUOTA_LLM_DAY", 40),
+		androidGenDay: envInt("AW_QUOTA_ANDROID_DAY", 40),
 	}
 	// 空闲主动预生成: 协调器空闲分支周期调用, 为活跃用户保持 ready 库存
 	q.idleHook = api.proactivePregen
