@@ -147,3 +147,57 @@ func TestQueueSkipsMalformedPayload(t *testing.T) {
 		t.Fatalf("队列应清空, 实际 %d 条", len(rest))
 	}
 }
+
+// TestGetProfilePathAndHistory 锁死 URL 拼接(doJSON 已拼 /api/v1, GetProfile 曾双前缀 404
+// 致画像拉取静默失败) + 历史三方法(列表解析/收藏请求体/取图字节)。
+func TestGetProfilePathAndHistory(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/profile", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"success":true,"data":{"profile_version":4,"profile":{"style/realism":0.9}}}`))
+	})
+	mux.HandleFunc("/api/v1/history", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") == "" {
+			t.Error("history 缺 limit 参数")
+		}
+		_, _ = w.Write([]byte(`{"success":true,"data":{"items":[` +
+			`{"job_id":"h1","created_at":"2026-11-07T21:00:00+08:00","fav":true,` +
+			`"positive":"ink wash","seed":42}]}}`))
+	})
+	mux.HandleFunc("/api/v1/history/fav", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			JobID string `json:"job_id"`
+			Fav   bool   `json:"fav"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.JobID != "h1" || !body.Fav {
+			t.Errorf("fav 请求体: %+v", body)
+		}
+		_, _ = w.Write([]byte(`{"success":true,"data":{"fav":true}}`))
+	})
+	mux.HandleFunc("/api/v1/history/h1/image", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("JPEGBYTES"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := New(srv.URL, "u1", "tok", "dev")
+
+	p, err := c.GetProfile(context.Background())
+	if err != nil || p.ProfileVersion != 4 || p.Profile["style/realism"] != 0.9 {
+		t.Fatalf("GetProfile: %v %+v", err, p)
+	}
+
+	items, err := c.GetHistory(context.Background())
+	if err != nil || len(items) != 1 || items[0].JobID != "h1" || !items[0].Fav ||
+		items[0].Positive != "ink wash" || items[0].Seed != 42 {
+		t.Fatalf("GetHistory: %v %+v", err, items)
+	}
+
+	if err := c.HistoryFav(context.Background(), "h1", true); err != nil {
+		t.Fatalf("HistoryFav: %v", err)
+	}
+
+	b, err := c.HistoryImage(context.Background(), "h1")
+	if err != nil || string(b) != "JPEGBYTES" {
+		t.Fatalf("HistoryImage: %v %q", err, b)
+	}
+}

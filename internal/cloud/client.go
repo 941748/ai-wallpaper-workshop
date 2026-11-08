@@ -449,10 +449,47 @@ type RemoteProfile struct {
 // GetProfile 拉取服务端画像快照(GET /api/v1/profile)。
 func (c *Client) GetProfile(ctx context.Context) (*RemoteProfile, error) {
 	var out RemoteProfile
-	if err := c.doJSON(ctx, c.meta, http.MethodGet, "/api/v1/profile", nil, &out); err != nil {
+	// 注意: doJSON 已拼 /api/v1 前缀, 此处只传相对路径
+	// (曾误写 "/api/v1/profile" 致双前缀 404, 画像拉取静默失败, 2026-11-07 修复)
+	if err := c.doJSON(ctx, c.meta, http.MethodGet, "/profile", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// HistoryItem 云端图片历史条目(收藏恒置顶)。
+type HistoryItem struct {
+	JobID     string `json:"job_id"`
+	CreatedAt string `json:"created_at"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	Kind      string `json:"kind"`
+	Fav       bool   `json:"fav"`
+	ImageURL  string `json:"image_url"`
+	Positive  string `json:"positive"`
+	Seed      int64  `json:"seed"`
+}
+
+// GetHistory 云端图片历史(limit 内收藏置顶, 组内新→旧)。
+func (c *Client) GetHistory(ctx context.Context) ([]HistoryItem, error) {
+	var out struct {
+		Items []HistoryItem `json:"items"`
+	}
+	if err := c.doJSON(ctx, c.meta, http.MethodGet, "/history?limit=100", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// HistoryFav 收藏/取消收藏。
+func (c *Client) HistoryFav(ctx context.Context, jobID string, fav bool) error {
+	return c.doJSON(ctx, c.meta, http.MethodPost, "/history/fav",
+		map[string]any{"job_id": jobID, "fav": fav}, nil)
+}
+
+// HistoryImage 下载历史图(服务端双模: OSS 302 或本地文件, doRaw 跟随重定向)。
+func (c *Client) HistoryImage(ctx context.Context, jobID string) ([]byte, error) {
+	return c.doRaw(ctx, c.long, http.MethodGet, "/history/"+url.PathEscape(jobID)+"/image")
 }
 
 // allowedDownloadPrefixes 更新包下载的允许来源前缀(自有云端 + 官方软件源镜像)。

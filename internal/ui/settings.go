@@ -72,6 +72,10 @@ type settings struct {
 	histModel *wallpaperListModel
 	histLB    *walk.ListBox
 	histIV    *walk.ImageView
+	histMode  string // ""|"local"|"cloud"(历史页列表数据源)
+	histCloud []cloud.HistoryItem
+	histToggle *walk.PushButton
+	histFavBtn *walk.PushButton
 
 	// 同步页
 	userLbl *walk.Label
@@ -959,13 +963,32 @@ func (s *settings) buildHistoryPage(tab *walk.TabWidget) error {
 	_ = btnRow.SetLayout(walk.NewHBoxLayout())
 	refBtn, _ := walk.NewPushButton(btnRow)
 	refBtn.SetText("刷新")
-	refBtn.Clicked().Attach(func() { s.reloadHistory() })
+	refBtn.Clicked().Attach(func() {
+		if s.histMode == "cloud" {
+			s.loadCloudHistory()
+		} else {
+			s.reloadHistory()
+		}
+	})
 	applyBtn, _ := walk.NewPushButton(btnRow)
 	applyBtn.SetText("重新应用这张")
 	applyBtn.Clicked().Attach(func() { s.reapplySelected() })
 	openBtn, _ := walk.NewPushButton(btnRow)
 	openBtn.SetText("打开目录")
 	openBtn.Clicked().Attach(func() { openFolder(s.st.WallpapersDir()) })
+	s.histToggle, _ = walk.NewPushButton(btnRow)
+	s.histToggle.SetText("云端历史")
+	s.histToggle.Clicked().Attach(func() {
+		if s.histMode == "cloud" {
+			s.reloadHistory()
+		} else {
+			s.loadCloudHistory()
+		}
+	})
+	s.histFavBtn, _ = walk.NewPushButton(btnRow)
+	s.histFavBtn.SetText("♥ 收藏/取消")
+	s.histFavBtn.SetEnabled(false)
+	s.histFavBtn.Clicked().Attach(func() { s.toggleCloudFav() })
 
 	s.reloadHistory()
 	return nil
@@ -999,6 +1022,14 @@ func (s *settings) reloadHistory() {
 	}
 	_ = s.histLB.SetModel(m)
 	s.histModel = m
+	s.histMode = "local"
+	s.histCloud = nil
+	if s.histToggle != nil {
+		s.histToggle.SetText("云端历史")
+	}
+	if s.histFavBtn != nil {
+		s.histFavBtn.SetEnabled(false)
+	}
 }
 
 func (s *settings) selectedPath() string {
@@ -1010,6 +1041,10 @@ func (s *settings) selectedPath() string {
 }
 
 func (s *settings) previewSelected() {
+	if it, ok := s.selectedCloud(); ok {
+		s.previewCloud(it.JobID)
+		return
+	}
 	path := s.selectedPath()
 	if path == "" {
 		return
@@ -1024,6 +1059,10 @@ func (s *settings) previewSelected() {
 }
 
 func (s *settings) reapplySelected() {
+	if it, ok := s.selectedCloud(); ok {
+		s.applyCloud(it)
+		return
+	}
 	path := s.selectedPath()
 	if path == "" {
 		showInfo(s.mw, "请先选择一张壁纸。")
@@ -1039,6 +1078,149 @@ func (s *settings) reapplySelected() {
 		Detail: filepath.Base(path),
 	})
 	showInfo(s.mw, "已重新应用。该类画风会被记为正向证据, 影响后续出图。")
+}
+
+// ---------- 云端历史(S2④: 收藏置顶/心形切换/下载并应用) ----------
+
+// selectedCloud 当前选中的云端条目(仅 cloud 模式)。
+func (s *settings) selectedCloud() (cloud.HistoryItem, bool) {
+	if s.histMode != "cloud" {
+		return cloud.HistoryItem{}, false
+	}
+	idx := s.histLB.CurrentIndex()
+	if idx < 0 || idx >= len(s.histCloud) {
+		return cloud.HistoryItem{}, false
+	}
+	return s.histCloud[idx], true
+}
+
+// loadCloudHistory 拉取云端历史并切换列表数据源(收藏恒置顶)。
+func (s *settings) loadCloudHistory() {
+	if s.cc == nil {
+		showError(s.mw, "当前为直连调试模式, 无云端历史。")
+		return
+	}
+	go func() {
+		items, err := s.cc.GetHistory(context.Background())
+		s.mw.Synchronize(func() {
+			if err != nil {
+				showError(s.mw, "云端历史加载失败: %v", err)
+				return
+			}
+			s.histMode = "cloud"
+			s.histCloud = items
+			m := &wallpaperListModel{}
+			for _, it := range items {
+				heart := "♡"
+				if it.Fav {
+					heart = "♥"
+				}
+				ts := it.CreatedAt
+				if len(ts) >= 16 {
+					ts = strings.Replace(ts[5:16], "T", " ", 1) // 2026-11-07T21:00 → 11-07 21:00
+				}
+				desc := it.Positive
+				if desc == "" {
+					desc = "预生成图"
+				}
+				m.names = append(m.names, fmt.Sprintf("%s %s  %s", heart, ts, clipRunes(desc, 24)))
+				m.paths = append(m.paths, it.JobID)
+			}
+			_ = s.histLB.SetModel(m)
+			s.histModel = m
+			s.histToggle.SetText("本地历史")
+			s.histFavBtn.SetEnabled(true)
+		})
+	}()
+}
+
+// previewCloud 异步下载云端图预览(丢弃过期选中的迟到响应)。
+func (s *settings) previewCloud(jobID string) {
+	if s.cc == nil {
+		return
+	}
+	go func() {
+		data, err := s.cc.HistoryImage(context.Background(), jobID)
+		var bmp *walk.Bitmap
+		if err == nil {
+			bmp, err = scalePlain(data, 560, 315)
+		}
+		s.mw.Synchronize(func() {
+			if err != nil {
+				return // 加载失败静默, 保持上一张预览
+			}
+			if cur, ok := s.selectedCloud(); !ok || cur.JobID != jobID {
+				return // 已换选中, 过期图丢弃
+			}
+			s.histIV.SetImage(bmp)
+		})
+	}()
+}
+
+// applyCloud 下载云端图→留档→设为壁纸(回到本地列表可见新留档)。
+func (s *settings) applyCloud(it cloud.HistoryItem) {
+	if s.cc == nil {
+		return
+	}
+	jobID := it.JobID
+	go func() {
+		data, err := s.cc.HistoryImage(context.Background(), jobID)
+		if err != nil {
+			s.mw.Synchronize(func() { showError(s.mw, "云端图片下载失败: %v", err) })
+			return
+		}
+		path, err := s.st.SaveWallpaper(data, time.Now())
+		if err != nil {
+			s.mw.Synchronize(func() { showError(s.mw, "留档失败: %v", err) })
+			return
+		}
+		s.mw.Synchronize(func() {
+			if err := desktop.SetWallpaper(path); err != nil {
+				showError(s.mw, "应用失败: %v", err)
+				return
+			}
+			s.st.SetCurrent(path)
+			_ = signals.Append(s.dir, signals.Event{
+				Type:   signals.TypeReapply,
+				Detail: filepath.Base(path),
+			})
+			showInfo(s.mw, "已应用云端壁纸,并留档到本地历史。")
+			s.reloadHistory() // 回到本地列表, 新留档可见
+		})
+	}()
+}
+
+// toggleCloudFav 收藏/取消收藏选中项, 成功后重拉(收藏置顶会重排, 心形同步)。
+func (s *settings) toggleCloudFav() {
+	idx := s.histLB.CurrentIndex()
+	if s.histMode != "cloud" || idx < 0 || idx >= len(s.histCloud) {
+		showInfo(s.mw, "请先在「云端历史」中选择一张图片。")
+		return
+	}
+	if s.cc == nil {
+		return
+	}
+	it := s.histCloud[idx]
+	next := !it.Fav
+	go func() {
+		err := s.cc.HistoryFav(context.Background(), it.JobID, next)
+		s.mw.Synchronize(func() {
+			if err != nil {
+				showError(s.mw, "收藏失败: %v", err)
+				return
+			}
+			s.loadCloudHistory()
+		})
+	}()
+}
+
+// clipRunes 按 rune 截断(提示词中英混排)。
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // ---------- 同步页 ----------
