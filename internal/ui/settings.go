@@ -98,6 +98,7 @@ func RunSettings(dir string, st *store.Store, cfg *config.Config) {
 	}
 	st.Log("settings: build 完成")
 	s.be, s.cc = makeBackend(s.cfg)
+	s.preloadCloudHistory() // 静默预载云端历史(切到云端模式即刻显示, 心形不用等接口)
 	st.Log("settings: backend 就绪, 进入消息循环")
 	s.mw.Show()
 	s.mw.Run()
@@ -982,6 +983,13 @@ func (s *settings) buildHistoryPage(tab *walk.TabWidget) error {
 		if s.histMode == "cloud" {
 			s.reloadHistory()
 		} else {
+			if s.histCloud != nil {
+				// 预载缓存先秒显(含心形), 再后台刷新纠偏
+				s.histMode = "cloud"
+				s.renderCloudList()
+				s.histToggle.SetText("本地历史")
+				s.histFavBtn.SetEnabled(true)
+			}
 			s.loadCloudHistory()
 		}
 	})
@@ -1109,29 +1117,65 @@ func (s *settings) loadCloudHistory() {
 			}
 			s.histMode = "cloud"
 			s.histCloud = items
-			m := &wallpaperListModel{}
-			for _, it := range items {
-				heart := "♡"
-				if it.Fav {
-					heart = "♥"
-				}
-				ts := it.CreatedAt
-				if len(ts) >= 16 {
-					ts = strings.Replace(ts[5:16], "T", " ", 1) // 2026-11-07T21:00 → 11-07 21:00
-				}
-				desc := it.Positive
-				if desc == "" {
-					desc = "预生成图"
-				}
-				m.names = append(m.names, fmt.Sprintf("%s %s  %s", heart, ts, clipRunes(desc, 24)))
-				m.paths = append(m.paths, it.JobID)
-			}
-			_ = s.histLB.SetModel(m)
-			s.histModel = m
+			s.renderCloudList()
 			s.histToggle.SetText("本地历史")
 			s.histFavBtn.SetEnabled(true)
 		})
 	}()
+}
+
+// preloadCloudHistory 打开设置时静默预载(不切模式不动列表, 只备好缓存)。
+func (s *settings) preloadCloudHistory() {
+	if s.cc == nil {
+		return
+	}
+	go func() {
+		items, err := s.cc.GetHistory(context.Background())
+		if err != nil {
+			return
+		}
+		s.mw.Synchronize(func() {
+			if s.histMode == "cloud" {
+				return // 用户已手动加载过, 不覆盖
+			}
+			s.histCloud = items
+		})
+	}()
+}
+
+// renderCloudList 用 s.histCloud 重建云端列表(收藏置顶, 行=心形+时间+提示词截断)。
+func (s *settings) renderCloudList() {
+	items := make([]cloud.HistoryItem, 0, len(s.histCloud))
+	for _, it := range s.histCloud {
+		if it.Fav {
+			items = append(items, it)
+		}
+	}
+	for _, it := range s.histCloud {
+		if !it.Fav {
+			items = append(items, it)
+		}
+	}
+	s.histCloud = items
+	m := &wallpaperListModel{}
+	for _, it := range items {
+		heart := "♡"
+		if it.Fav {
+			heart = "♥"
+		}
+		ts := it.CreatedAt
+		if len(ts) >= 16 {
+			ts = strings.Replace(ts[5:16], "T", " ", 1) // 2026-11-07T21:00 → 11-07 21:00
+		}
+		desc := it.Positive
+		if desc == "" {
+			desc = "预生成图"
+		}
+		m.names = append(m.names, fmt.Sprintf("%s %s  %s", heart, ts, clipRunes(desc, 24)))
+		m.paths = append(m.paths, it.JobID)
+	}
+	_ = s.histLB.SetModel(m)
+	s.histModel = m
 }
 
 // previewCloud 异步下载云端图预览(丢弃过期选中的迟到响应)。
@@ -1190,7 +1234,7 @@ func (s *settings) applyCloud(it cloud.HistoryItem) {
 	}()
 }
 
-// toggleCloudFav 收藏/取消收藏选中项, 成功后重拉(收藏置顶会重排, 心形同步)。
+// toggleCloudFav 收藏/取消收藏: 乐观翻心+立即置顶重排, 失败回滚; 成功后静默与服务端对齐。
 func (s *settings) toggleCloudFav() {
 	idx := s.histLB.CurrentIndex()
 	if s.histMode != "cloud" || idx < 0 || idx >= len(s.histCloud) {
@@ -1202,14 +1246,23 @@ func (s *settings) toggleCloudFav() {
 	}
 	it := s.histCloud[idx]
 	next := !it.Fav
+	s.histCloud[idx].Fav = next // 乐观更新(不等网络)
+	s.renderCloudList()
 	go func() {
 		err := s.cc.HistoryFav(context.Background(), it.JobID, next)
 		s.mw.Synchronize(func() {
 			if err != nil {
+				for i := range s.histCloud { // 回滚
+					if s.histCloud[i].JobID == it.JobID {
+						s.histCloud[i].Fav = !next
+						break
+					}
+				}
+				s.renderCloudList()
 				showError(s.mw, "收藏失败: %v", err)
 				return
 			}
-			s.loadCloudHistory()
+			s.loadCloudHistory() // 静默确认(与服务端置顶顺序对齐)
 		})
 	}()
 }
