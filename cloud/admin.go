@@ -145,6 +145,7 @@ code{color:var(--acc)}
 <div class="kpi"><div class="l">schema 版本</div><div class="v">{{.KSchema}}</div></div>
 <div class="kpi"><div class="l">预生成池(就绪/总)</div><div class="v">{{.KPregen}}</div></div>
 <div class="kpi"><div class="l">配额(出图 时/天)</div><div class="v" style="font-size:15px">{{.KQuotaG}}</div></div>
+<div class="kpi"><div class="l">出图机代理</div><div class="v" style="font-size:15px">{{.KAgent}}</div></div>
 <div class="kpi"><div class="l">配额(LLM 时/天)</div><div class="v" style="font-size:15px">{{.KQuotaL}}</div></div>
 </div>
 <h2>用量(近 7 天)</h2>
@@ -655,6 +656,7 @@ func (a *API) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	data["KSchema"] = schema
 	data["KPregen"] = fmt.Sprintf("%d / %d", pgReady, pgTotal)
 	data["KQuotaG"] = fmt.Sprintf("%d / %d", a.genHour, a.genDay)
+	data["KAgent"] = a.agentStatusText()
 	data["KQuotaL"] = fmt.Sprintf("%d / %d", a.llmHour, a.llmDay)
 
 	verRows, _ := a.st.ClientVerDist()
@@ -724,4 +726,24 @@ func (a *API) handleAdmin(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = adminTmpl.Execute(w, data)
+}
+
+// agentStatusText 看板用: 出图机代理在线状态(最近一次 claim/rendered 请求时间)。
+func (a *API) agentStatusText() string {
+	ts := a.agentSeen.Load()
+	if ts == 0 {
+		return "未连接"
+	}
+	d := time.Since(time.Unix(ts, 0))
+	switch {
+	case d < 2*time.Minute:
+		if v := a.agentVersion(); v != "" {
+			return fmt.Sprintf("在线 · v%s · %d秒前", v, int(d.Seconds()))
+		}
+		return fmt.Sprintf("在线 · %d秒前", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("离线 · %d分钟前", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("离线 · %d小时前", int(d.Hours()))
+	}
 }

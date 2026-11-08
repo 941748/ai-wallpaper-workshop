@@ -84,6 +84,7 @@ var migrations = []migration{
 	{10, m0010JobRender},
 	{11, m011Archive},
 	{12, m012ArchiveRecipe},
+	{13, m013FailedPregen},
 }
 
 // m001BaselineSchema 基线表结构(全部 IF NOT EXISTS, 对新库建表/对旧库无操作)。
@@ -1048,11 +1049,51 @@ func m0010JobRender(db *sql.DB) error {
 	return nil
 }
 
-// SetJobRender 渲染完成待上传: 记录 prompt/文件引用并置 oss_pending(updated_at 作为代理时效起点)。
-func (s *Store) SetJobRender(jobID, promptID, imageName, imageSub string) error {
-	_, err := s.db.Exec(`UPDATE jobs SET status='oss_pending', error='', prompt_id=?, image_name=?, image_sub=?, updated_at=?
-WHERE job_id=?`, promptID, imageName, imageSub, time.Now().Format(timeFmt), jobID)
-	return err
+// ClaimNextJob 认领下一个待渲染任务(S3: 出图机代理渲染)。
+// normal 优先, 空了才给 idle(空闲预生成); 条件更新置 running 防重复认领。
+func (s *Store) ClaimNextJob() (*Job, error) {
+	for i := 0; i < 3; i++ {
+		for _, idleOK := range []bool{false, true} {
+			job, err := s.NextQueuedJob(idleOK)
+			if err != nil {
+				return nil, err
+			}
+			if job == nil {
+				continue
+			}
+			res, err := s.db.Exec(`UPDATE jobs SET status='running', updated_at=? WHERE job_id=? AND status='queued'`,
+				time.Now().Format(timeFmt), job.JobID)
+			if err != nil {
+				return nil, err
+			}
+			if n, _ := res.RowsAffected(); n == 1 {
+				return job, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+// FailStaleRunning 代理卡死回收: 认领后超时未回报 → 明确失败(出图机离线或渲染超时),
+// 客户端凭失败状态走断点续传/重试, 不会无限等待。
+func (s *Store) FailStaleRunning(cutoff time.Time) (int64, error) {
+	res, err := s.db.Exec(`UPDATE jobs SET status='failed', error='出图机离线或渲染超时', updated_at=?
+WHERE status='running' AND updated_at < ?`, time.Now().Format(timeFmt), cutoff.Format(timeFmt))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// ClearOssPending 启动迁移: S3 切换时清掉旧协议残留的 oss_pending(图在出图机 ComfyUI,
+// 新协议无法续传), 明确标失败让客户端重试。
+func (s *Store) ClearOssPending() (int64, error) {
+	res, err := s.db.Exec(`UPDATE jobs SET status='failed', error='协议升级中断, 请重新出图'
+WHERE status='oss_pending'`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // m011Archive 归档表(用户图片历史): jobs 7 天即 Purge, 历史须独立存活;
@@ -1110,59 +1151,33 @@ WHERE (negative='' OR combo='') AND EXISTS(SELECT 1 FROM jobs j WHERE j.job_id=a
 	return err
 }
 
-// OssTask 代理待传任务。
-type OssTask struct {
-	JobID     string
-	UserID    string
-	Kind      string
-	OssKey    string // 服务端指定的对象键(代理按此上传)
-	ImageName string
-	ImageSub  string
-	PromptID  string
+// m013FailedPregen 清理失败任务的预生成行: CountPregenPending 把 ready=0 都算在途,
+// 失败行永不就绪会虚增 pending 压制主动预生成; 任务行已 Purge 的孤儿行一并清。
+func m013FailedPregen(db *sql.DB) error {
+	_, err := db.Exec(`DELETE FROM pregen WHERE ready=0 AND (
+  NOT EXISTS (SELECT 1 FROM jobs j WHERE j.job_id=pregen.job_id)
+  OR EXISTS (SELECT 1 FROM jobs j WHERE j.job_id=pregen.job_id AND j.status='failed'))`)
+	return err
+}
+
+// DropPregen 预生成任务失败时删除对应行(失败即清, 不占用在途计数)。
+func (s *Store) DropPregen(jobID string) error {
+	_, err := s.db.Exec(`DELETE FROM pregen WHERE job_id=?`, jobID)
+	return err
+}
+
+// DropPregensForFailed 批量清理失败任务残留的预生成行(卡死回收后调用)。
+func (s *Store) DropPregensForFailed() (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM pregen WHERE ready=0 AND job_id IN (
+  SELECT job_id FROM jobs WHERE status='failed')`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // OssKeyFor 按用户生成对象键(S2 起统一为 u/{user_id}/{jobID}.jpg: 便于按用户
 // 列举/删除/归档保留; kind 不再体现在键上, 类型信息在库里)。
 func OssKeyFor(userID, jobID string) string {
 	return "u/" + userID + "/" + jobID + ".jpg"
-}
-
-// ListOssPending 代理拉取的待传清单(oss_pending 全部)。
-func (s *Store) ListOssPending() ([]OssTask, error) {
-	rows, err := s.db.Query(`SELECT job_id, user_id, kind, prompt_id, image_name, COALESCE(image_sub,'')
-FROM jobs WHERE status='oss_pending' ORDER BY updated_at ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []OssTask
-	for rows.Next() {
-		var t OssTask
-		if err := rows.Scan(&t.JobID, &t.UserID, &t.Kind, &t.PromptID, &t.ImageName, &t.ImageSub); err != nil {
-			return nil, err
-		}
-		t.OssKey = OssKeyFor(t.UserID, t.JobID)
-		out = append(out, t)
-	}
-	return out, rows.Err()
-}
-
-// ListStaleOssPending 超时未获代理确认的任务(兜底拉图用)。
-func (s *Store) ListStaleOssPending(cutoff time.Time) ([]OssTask, error) {
-	rows, err := s.db.Query(`SELECT job_id, user_id, kind, prompt_id, image_name, COALESCE(image_sub,'')
-FROM jobs WHERE status='oss_pending' AND updated_at < ? ORDER BY updated_at ASC`, cutoff.Format(timeFmt))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []OssTask
-	for rows.Next() {
-		var t OssTask
-		if err := rows.Scan(&t.JobID, &t.UserID, &t.Kind, &t.PromptID, &t.ImageName, &t.ImageSub); err != nil {
-			return nil, err
-		}
-		t.OssKey = OssKeyFor(t.UserID, t.JobID)
-		out = append(out, t)
-	}
-	return out, rows.Err()
 }

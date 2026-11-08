@@ -63,12 +63,6 @@ func presignOSSGETAt(key string, expires int64) (string, error) {
 		url.QueryEscape(ak), expires, url.QueryEscape(sig)), nil
 }
 
-// ossUploadEnabled P1 出图机直传开关: AW_OSS_UPLOAD=1 且 OSS 四件套已配置。
-// 关闭(默认)时队列走现网一体 Generate 路径, 行为零变化。
-func ossUploadEnabled() bool {
-	return os.Getenv("AW_OSS_UPLOAD") == "1" && ossConfigured()
-}
-
 // ---------- 对象管理操作(PUT/COPY/DELETE, V1 header 认证) ----------
 // 与 presign 同源的签名: StringToSign 五段 join, x-oss-* 头参与签名(如 COPY 的 x-oss-copy-source)。
 

@@ -7,16 +7,17 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"wallpaper/cloud/store"
 )
 
-// ---------- 出图机上传代理协议(P1) ----------
-// 代理(aw-uploader, 跑在出图机本机)循环:
-//   POST /api/v1/agent/pending  → 拉取 oss_pending 待传清单(服务端指定 oss_key)
-//   本机 Comfy /view 取字节 → PUT OSS →
-//   POST /api/v1/agent/done     → 服务端标 done(pregen 同步 ready+oss_key)
-// 鉴权: AW_AGENT_TOKEN(与代理配置同源; 未配置=503 禁用)。
+// ---------- 出图机统一代理协议(S3: 调度+上传合并, 替代 frpc 反向隧道) ----------
+// 代理(aw-agent, 跑在出图机本机)循环:
+//   POST /api/v1/agent/claim     → 领取渲染任务(服务端下发正反提示词/尺寸/seed/工作流/OSS键)
+//   本地模板占位符注入 → 本机 ComfyUI 出图 → JPEG 转码 → PUT OSS →
+//   POST /api/v1/agent/rendered  → 回报(成功标 done+归档; 失败标 failed)
+// 鉴权: AW_AGENT_TOKEN(恒时比对; 未配置=503 禁用)。任意一次代理请求刷新在线时间(供看板/health)。
 
 func (a *API) authAgent(w http.ResponseWriter, r *http.Request) bool {
 	tok := os.Getenv("AW_AGENT_TOKEN")
@@ -29,38 +30,57 @@ func (a *API) authAgent(w http.ResponseWriter, r *http.Request) bool {
 		writeFail(w, http.StatusUnauthorized, "unauthorized")
 		return false
 	}
+	a.agentSeen.Store(time.Now().Unix())
 	return true
 }
 
-// handleAgentPending 拉取待传清单。
-func (a *API) handleAgentPending(w http.ResponseWriter, r *http.Request) {
-	if !a.authAgent(w, r) {
-		return
-	}
-	tasks, err := a.st.ListOssPending()
-	if err != nil {
-		writeFail(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	out := make([]map[string]string, 0, len(tasks))
-	for _, t := range tasks {
-		out = append(out, map[string]string{
-			"job_id":    t.JobID,
-			"oss_key":   t.OssKey,
-			"filename":  t.ImageName,
-			"subfolder": t.ImageSub,
-		})
-	}
-	writeOK(w, map[string]any{"tasks": out})
-}
-
-// handleAgentDone 代理上报完成(oss_key 由服务端按 job 重算, 不信客户端值)。
-func (a *API) handleAgentDone(w http.ResponseWriter, r *http.Request) {
+// handleAgentClaim 领取渲染任务: normal 优先, 空了才给 idle(预生成)。
+// 单 GPU 串行渲染, 每次最多 1 个; 无任务返回 task=null(代理继续轮询)。
+func (a *API) handleAgentClaim(w http.ResponseWriter, r *http.Request) {
 	if !a.authAgent(w, r) {
 		return
 	}
 	var body struct {
-		JobID string `json:"job_id"`
+		Version string `json:"version"` // 代理自报版本(供看板/health 展示)
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+	if body.Version != "" {
+		a.agentVer.Store(body.Version)
+	}
+	job, err := a.st.ClaimNextJob()
+	if err != nil {
+		writeFail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if job == nil {
+		writeOK(w, map[string]any{"task": nil})
+		return
+	}
+	ossKey := store.OssKeyFor(job.UserID, job.JobID)
+	a.logf("代理领任务 job=%s kind=%s %dx%d wf=%s", job.JobID, job.Kind, job.Width, job.Height, job.WorkflowID)
+	writeOK(w, map[string]any{"task": map[string]any{
+		"job_id":       job.JobID,
+		"kind":         job.Kind,
+		"positive":     job.Positive,
+		"negative":     job.Negative,
+		"width":        job.Width,
+		"height":       job.Height,
+		"seed":         job.Seed,
+		"workflow_id":  job.WorkflowID,
+		"oss_key":      ossKey, // 服务端算键, 代理只负责传到位
+	}})
+}
+
+// handleAgentRendered 回报渲染结果(oss_key 由服务端重算核对, 不信客户端值)。
+func (a *API) handleAgentRendered(w http.ResponseWriter, r *http.Request) {
+	if !a.authAgent(w, r) {
+		return
+	}
+	var body struct {
+		JobID  string `json:"job_id"`
+		OK     bool   `json:"ok"`
+		Error  string `json:"error"`
+		OssKey string `json:"oss_key"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil || body.JobID == "" {
 		writeFail(w, http.StatusBadRequest, "bad request")
@@ -71,12 +91,30 @@ func (a *API) handleAgentDone(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, http.StatusNotFound, "任务不存在")
 		return
 	}
-	if job.Status != "oss_pending" {
-		// 幂等: 已 done(重复上报)直接成功
+	if job.Status == "done" {
+		writeOK(w, map[string]bool{"ok": true}) // 幂等: 重复回报直接成功
+		return
+	}
+	if !body.OK {
+		msg := body.Error
+		if msg == "" {
+			msg = "渲染失败"
+		}
+		_ = a.st.SetJobStatus(job.JobID, "failed", msg, "")
+		if job.Kind == "pregen" {
+			_ = a.st.DropPregen(job.JobID) // 失败即清, 不虚增在途计数
+		}
+		a.logf("代理回报失败 job=%s kind=%s: %s", job.JobID, job.Kind, msg)
 		writeOK(w, map[string]bool{"ok": true})
 		return
 	}
 	ossKey := store.OssKeyFor(job.UserID, job.JobID)
+	if body.OssKey != "" && body.OssKey != ossKey {
+		// 代理传到了错误的键 → 拒绝落 done(下载会404), 任务留给超时回收明确失败
+		a.logf("代理 oss_key 不匹配 job=%s: got=%s want=%s", job.JobID, body.OssKey, ossKey)
+		writeFail(w, http.StatusConflict, "oss_key 不匹配")
+		return
+	}
 	if err := a.st.SetJobOssKey(job.JobID, ossKey); err != nil {
 		writeFail(w, http.StatusInternalServerError, err.Error())
 		return
@@ -91,6 +129,6 @@ func (a *API) handleAgentDone(w http.ResponseWriter, r *http.Request) {
 	} else if err := a.st.ArchiveJob(job.JobID); err != nil {
 		a.logf("归档失败 job=%s: %v", job.JobID, err)
 	}
-	a.logf("代理上传确认 job=%s kind=%s -> %s", job.JobID, job.Kind, ossKey)
+	a.logf("代理回报完成 job=%s kind=%s -> %s", job.JobID, job.Kind, ossKey)
 	writeOK(w, map[string]bool{"ok": true})
 }

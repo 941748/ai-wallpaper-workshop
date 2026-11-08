@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,14 +65,13 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if u := a.authUser(r); u != nil {
 		quotaOK = a.checkQuota(u, "gen") && a.checkQuota(u, "llm")
 	}
-	// 出图机可达性(服务端短超时探测+缓存): 客户端据此在首张壁纸前感知出图链路。
+	// 云渲染可用性 = 出图机代理在线(S3: 代理领任务渲染, 无代理即无法出图)。
 	renderOK := false
-	if a.q != nil && a.q.comfy != nil {
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		renderOK = a.q.comfy.Reachable(ctx)
-		cancel()
+	if ts := a.agentSeen.Load(); ts > 0 {
+		renderOK = time.Since(time.Unix(ts, 0)) < 10*time.Minute
 	}
-	writeOK(w, map[string]any{"ok": true, "quota_ok": quotaOK, "render_ok": renderOK, "server_version": a.version})
+	writeOK(w, map[string]any{"ok": true, "quota_ok": quotaOK, "render_ok": renderOK,
+		"server_version": a.version, "agent_version": a.agentVersion()})
 }
 
 // ---------- 设备扫码配对 ----------

@@ -52,9 +52,8 @@ func main() {
 		logf("警告: 未配置 AW_LLM_KEY, LLM 决策将回退本地引擎")
 	}
 
-	comfy := NewComfy(env("AW_COMFY_BASE", "http://127.0.0.1:8188"), env("AW_COMFY_TOKEN", ""))
-
-	q := &queue{st: st, comfy: comfy, reg: reg, dataDir: dataDir, logf: logf}
+	// S3: 云端不再直连 ComfyUI(渲染由出图机代理领任务完成, 见 handlers_agent)
+	q := &queue{st: st, logf: logf}
 
 	api := &API{
 		st: st, llm: llmClient, reg: reg, q: q, dataDir: dataDir,
@@ -69,8 +68,14 @@ func main() {
 		llmDay:        envInt("AW_QUOTA_LLM_DAY", 60),
 		androidGenDay: envInt("AW_QUOTA_ANDROID_DAY", 12),
 	}
-	// 空闲主动预生成: 队列 worker 空闲分支周期调用, 为活跃用户保持 ready 库存
+	// 空闲主动预生成: 协调器空闲分支周期调用, 为活跃用户保持 ready 库存
 	q.idleHook = api.proactivePregen
+	// S3 切换: 清掉旧协议残留的 oss_pending(明确失败, 客户端重试), 避免僵尸等待
+	if n, err := st.ClearOssPending(); err != nil {
+		logf("oss_pending 迁移清理失败: %v", err)
+	} else if n > 0 {
+		logf("oss_pending 迁移清理: %d 个旧协议任务标失败", n)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -98,7 +103,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
-		logf("%s 云服务已启动 %s (data=%s, comfy=%s)", appNameCN, addr, dataDir, comfy.Base)
+		logf("%s 云服务已启动 %s (data=%s)", appNameCN, addr, dataDir)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP 服务失败: %v", err)
 		}

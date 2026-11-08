@@ -140,3 +140,29 @@ func (a *API) handleAndroidLatest(w http.ResponseWriter, r *http.Request) {
 		"sha256":  m.SHA256, "size": m.Size, "notes": m.Notes,
 	})
 }
+
+// handleAgentLatest GET /api/v1/agent/latest 出图机代理检查更新(S3 版本管理)。
+// 数据源 AW_DATA/releases/manifest-agent.json; url 统一指 /go/agent 计数中转;
+// 未发布过代理版本时返回同版本(无更新)。
+func (a *API) handleAgentLatest(w http.ResponseWriter, r *http.Request) {
+	current := r.URL.Query().Get("version")
+	raw, err := os.ReadFile(filepath.Join(a.dataDir, "releases", "manifest-agent.json"))
+	if err != nil {
+		writeOK(w, map[string]any{"version": current, "notes": ""})
+		return
+	}
+	var m releaseManifest
+	if err := json.Unmarshal(raw, &m); err != nil || m.Version == "" || m.URL == "" {
+		writeOK(w, map[string]any{"version": current, "notes": ""})
+		return
+	}
+	if compareVer(m.Version, current) <= 0 {
+		writeOK(w, map[string]any{"version": current, "notes": ""})
+		return
+	}
+	writeOK(w, map[string]any{
+		"version": m.Version,
+		"url":     m.URL,
+		"sha256":  m.SHA256, "size": m.Size, "notes": m.Notes,
+	})
+}

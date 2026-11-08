@@ -125,3 +125,29 @@ func giteeAPKURL(ver string) string {
 	return "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/android-v" + ver +
 		"/AIWallpaper-Android-" + ver + ".apk"
 }
+
+// handleGoAgent 出图机代理下载计数中转: 记 agent_dl 事件后 302 到 Gitee Release 资产。
+// 资产命名约定: tag=agent-v{ver}, 文件=aw-agent.exe(与 giteeAgentURL 对应)。
+func (a *API) handleGoAgent(w http.ResponseWriter, r *http.Request) {
+	raw, err := os.ReadFile(filepath.Join(a.dataDir, "releases", "manifest-agent.json"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	var m releaseManifest
+	if json.Unmarshal(raw, &m) != nil || m.Version == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if err := a.st.RecordSiteEvent("agent_dl", siteVisitorHash(r), siteVisitorIP(r)); err != nil {
+		a.logf("代理下载计数失败: %v", err)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, giteeAgentURL(m.Version), http.StatusFound)
+}
+
+// giteeAgentURL 当前代理版本的 Gitee Release 直链。
+func giteeAgentURL(ver string) string {
+	return "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/agent-v" + ver +
+		"/aw-agent.exe"
+}

@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +18,19 @@ import (
 	"wallpaper/internal/tick"
 )
 
+// testJPEG 有效小图(与生产口径一致: 代理上传/落盘均为 JPEG; 代理模拟与内联完成器共用)。
+func testJPEG() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 1344, 768))
+	for y := 0; y < 768; y += 8 {
+		for x := 0; x < 1344; x += 8 {
+			img.Set(x, y, color.RGBA{uint8(x), uint8(y), 128, 255})
+		}
+	}
+	var buf bytes.Buffer
+	_ = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90})
+	return buf.Bytes()
+}
+
 // TestClientTickAgainstRealCloud 跨模块端到端:
 // 真实 tick.RunOnce(注入桌面桩) ↔ 真实云服务(httptest) ↔ mock ComfyUI/LLM。
 // 覆盖: 注册 → health → 策略同步 → prompts/next → generate → 轮询 → 下载 → 换壁纸 → 备用池补货/提货/命中 → 上报。
@@ -24,6 +41,38 @@ func TestClientTickAgainstRealCloud(t *testing.T) {
 	defer ts.srv.Close()
 
 	userID, token := ts.register(t)
+
+	// S3 模拟出图机代理: 领任务→本地落盘 JPEG→置 done(协议本身由 TestAgentRenderFlow 覆盖;
+	// 此处直写避免"done 已可见但引用未补"的竞态, 图落本地使图片端点走离线回退)。
+	agentStop := make(chan struct{})
+	defer close(agentStop)
+	go func() {
+		tk := time.NewTicker(50 * time.Millisecond)
+		defer tk.Stop()
+		for {
+			select {
+			case <-agentStop:
+				return
+			case <-tk.C:
+			}
+			job, err := ts.st.ClaimNextJob()
+			if err != nil || job == nil {
+				continue
+			}
+			dir := "images"
+			if job.Kind == "pregen" {
+				dir = "pregen"
+			}
+			path := filepath.Join(ts.data, dir, job.JobID+".jpg")
+			_ = os.WriteFile(path, testJPEG(), 0o644)
+			_ = ts.st.SetJobStatus(job.JobID, "done", "", path)
+			if job.Kind == "pregen" {
+				_ = ts.st.SetPregenReady(job.JobID, path)
+			} else {
+				_ = ts.st.ArchiveJob(job.JobID)
+			}
+		}
+	}()
 
 	// 客户端数据目录
 	clientDir := t.TempDir()

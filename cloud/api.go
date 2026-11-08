@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"wallpaper/cloud/llm"
 	"wallpaper/cloud/store"
@@ -34,6 +35,16 @@ type API struct {
 	genHour, genDay int
 	llmHour, llmDay int
 	androidGenDay   int // 安卓端独立出图日配额(与 PC 同账号但分开计数)
+	agentSeen       atomic.Int64   // 代理最近一次请求( Unix 秒; 0=从未连接), 供 health/看板
+	agentVer        atomic.Value   // string: 代理自报版本(claim 携带)
+}
+
+// agentVersion 代理自报版本(空=未上报)。
+func (a *API) agentVersion() string {
+	if v, ok := a.agentVer.Load().(string); ok {
+		return v
+	}
+	return ""
 }
 
 // Routes 注册全部路由(Go 1.22 方法路由)。
@@ -74,8 +85,10 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("GET /download/AIWallpaper.exe", a.handleDownload)
 	mux.HandleFunc("GET /go/dl", a.handleGoDL)
 	mux.HandleFunc("GET /go/apk", a.handleGoAPK)
-	mux.HandleFunc("POST /api/v1/agent/pending", a.handleAgentPending)
-	mux.HandleFunc("POST /api/v1/agent/done", a.handleAgentDone)
+	mux.HandleFunc("GET /go/agent", a.handleGoAgent)
+	mux.HandleFunc("POST /api/v1/agent/claim", a.handleAgentClaim)
+	mux.HandleFunc("GET /api/v1/agent/latest", a.handleAgentLatest)
+	mux.HandleFunc("POST /api/v1/agent/rendered", a.handleAgentRendered)
 	return mux
 }
 

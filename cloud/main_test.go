@@ -5,12 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"image"
-	"image/color"
-	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,43 +18,6 @@ import (
 	"wallpaper/cloud/store"
 	"wallpaper/internal/taxonomy"
 )
-
-// ---------- mock ComfyUI ----------
-
-func gradientPNG(t *testing.T, w, h int) []byte {
-	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			img.Set(x, y, color.RGBA{uint8(x % 256), uint8(y % 256), uint8((x + y*3) % 256), 255})
-		}
-	}
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
-}
-
-func newMockComfy(t *testing.T) *httptest.Server {
-	pngData := gradientPNG(t, 1344, 768)
-	mux := http.NewServeMux()
-	promptID := "p1"
-	mux.HandleFunc("/prompt", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		if bytes.Contains(body, []byte("lora_name")) {
-			t.Logf("workflow contains lora node")
-		}
-		_, _ = w.Write([]byte(`{"prompt_id":"` + promptID + `"}`))
-	})
-	mux.HandleFunc("/history/"+promptID, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"p1":{"status":{"completed":true},"outputs":{"9":{"images":[{"filename":"out.png","subfolder":"","type":"output"}]}}}}`))
-	})
-	mux.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(pngData)
-	})
-	return httptest.NewServer(mux)
-}
 
 // ---------- mock LLM ----------
 
@@ -98,16 +60,12 @@ func newTestServer(t *testing.T, llmBase string, withLLM bool) *testServer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	comfyMock := newMockComfy(t)
-	t.Cleanup(comfyMock.Close)
-
 	llmClient := llm.New(llmBase, "", "mock")
 	if withLLM {
 		llmClient.Key = "test-key"
 	}
 	reg := DefaultRegistry()
-	q := &queue{st: st, comfy: NewComfy(comfyMock.URL, ""), reg: reg, dataDir: data,
-		logf: func(string, ...any) {}, idleDelay: time.Millisecond}
+	q := &queue{st: st, logf: func(string, ...any) {}}
 	api := &API{st: st, llm: llmClient, reg: reg, q: q, dataDir: data,
 		version: "test", logf: func(string, ...any) {},
 		genHour: 12, genDay: 60, llmHour: 16, llmDay: 90, androidGenDay: 12}
@@ -302,6 +260,29 @@ func TestFullClientLifecycle(t *testing.T) {
 		JobID string `json:"job_id"`
 	}
 	decodeData(t, raw, &genResp)
+	// S3: 云端不再直连渲染, 测试内联"代理完成"(领任务→本地落盘 JPEG→置 done)
+	completeClaimed := func() {
+		t.Helper()
+		job, err := ts.st.ClaimNextJob()
+		if err != nil || job == nil {
+			t.Fatal("应有可领任务")
+		}
+		dir := "images"
+		if job.Kind == "pregen" {
+			dir = "pregen"
+		}
+		path := filepath.Join(ts.data, dir, job.JobID+".jpg")
+		if err := os.WriteFile(path, testJPEG(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_ = ts.st.SetJobStatus(job.JobID, "done", "", path)
+		if job.Kind == "pregen" {
+			_ = ts.st.SetPregenReady(job.JobID, path)
+		} else {
+			_ = ts.st.ArchiveJob(job.JobID)
+		}
+	}
+	completeClaimed()
 	status, jobErr := waitJob(t, ts, token, genResp.JobID, 10*time.Second)
 	if status != "done" {
 		t.Fatalf("job status = %s (err=%s)", status, jobErr)
@@ -328,6 +309,7 @@ func TestFullClientLifecycle(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("pregen submit %d: %s", resp.StatusCode, raw)
 	}
+	completeClaimed() // 模拟代理把预生成渲染完成
 	// 30s 上限: 成功路径 ready 即 break 不变慢; CI(windows-latest) 慢机器上
 	// 队列 worker 调度可达 10s+, 原 10s 会 flaky 超时(见 v1.0.5 首发 CI 失败)。
 	deadline := time.Now().Add(30 * time.Second)
@@ -508,68 +490,6 @@ func TestNextQuotaPrecheck(t *testing.T) {
 		t.Fatalf("PC next 应200: %d %s", resp.StatusCode, raw)
 	}
 }
-
-func TestBuildWorkflow(t *testing.T) {
-	raw, err := buildWorkflow([]byte(templateFixture), `POS "quoted"`, 1920, 1080, 42)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "{{") {
-		t.Fatalf("placeholder not replaced: %s", raw)
-	}
-	var nodes map[string]struct {
-		ClassType string                     `json:"class_type"`
-		Inputs    map[string]json.RawMessage `json:"inputs"`
-	}
-	if err := json.Unmarshal(raw, &nodes); err != nil {
-		t.Fatal(err)
-	}
-	// 提示词/尺寸/seed 注入
-	var positive string
-	if err := json.Unmarshal(nodes["57:27"].Inputs["text"], &positive); err != nil || positive != `POS "quoted"` {
-		t.Fatalf("positive not applied: %q (err=%v)", positive, err)
-	}
-	var width, height float64
-	_ = json.Unmarshal(nodes["57:13"].Inputs["width"], &width)
-	_ = json.Unmarshal(nodes["57:13"].Inputs["height"], &height)
-	if width != 1920 || height != 1080 {
-		t.Fatalf("size not applied: %vx%v", width, height)
-	}
-	var seed float64
-	_ = json.Unmarshal(nodes["57:3"].Inputs["seed"], &seed)
-	if seed != 42 {
-		t.Fatalf("seed not applied: %v", seed)
-	}
-	// 其余参数冻结: 步数/CFG/采样器保持模板原值
-	var steps, cfg float64
-	var sampler, scheduler string
-	_ = json.Unmarshal(nodes["57:3"].Inputs["steps"], &steps)
-	_ = json.Unmarshal(nodes["57:3"].Inputs["cfg"], &cfg)
-	_ = json.Unmarshal(nodes["57:3"].Inputs["sampler_name"], &sampler)
-	_ = json.Unmarshal(nodes["57:3"].Inputs["scheduler"], &scheduler)
-	if steps != 8 || cfg != 1 || sampler != "res_multistep" || scheduler != "simple" {
-		t.Fatalf("frozen params modified: steps=%v cfg=%v sampler=%q scheduler=%q", steps, cfg, sampler, scheduler)
-	}
-	var unet string
-	_ = json.Unmarshal(nodes["57:28"].Inputs["unet_name"], &unet)
-	if unet != "z_image_turbo_int8_convrot.safetensors" {
-		t.Fatalf("unet should stay frozen: %q", unet)
-	}
-}
-
-// templateFixture 与 assets/workflow_template.json 结构一致的测试模板(占位值会被 buildWorkflow 覆盖)。
-const templateFixture = `{
-  "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "z-image-turbo", "images": ["57:8", 0]}},
-  "57:30": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_4b_fp4_mixed.safetensors", "type": "lumina2"}},
-  "57:29": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
-  "57:33": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["57:27", 0]}},
-  "57:8": {"class_type": "VAEDecode", "inputs": {"samples": ["57:3", 0], "vae": ["57:29", 0]}},
-  "57:28": {"class_type": "UNETLoader", "inputs": {"unet_name": "z_image_turbo_int8_convrot.safetensors"}},
-  "57:27": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{POSITIVE}}", "clip": ["57:30", 0]}},
-  "57:13": {"class_type": "EmptySD3LatentImage", "inputs": {"width": {{WIDTH}}, "height": {{HEIGHT}}, "batch_size": 1}},
-  "57:11": {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 3, "sampling": "flow", "model": ["57:28", 0]}},
-  "57:3": {"class_type": "KSampler", "inputs": {"seed": {{SEED}}, "steps": 8, "cfg": 1, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1, "model": ["57:11", 0], "positive": ["57:27", 0], "negative": ["57:33", 0], "latent_image": ["57:13", 0]}}
-}`
 
 // ---------- 评价信号描述 ----------
 
@@ -1174,49 +1094,40 @@ func TestProfilePushAndGuard(t *testing.T) {
 	}
 }
 
-// TestOssUploadAgentFlow P1 直传全链路: 开关开 → 队列只提交等完成(oss_pending) →
-// 代理 pending/done 协议(鉴权/幂等/服务端重算 oss_key) → 超时兜底 reclaim 落盘。
-func TestOssUploadAgentFlow(t *testing.T) {
+// TestAgentRenderFlow S3 全链路: 领任务(正反提示词/尺寸/seed/OSS键下发, 置 running) →
+// 回报完成(done+oss_key 服务端核对+归档+pregen 联动, 幂等) → 失败回报 → 卡死回收 → health。
+func TestAgentRenderFlow(t *testing.T) {
 	ts := newTestServer(t, "", false)
 	uid, _ := ts.register(t)
-	t.Setenv("AW_OSS_UPLOAD", "1")
-	setOSSEnv(t)
 	t.Setenv("AW_AGENT_TOKEN", "test-agent-token")
 
-	// 1) 建任务并走队列处理(开关开 → 不拉图, 置 oss_pending)
-	if err := ts.st.CreateJob(store.Job{
-		JobID: "j-oss1", UserID: uid, Kind: "gen", Priority: "normal",
-		Positive: "p", Width: 512, Height: 512,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	job, err := ts.st.Job("j-oss1")
-	if err != nil || job == nil {
-		t.Fatal("job missing")
-	}
-	ts.api.q.process(context.Background(), job)
-
-	tasks, err := ts.st.ListOssPending()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var task *store.OssTask
-	for i := range tasks {
-		if tasks[i].JobID == "j-oss1" {
-			task = &tasks[i]
+	agentPost := func(path string, payload any) (int, []byte) {
+		t.Helper()
+		b, _ := json.Marshal(payload)
+		req, _ := http.NewRequest(http.MethodPost, ts.srv.URL+path, bytes.NewReader(b))
+		req.Header.Set("Authorization", "Bearer test-agent-token")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
 		}
+		return resp.StatusCode, readAll(resp)
 	}
-	if task == nil {
-		t.Fatal("应为 oss_pending 待传任务")
-	}
-	if task.OssKey != "u/"+uid+"/j-oss1.jpg" || task.ImageName != "out.png" || task.PromptID != "p1" {
-		t.Fatalf("任务字段: %+v", task)
+	claim := func() (int, []byte, map[string]any) {
+		t.Helper()
+		code, raw := agentPost("/api/v1/agent/claim", map[string]any{"version": "9.9.9"})
+		var env struct {
+			Data struct {
+				Task map[string]any `json:"task"`
+			} `json:"data"`
+		}
+		_ = json.Unmarshal(raw, &env)
+		return code, raw, env.Data.Task
 	}
 
-	// 2) pending 鉴权: 错 token401, 对 token200 且带任务
-	body := bytes.NewReader([]byte(`{}`))
-	req, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/pending", body)
-	req.Header.Set("Authorization", "Bearer wrong-token")
+	// 1) 鉴权: 错 token401
+	req, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/claim", bytes.NewReader([]byte("{}")))
+	req.Header.Set("Authorization", "Bearer wrong")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -1225,105 +1136,199 @@ func TestOssUploadAgentFlow(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("错 token 应401, got %d", resp.StatusCode)
 	}
-	_, raw := ts.do(t, "POST", "/api/v1/agent/pending", "", nil)
-	_ = raw // ts.do 带用户 token 而非 agent token, 单独构造:
-	req2, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/pending", bytes.NewReader([]byte(`{}`)))
-	req2.Header.Set("Authorization", "Bearer test-agent-token")
-	resp2, err := http.DefaultClient.Do(req2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pendEnv struct {
-		Data struct {
-			Tasks []map[string]string `json:"tasks"`
-		} `json:"data"`
-	}
-	raw2 := readAll(resp2)
-	if resp2.StatusCode != 200 || json.Unmarshal(raw2, &pendEnv) != nil {
-		t.Fatalf("pending 失败: %d %s", resp2.StatusCode, raw2)
-	}
-	found := false
-	for _, tk := range pendEnv.Data.Tasks {
-		if tk["job_id"] == "j-oss1" && tk["oss_key"] == "u/"+uid+"/j-oss1.jpg" && tk["filename"] == "out.png" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("pending 清单缺任务: %s", raw2)
-	}
 
-	// 3) done → done + oss_key; 幂等重报
-	req3, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/done",
-		bytes.NewReader([]byte(`{"job_id":"j-oss1"}`)))
-	req3.Header.Set("Authorization", "Bearer test-agent-token")
-	resp3, err := http.DefaultClient.Do(req3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp3.Body.Close()
-	if resp3.StatusCode != 200 {
-		t.Fatalf("done 应200, got %d", resp3.StatusCode)
-	}
-	job, _ = ts.st.Job("j-oss1")
-	if job.Status != "done" || job.OssKey != "u/"+uid+"/j-oss1.jpg" {
-		t.Fatalf("done 后状态: status=%s key=%s", job.Status, job.OssKey)
-	}
-	// 幂等: 重复 done 仍200
-	req4, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/done",
-		bytes.NewReader([]byte(`{"job_id":"j-oss1"}`)))
-	req4.Header.Set("Authorization", "Bearer test-agent-token")
-	resp4, err := http.DefaultClient.Do(req4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp4.Body.Close()
-	if resp4.StatusCode != 200 {
-		t.Fatalf("重复 done 应200, got %d", resp4.StatusCode)
-	}
-
-	// 4) 兜底: 第二个任务 oss_pending → 超时回收 → 隧道拉图落盘(mock comfy) → done+本地文件
+	// 2) 领任务: 全字段下发 + 置 running
 	if err := ts.st.CreateJob(store.Job{
-		JobID: "j-oss2", UserID: uid, Kind: "gen", Priority: "normal",
-		Positive: "p", Width: 512, Height: 512,
+		JobID: "j-agent1", UserID: uid, Kind: "gen", Priority: "normal",
+		Positive: "阳光海岸", Negative: "低质量, 模糊", Width: 1344, Height: 768,
+		Seed: 42, WorkflowID: "std",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	job2, _ := ts.st.Job("j-oss2")
-	ts.api.q.process(context.Background(), job2)
-	ts.api.q.reclaimBefore(context.Background(), time.Now().Add(time.Hour)) // cutoff 未来 = 视为已超时
-	job2, _ = ts.st.Job("j-oss2")
-	if job2.Status != "done" || job2.ImagePath == "" {
-		t.Fatalf("兜底后: status=%s path=%s", job2.Status, job2.ImagePath)
+	code, raw, task := claim()
+	if code != 200 {
+		t.Fatalf("claim: %d %s", code, raw)
 	}
-	if data, err := os.ReadFile(job2.ImagePath); err != nil || len(data) == 0 {
-		t.Fatalf("兜底落盘文件异常: %v", err)
+	if task == nil || task["job_id"] != "j-agent1" || task["positive"] != "阳光海岸" ||
+		task["negative"] != "低质量, 模糊" || task["width"] != float64(1344) ||
+		task["seed"] != float64(42) || task["workflow_id"] != "std" ||
+		task["oss_key"] != "u/"+uid+"/j-agent1.jpg" {
+		t.Fatalf("claim 任务字段: %+v", task)
+	}
+	if j, _ := ts.st.Job("j-agent1"); j == nil || j.Status != "running" {
+		t.Fatalf("领走应置 running: %+v", j)
 	}
 
-	// 5) pregen 任务 done → pregen 行 ready + oss_key
-	if err := ts.st.CreateJob(store.Job{
-		JobID: "j-osspg", UserID: uid, Kind: "pregen", Priority: "idle",
-		Positive: "p", Width: 512, Height: 512,
-	}); err != nil {
+	// 3) 空队列 → task=null
+	code, raw, task = claim()
+	if code != 200 || task != nil {
+		t.Fatalf("空队列应 task=null: %d %s", code, raw)
+	}
+
+	// 4) 回报成功 → done + oss_key + 归档; 幂等
+	code, raw = agentPost("/api/v1/agent/rendered", map[string]any{
+		"job_id": "j-agent1", "ok": true, "oss_key": "u/" + uid + "/j-agent1.jpg",
+	})
+	if code != 200 {
+		t.Fatalf("rendered: %d %s", code, raw)
+	}
+	j, _ := ts.st.Job("j-agent1")
+	if j == nil || j.Status != "done" || j.OssKey != "u/"+uid+"/j-agent1.jpg" {
+		t.Fatalf("done 状态: %+v", j)
+	}
+	if arc, _ := ts.st.Archive("j-agent1"); arc == nil {
+		t.Fatal("gen 完成应落归档")
+	}
+	if code, _ := agentPost("/api/v1/agent/rendered", map[string]any{"job_id": "j-agent1", "ok": true}); code != 200 {
+		t.Fatalf("幂等回报应200, got %d", code)
+	}
+
+	// 5) oss_key 不匹配 → 409 且不落 done
+	if err := ts.st.CreateJob(store.Job{JobID: "j-agent2", UserID: uid, Kind: "gen", Priority: "normal", Positive: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = claim() // 领走 j-agent2(队列里只剩它)
+	code, raw = agentPost("/api/v1/agent/rendered", map[string]any{"job_id": "j-agent2", "ok": true, "oss_key": "u/other/j.jpg"})
+	if code != http.StatusConflict {
+		t.Fatalf("键不匹配应409: %d %s", code, raw)
+	}
+	if j, _ := ts.st.Job("j-agent2"); j == nil || j.Status != "running" {
+		t.Fatalf("409 后不应落 done: %+v", j)
+	}
+
+	// 6) 失败回报 → failed + 错误信息
+	code, raw = agentPost("/api/v1/agent/rendered", map[string]any{"job_id": "j-agent2", "ok": false, "error": "ComfyUI 崩了"})
+	if code != 200 {
+		t.Fatalf("失败回报应200: %d %s", code, raw)
+	}
+	if j, _ := ts.st.Job("j-agent2"); j == nil || j.Status != "failed" || j.Error != "ComfyUI 崩了" {
+		t.Fatalf("failed 状态: %+v", j)
+	}
+
+	// 7) pregen 联动: 领走 → 回报 → ready + oss_key
+	if err := ts.st.CreateJob(store.Job{JobID: "pg-agent1", UserID: uid, Kind: "pregen", Priority: "idle", Positive: "p"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ts.st.InsertPregen(store.Pregen{
-		JobID: "j-osspg", UserID: uid, ProfileVersion: 1, Positive: "p", Negative: "n",
+		JobID: "pg-agent1", UserID: uid, ProfileVersion: 1,
+		Positive: "p", Negative: "n", WorkflowID: "std", Width: 1344, Height: 768,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	job3, _ := ts.st.Job("j-osspg")
-	ts.api.q.process(context.Background(), job3)
-	req5, _ := http.NewRequest(http.MethodPost, ts.srv.URL+"/api/v1/agent/done",
-		bytes.NewReader([]byte(`{"job_id":"j-osspg"}`)))
-	req5.Header.Set("Authorization", "Bearer test-agent-token")
-	resp5, err := http.DefaultClient.Do(req5)
+	if _, _, task = claim(); task == nil || task["job_id"] != "pg-agent1" {
+		t.Fatalf("idle 任务应可被领走: %+v", task)
+	}
+	if code, raw = agentPost("/api/v1/agent/rendered", map[string]any{
+		"job_id": "pg-agent1", "ok": true, "oss_key": "u/" + uid + "/pg-agent1.jpg",
+	}); code != 200 {
+		t.Fatalf("pregen 回报: %d %s", code, raw)
+	}
+	if p, _ := ts.st.PeekPregenByJob(uid, "pg-agent1"); p == nil || !p.Ready || p.OssKey != "u/"+uid+"/pg-agent1.jpg" {
+		t.Fatalf("pregen 联动: %+v", p)
+	}
+
+	// pregen 失败回报 → 任务 failed 且预生成行即刻清理(不虚增在途计数)
+	if err := ts.st.CreateJob(store.Job{JobID: "pg-agent2", UserID: uid, Kind: "pregen", Priority: "idle", Positive: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.st.InsertPregen(store.Pregen{
+		JobID: "pg-agent2", UserID: uid, ProfileVersion: 1,
+		Positive: "p", WorkflowID: "std", Width: 1344, Height: 768,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, task = claim(); task == nil || task["job_id"] != "pg-agent2" {
+		t.Fatalf("pg-agent2 应被领走: %+v", task)
+	}
+	if code, raw = agentPost("/api/v1/agent/rendered", map[string]any{
+		"job_id": "pg-agent2", "ok": false, "error": "ComfyUI 崩了",
+	}); code != 200 {
+		t.Fatalf("失败回报: %d %s", code, raw)
+	}
+	if p, _ := ts.st.PeekPregenByJob(uid, "pg-agent2"); p != nil {
+		t.Fatalf("失败 pregen 行应即刻清理: %+v", p)
+	}
+
+	// 8) 卡死回收: 认领后超时 → 明确失败
+	if err := ts.st.CreateJob(store.Job{JobID: "j-agent3", UserID: uid, Kind: "gen", Priority: "normal", Positive: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, task = claim(); task == nil {
+		t.Fatal("j-agent3 应被领走")
+	}
+	if n, err := ts.st.FailStaleRunning(time.Now().Add(time.Hour)); err != nil || n < 1 {
+		t.Fatalf("卡死回收: n=%d err=%v", n, err)
+	}
+	if j, _ := ts.st.Job("j-agent3"); j == nil || j.Status != "failed" || !strings.Contains(j.Error, "出图机离线") {
+		t.Fatalf("卡死任务应明确失败: %+v", j)
+	}
+
+	// 9) health: 代理已在线 → render_ok=true
+	_, raw = ts.do(t, "GET", "/api/v1/health", "", nil)
+	var henv struct {
+		Data map[string]any `json:"data"`
+	}
+	_ = json.Unmarshal(raw, &henv)
+	if henv.Data["render_ok"] != true {
+		t.Fatalf("代理在线 render_ok 应 true: %v", henv.Data)
+	}
+	if henv.Data["agent_version"] != "9.9.9" {
+		t.Fatalf("agent_version 应为代理自报版本: %v", henv.Data)
+	}
+}
+
+// TestAgentLatestAndGoAgent S3 版本管理: agent/latest 语义(未发布同版本/有更新全字段/
+// 已最新无更新) + /go/agent 计数 302 到 Gitee 资产约定。
+func TestAgentLatestAndGoAgent(t *testing.T) {
+	ts := newTestServer(t, "", false)
+
+	// 未发布 → 同版本(无更新)
+	_, raw := ts.do(t, "GET", "/api/v1/agent/latest?version=1.0.0", "", nil)
+	var env struct {
+		Data map[string]any `json:"data"`
+	}
+	_ = json.Unmarshal(raw, &env)
+	if env.Data["version"] != "1.0.0" {
+		t.Fatalf("未发布应返回同版本: %v", env.Data)
+	}
+
+	// 发布 1.1.0
+	man := `{"version":"1.1.0","file":"aw-agent.exe","sha256":"` + strings.Repeat("ab", 32) +
+		`","size":123,"notes":"测试更新","url":"https://www.cybermesh.space/go/agent"}`
+	if err := os.WriteFile(ts.data+"/releases/manifest-agent.json", []byte(man), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 有更新 → 全字段
+	_, raw = ts.do(t, "GET", "/api/v1/agent/latest?version=1.0.0", "", nil)
+	_ = json.Unmarshal(raw, &env)
+	if env.Data["version"] != "1.1.0" ||
+		env.Data["sha256"] != strings.Repeat("ab", 32) ||
+		env.Data["url"] != "https://www.cybermesh.space/go/agent" ||
+		env.Data["notes"] != "测试更新" {
+		t.Fatalf("latest 字段: %v", env.Data)
+	}
+
+	// 已是最新 → 同版本无更新
+	_, raw = ts.do(t, "GET", "/api/v1/agent/latest?version=1.1.0", "", nil)
+	_ = json.Unmarshal(raw, &env)
+	if env.Data["version"] != "1.1.0" || env.Data["notes"] != "" {
+		t.Fatalf("已最新应无更新: %v", env.Data)
+	}
+
+	// /go/agent → 302 至 Gitee 资产约定 tag=agent-v{ver}/aw-agent.exe
+	req, _ := http.NewRequest(http.MethodGet, ts.srv.URL+"/go/agent", nil)
+	resp, err := noRedirectClient().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = resp5.Body.Close()
-	p, err := ts.st.PeekPregenByJob(uid, "j-osspg")
-	if err != nil || p == nil || !p.Ready || p.OssKey != "u/"+uid+"/j-osspg.jpg" {
-		t.Fatalf("pregen done 后: %+v err=%v", p, err)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("/go/agent 应302, got %d", resp.StatusCode)
+	}
+	want := "https://gitee.com/QQ941748/ai-wallpaper-workshop/releases/download/agent-v1.1.0/aw-agent.exe"
+	if loc := resp.Header.Get("Location"); loc != want {
+		t.Fatalf("Location: got %s want %s", loc, want)
 	}
 }
 
