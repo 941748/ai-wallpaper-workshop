@@ -27,6 +27,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +49,7 @@ import androidx.compose.material3.TextButton
 import kotlinx.coroutines.launch
 import space.cybermesh.wallpaper.net.Api
 import space.cybermesh.wallpaper.net.RenderEngine
+import space.cybermesh.wallpaper.net.RenderFlow
 import space.cybermesh.wallpaper.net.RenderState
 import space.cybermesh.wallpaper.net.Session
 import space.cybermesh.wallpaper.net.Update
@@ -136,10 +138,10 @@ fun GalleryScreen(session: Session) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var state by remember { mutableStateOf<RenderState>(RenderState.Idle) }
+    val state by RenderFlow.state.collectAsState() // 进程级: 切页返回进度仍在
     var hero by remember { mutableStateOf<Any?>(null) } // Bitmap 或 File
     var recent by remember { mutableStateOf<List<File>>(emptyList()) }
-    var quotaMsg by remember { mutableStateOf<String?>(null) }
+    val quotaMsg by RenderFlow.quotaMsg.collectAsState()
     var pendingInstall by remember { mutableStateOf<Pair<String, File>?>(null) }
     var confirmDelete by remember { mutableStateOf<File?>(null) } // 长按待删除项
     var favs by remember { mutableStateOf(mapOf<String, Boolean>()) } // jobId → 云端收藏态
@@ -189,6 +191,11 @@ fun GalleryScreen(session: Session) {
         }
     }
 
+    LaunchedEffect(state) {
+        // 出图完成(可能在切页期间完成, 返回时补刷)→刷新本地列表与当前壁纸
+        if (state is RenderState.Done) refresh()
+    }
+
     val busy = state !is RenderState.Done && state !is RenderState.Error && state !is RenderState.Idle
 
     // 进度文案轮播: 每 1.5s 换一条; 按阶段洗牌成牌堆, 走完一轮重洗, 尽量不重复
@@ -235,44 +242,8 @@ fun GalleryScreen(session: Session) {
                 enabled = !busy,
                 onClick = {
                     checkUpdateInBackground()
-                    scope.launch {
-                        quotaMsg = null
-                        try {
-                            // 断点续传: 优先补完上次未下载成功的照片(只重试"轮询+下载+设置"段,
-                            // 不重新出图、不烧配额), 窗口 24 小时; 配额检查只发生在真正新出图时
-                            val pending = session.lastJob()
-                            val parts = pending.split("|")
-                            val now = System.currentTimeMillis()
-                            var resumeId = if (parts.size == 2 &&
-                                now - (parts[1].toLongOrNull() ?: 0L) < 24 * 60 * 60 * 1000L
-                            ) parts[0] else ""
-                            if (resumeId.isNotEmpty()) {
-                                // 仅任务明确失败才废弃转新出图(查询失败多半是网络抖动, 保留续传机会)
-                                val st = runCatching { Api.job(session.state.value.token, resumeId) }.getOrNull()
-                                if (st != null && st.status == "failed") {
-                                    session.setLastJob("")
-                                    resumeId = ""
-                                }
-                            }
-                            val jobId = if (resumeId.isNotEmpty()) {
-                                state = RenderState.Rendering(0)
-                                resumeId
-                            } else {
-                                val id = RenderEngine.startJob(ctx, session) { state = it }
-                                session.setLastJob("$id|$now")
-                                id
-                            }
-                            RenderEngine.finishJob(ctx, session, jobId) { state = it }
-                            session.setLastJob("")
-                            refresh()
-                        } catch (e: Exception) {
-                            val msg = friendlyError(e)
-                            state = RenderState.Error(msg)
-                            if (msg.contains("没画好") || msg.contains("找不到")) {
-                                session.setLastJob("") // 任务本身失败 → 废弃, 下次全新出图
-                            }
-                        }
-                    }
+                    // 出图流程在进程级执行: 切页不中断进度与下载(见 RenderFlow)
+                    RenderFlow.swap(ctx, session)
                 },
             ) { Text("换一张") }
         }
@@ -412,7 +383,7 @@ fun GalleryScreen(session: Session) {
                                                 RenderEngine.setFile(ctx, f)
                                                 hero = RenderEngine.currentWallpaper(ctx)
                                             } catch (e: Exception) {
-                                                quotaMsg = friendlyError(e)
+                                                RenderFlow.setQuota(friendlyError(e))
                                             }
                                             applying.value = false
                                         }

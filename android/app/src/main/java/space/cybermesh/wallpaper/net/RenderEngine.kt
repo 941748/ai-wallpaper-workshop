@@ -116,6 +116,33 @@ object RenderEngine {
         return finishJob(ctx, session, jobId, onState)
     }
 
+    /**
+     * 任务行已被 7 天清理但归档图仍在: 从历史端点取回(不烧配额)。
+     * 出图机已出、已上传的图绝不因任务过期而丢弃。
+     */
+    suspend fun finishFromHistory(
+        ctx: Context,
+        session: Session,
+        jobId: String,
+        onState: (RenderState) -> Unit = {},
+    ): File {
+        val sess = session.state.value
+        if (!sess.loggedIn) throw ApiException("未连接云端")
+        onState(RenderState.Downloading)
+        val bytes = Api.download(sess.token, "/api/v1/history/$jobId/image")
+        val dir = File(ctx.filesDir, "wallpapers").apply { mkdirs() }
+        val file = File(dir, "wp-$jobId.jpg")
+        file.writeBytes(bytes)
+        onState(RenderState.Applying)
+        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            ?: throw ApiException("图片解码失败")
+        val wm = WallpaperManager.getInstance(ctx)
+        wm.setBitmap(bmp, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
+        bmp.recycle()
+        onState(RenderState.Done(file))
+        return file
+    }
+
     /** 设置一张已存在的本地图片为壁纸。 */
     fun setFile(ctx: Context, file: File) {
         val bmp = BitmapFactory.decodeFile(file.absolutePath)

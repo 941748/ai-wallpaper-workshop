@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -102,6 +104,18 @@ class PrefEditor {
     }
 
     val hasLike: Boolean get() = profile.values.any { it >= 0.89f }
+
+    /** 重置: 风格包与五维偏好全回未选(与 PC resetAllPreferences 同语义), 自定义关键词保留。
+     *  dirty 置真——重新点选后经「同步到电脑」生效(服务端同规则拒绝全空推送, 防清空乱出图)。 */
+    fun reset() {
+        dirty = true
+        packsTouched = true // 显式清空包: 重新点选后按当前选择同步
+        err = null
+        msg = "已重置为未选，重新点选后点「同步到电脑」双端生效"
+        profile = emptyMap()
+        disliked = emptySet()
+        packSel = emptySet()
+    }
 }
 
 /** 偏好(可编辑): 风格包多选 + 五维三态点选(灰→赞→踩→灰) + 同步到服务端双端共享。 */
@@ -110,6 +124,7 @@ class PrefEditor {
 fun PrefsScreen(session: Session, editor: PrefEditor) {
     val sess by session.state.collectAsState()
     val scope = rememberCoroutineScope()
+    var confirmReset by remember { mutableStateOf(false) }
 
     LaunchedEffect(sess.token) {
         if (sess.token.isEmpty()) return@LaunchedEffect
@@ -133,6 +148,10 @@ fun PrefsScreen(session: Session, editor: PrefEditor) {
     ) {
         Row {
             Text("我的偏好", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            TextButton(
+                enabled = !editor.syncing,
+                onClick = { confirmReset = true },
+            ) { Text("重置偏好", color = MaterialTheme.colorScheme.error) }
             Button(
                 enabled = !editor.syncing && editor.dirty,
                 onClick = {
@@ -161,6 +180,28 @@ fun PrefsScreen(session: Session, editor: PrefEditor) {
                     }
                 },
             ) { Text(if (editor.syncing) "同步中…" else "同步到电脑") }
+        }
+
+        if (confirmReset) {
+            AlertDialog(
+                onDismissRequest = { confirmReset = false },
+                title = { Text("重置偏好？") },
+                text = {
+                    Text(
+                        "将清空风格包与五维偏好，喜欢/点踩全部回到未选，自定义关键词保留。\n" +
+                            "重新点选后点「同步到电脑」即可双端生效。\n\n确定重置吗？"
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmReset = false
+                        editor.reset()
+                    }) { Text("重置", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmReset = false }) { Text("取消") }
+                },
+            )
         }
 
         when {
