@@ -131,7 +131,7 @@ fun SettingsScreen(session: Session) {
                                 val r = Api.linkCreate(sessionData.token)
                                 createdCode = r.code to r.url
                             } catch (e: Exception) {
-                                msg = "生成失败: ${e.message}"
+                                msg = "生成失败: ${friendlyError(e)}"
                             }
                             busy = false
                         }

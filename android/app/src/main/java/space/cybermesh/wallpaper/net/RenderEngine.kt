@@ -152,12 +152,11 @@ object RenderEngine {
         bmp.recycle()
     }
 
-    /** 最近生成的壁纸(新→旧; 新命名携带 jobId 无时间序, 统一按修改时间排)。 */
-    fun recent(ctx: Context, limit: Int = 12): List<File> {
+    /** 最近生成的壁纸(新→旧; 新命名携带 jobId 无时间序, 统一按修改时间排)。全量返回, 不设上限。 */
+    fun recent(ctx: Context): List<File> {
         val dir = File(ctx.filesDir, "wallpapers")
         return dir.listFiles { f -> f.extension.equals("jpg", true) }
             ?.sortedByDescending { it.lastModified() }
-            ?.take(limit)
             ?: emptyList()
     }
 

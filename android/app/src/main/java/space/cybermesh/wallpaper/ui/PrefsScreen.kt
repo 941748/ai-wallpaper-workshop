@@ -38,6 +38,7 @@ import space.cybermesh.wallpaper.net.Api
 import space.cybermesh.wallpaper.net.ProfileResp
 import space.cybermesh.wallpaper.net.ProfileSaveReq
 import space.cybermesh.wallpaper.net.Session
+import space.cybermesh.wallpaper.net.friendlyError
 
 enum class Tri { NONE, LIKE, DISLIKE }
 
@@ -132,7 +133,7 @@ fun PrefsScreen(session: Session, editor: PrefEditor) {
             try {
                 editor.load(sess.token, Api.profile(sess.token))
             } catch (e: Exception) {
-                editor.err = e.message
+                editor.err = friendlyError(e)
             }
         }
     }
@@ -174,7 +175,7 @@ fun PrefsScreen(session: Session, editor: PrefEditor) {
                                 editor.msg = "已同步 ✓ 双端生效"
                             }
                         } catch (e: Exception) {
-                            editor.err = e.message
+                            editor.err = friendlyError(e)
                         }
                         editor.syncing = false
                     }
