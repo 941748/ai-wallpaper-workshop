@@ -16,7 +16,7 @@ ComfyUI (Z-Image Turbo) renders the image → it is fitted to your screen's phys
 
 No sign-up, no login, no tray icon, no resident process — close the window and there is no process left in the system.
 
-**Current version: v1.1.16** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~10 MB single file.
+**Current version: v1.1.17** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~10 MB single file.
 
 ## Download
 
@@ -83,7 +83,7 @@ Four-step wizard: connect to the service → preference questionnaire (five-dime
 └──────────────────────────┬────────────────────────────────────────┘
                      PUT direct (domestic link)
 ┌──────────────────────────▼────────────────────────────────────────┐
-│  Alibaba Cloud OSS (private bucket, key u/{user}/{job}.jpg)       │
+│  Alibaba Cloud OSS (private bucket, u/{user}/{W}x{H}/{job}.jpg)   │
 │  clients fetch via one-time signed URL 302; the cloud only signs  │
 │  URLs and never touches image bytes                               │
 └───────────────────────────────────────────────────────────────────┘
@@ -197,7 +197,7 @@ profile.json         preference profile (5-dimension weights + negative fragment
 prompt_history.json  last 200 render combinations (last 30 deduplicated)
 cloud_queue.json     offline retry queue (retried for up to 7 days)
 signals.json         drift events pending upload
-wallpapers\         wallpaper archive (keeps the last 30, excluding the one in use)
+wallpapers\         wallpaper archive (kept forever, no cap - disk space is yours to manage)
 bin\AIWallpaper.exe  the official copy made when the wizard registers the scheduled task
 logs\runtime.log     runtime log (1 MB × 3, rotated)
 ```
@@ -323,11 +323,11 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
    ```json
    {
-     "version": "1.1.16",
-     "file": "AIWallpaper-1.1.16.exe",
+     "version": "1.1.17",
+     "file": "AIWallpaper-1.1.17.exe",
      "sha256": "<64-hex>",
      "size": 10866176,
-     "notes": "v1.1.16: instant favorite hearts in history, instant favorite feedback",
+     "notes": "v1.1.17: instant cloud history, friendlier error messages",
      "url": "https://www.cybermesh.space/go/dl"
    }
    ```
@@ -347,7 +347,7 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
 - Anonymous `user_id` + a per-device token, zero sign-up/login; no personally identifiable information is collected.
 - Cloud storage: per-user prompt/attributes/seed/success per round, drift events, and usage counters (for preference evolution and quota).
-- Generated images are stored in a private, per-user OSS bucket (`u/{user}/` prefix) and fetched through one-time signed URLs; the machine keeps the last 30 wallpapers locally, while a cloud archive powers history & favorites - deleting an image cleans its cloud copy too.
+- Generated images are stored in a private, per-user OSS bucket (`u/{user}/{W}x{H}/` resolution directories) and fetched through one-time signed URLs; the machine keeps every wallpaper locally (no cap), while a cloud archive powers history & favorites - deleting an image cleans its cloud copy too.
 - Cross-device sync: the old device shows a 6-digit pairing code in Settings (valid 5 minutes, one-time); a new device enters it to reclaim
   `user_id + token + profile`.
 - Update packages are downloaded only from the HTTPS address specified in the manifest and verified by sha256 + size; no file from any other source is executed.
