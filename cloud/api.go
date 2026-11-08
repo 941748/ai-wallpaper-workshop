@@ -50,6 +50,7 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/generate/{id}/image", a.handleJobImage)
 	mux.HandleFunc("POST /api/v1/images/delete", a.handleImageDelete)
 	mux.HandleFunc("GET /api/v1/history", a.handleHistory)
+	mux.HandleFunc("POST /api/v1/history/fav", a.handleHistoryFav)
 	mux.HandleFunc("GET /api/v1/history/{id}/image", a.handleHistoryImage)
 	mux.HandleFunc("POST /api/v1/pregen", a.handlePregenSubmit)
 	mux.HandleFunc("GET /api/v1/pregen", a.handlePregenFetch)
@@ -124,11 +125,16 @@ func (a *API) requireUser(w http.ResponseWriter, r *http.Request) (*store.User, 
 }
 
 func (a *API) checkQuota(u *store.User, kind string) bool {
-	llmH, genH, err := a.st.UsageHour(u.UserID)
+	return a.checkQuotaScope(u.UserID, kind)
+}
+
+// checkQuotaScope 按作用域查配额(scope=用户ID 或 uid@android)。
+func (a *API) checkQuotaScope(scope, kind string) bool {
+	llmH, genH, err := a.st.UsageHour(scope)
 	if err != nil {
 		return true
 	}
-	llmD, genD, err := a.st.UsageToday(u.UserID)
+	llmD, genD, err := a.st.UsageToday(scope)
 	if err != nil {
 		return true
 	}

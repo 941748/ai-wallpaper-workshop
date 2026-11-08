@@ -25,11 +25,17 @@ func (a *API) handleNext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.saveProfileSnapshot(u.UserID, req)
-	if !a.checkQuota(u, "llm") {
+	// 出图配额先查(秒回, 不白烧 LLM 规划); 作用域按设备分, 安卓与 PC 独立计数
+	if !a.checkGenQuota(u, req.DeviceID) {
 		quotaFail(w)
 		return
 	}
-	_ = a.st.BumpUsage(u.UserID, "llm")
+	scope := a.genScope(u, req.DeviceID)
+	if !a.checkQuotaScope(scope, "llm") {
+		quotaFail(w)
+		return
+	}
+	_ = a.st.BumpUsage(scope, "llm")
 
 	// 持久化随行漂移事件(幂等)
 	if len(req.PendingSignals) > 0 {

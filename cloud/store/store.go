@@ -83,6 +83,7 @@ var migrations = []migration{
 	{9, m009OssKey},
 	{10, m0010JobRender},
 	{11, m011Archive},
+	{12, m012ArchiveRecipe},
 }
 
 // m001BaselineSchema 基线表结构(全部 IF NOT EXISTS, 对新库建表/对旧库无操作)。
@@ -1081,6 +1082,31 @@ FROM jobs
 WHERE status='done'
   AND (COALESCE(image_path,'')<>'' OR COALESCE(oss_key,'')<>'')
   AND (kind<>'pregen' OR NOT EXISTS (SELECT 1 FROM pregen p WHERE p.job_id=jobs.job_id))`)
+	return err
+}
+
+// m012ArchiveRecipe 归档补全配方(负向词+风格组合): 收藏"同款复现"与偏好学习用;
+// 从仍存活的 jobs 行回填存量(已被 7 天 Purge 的行拿不回, 属预期)。
+func m012ArchiveRecipe(db *sql.DB) error {
+	for _, c := range []struct{ name, ddl string }{
+		{"negative", `ALTER TABLE archive ADD COLUMN negative TEXT NOT NULL DEFAULT ''`},
+		{"combo", `ALTER TABLE archive ADD COLUMN combo TEXT NOT NULL DEFAULT ''`},
+	} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('archive') WHERE name=?`, c.name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(c.ddl); err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(`UPDATE archive SET
+negative=(SELECT COALESCE(negative,'') FROM jobs j WHERE j.job_id=archive.job_id),
+    combo=(SELECT COALESCE(combo,'') FROM jobs j WHERE j.job_id=archive.job_id)
+WHERE (negative='' OR combo='') AND EXISTS(SELECT 1 FROM jobs j WHERE j.job_id=archive.job_id)`)
 	return err
 }
 

@@ -452,6 +452,63 @@ func TestQuotaExceeded(t *testing.T) {
 	}
 }
 
+// TestNextQuotaPrecheck 出图配额耗尽时 /prompts/next 在 LLM 规划前秒回429(不白烧规划次数);
+// 安卓设备的 LLM 计数进独立作用域(uid@android), PC 池不受影响。
+func TestNextQuotaPrecheck(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	uid, tok := ts.register(t)
+	if err := ts.st.UpsertDeviceAttrs(store.DeviceAttr{Device: "and-p", UserID: uid, Type: "android"}); err != nil {
+		t.Fatal(err)
+	}
+	u, err := ts.st.UserByID(uid)
+	if err != nil || u == nil {
+		t.Fatal("用户缺失")
+	}
+
+	// 安卓 next 成功: LLM 计数进 uid@android, 不进 PC 池
+	resp, raw := ts.do(t, "POST", "/api/v1/prompts/next", tok, map[string]any{
+		"profile_version": 1, "device_id": "and-p",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("首次应200: %d %s", resp.StatusCode, raw)
+	}
+	if llmA, _, _ := ts.st.UsageHour(uid + "@android"); llmA != 1 {
+		t.Fatalf("安卓 llm 应=1, got %d", llmA)
+	}
+	if llmP, _, _ := ts.st.UsageHour(uid); llmP != 0 {
+		t.Fatalf("PC llm 池不应被安卓挤占, got %d", llmP)
+	}
+
+	// 耗尽安卓出图日配额 → next 秒回429, 且不再消耗 LLM 规划次数
+	for i := 0; i < ts.api.androidGenDay; i++ {
+		if err := ts.st.BumpUsage(uid+"@android", "gen"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, raw = ts.do(t, "POST", "/api/v1/prompts/next", tok, map[string]any{
+		"profile_version": 1, "device_id": "and-p",
+	})
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("配额耗尽应429: %d %s", resp.StatusCode, raw)
+	}
+	var env struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &env)
+	if env.Error != "quota_exceeded" {
+		t.Fatalf("error = %s", env.Error)
+	}
+	if llmA, _, _ := ts.st.UsageHour(uid + "@android"); llmA != 1 {
+		t.Fatalf("秒回应不再消耗 llm, got %d", llmA)
+	}
+
+	// PC 作用域不受影响
+	resp, raw = ts.do(t, "POST", "/api/v1/prompts/next", tok, map[string]any{"profile_version": 1})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PC next 应200: %d %s", resp.StatusCode, raw)
+	}
+}
+
 func TestBuildWorkflow(t *testing.T) {
 	raw, err := buildWorkflow([]byte(templateFixture), `POS "quoted"`, 1920, 1080, 42)
 	if err != nil {

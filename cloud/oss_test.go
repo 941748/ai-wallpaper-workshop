@@ -316,3 +316,101 @@ func TestHistory(t *testing.T) {
 		t.Fatalf("越权取图应404, got %d", r.StatusCode)
 	}
 }
+
+// TestHistoryFav S2④: 收藏置顶+?fav=1 筛选+越权404+配方字段(提示词/seed)展示。
+func TestHistoryFav(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	uid, tok := ts.register(t)
+
+	mk := func(id, pos string) {
+		t.Helper()
+		if err := ts.st.CreateJob(store.Job{JobID: id, UserID: uid, Kind: "gen", Priority: "normal", Positive: pos}); err != nil {
+			t.Fatal(err)
+		}
+		if err := ts.st.SetJobStatus(id, "done", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := ts.st.SetJobOssKey(id, "u/u_test/"+id+".jpg"); err != nil {
+			t.Fatal(err)
+		}
+		if err := ts.st.ArchiveJob(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("jf1", "ink wash mountains")
+	mk("jf2", "neon city night")
+	if a, err := ts.st.Archive("jf1"); err != nil || a == nil {
+		t.Fatalf("归档行缺失: a=%v err=%v", a, err)
+	}
+
+	type item struct {
+		JobID    string `json:"job_id"`
+		Positive string `json:"positive"`
+		Fav      bool   `json:"fav"`
+	}
+	list := func(query string) []item {
+		t.Helper()
+		r, raw := ts.do(t, "GET", "/api/v1/history"+query, tok, nil)
+		if r.StatusCode != http.StatusOK {
+			t.Fatalf("history %q: %d %s", query, r.StatusCode, raw)
+		}
+		var env struct {
+			Data struct {
+				Items []item `json:"items"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &env); err != nil {
+			t.Fatalf("parse %q: %v (%s)", query, err, raw)
+		}
+		return env.Data.Items
+	}
+
+	// 初始 jf2(后建)在前; jf1 收藏后置顶, 且 items 带提示词
+	if got := list(""); len(got) != 2 || got[0].JobID != "jf2" {
+		t.Fatalf("初始顺序: %+v", got)
+	}
+	r, raw := ts.do(t, "POST", "/api/v1/history/fav", tok, map[string]any{"job_id": "jf1", "fav": true})
+	if r.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"fav":true`) {
+		t.Fatalf("收藏应200: %d %s", r.StatusCode, raw)
+	}
+	got := list("")
+	if len(got) != 2 || got[0].JobID != "jf1" || !got[0].Fav || got[0].Positive != "ink wash mountains" {
+		t.Fatalf("收藏应置顶且带提示词: %+v", got)
+	}
+
+	// ?fav=1 仅看收藏
+	got = list("?fav=1")
+	if len(got) != 1 || got[0].JobID != "jf1" {
+		t.Fatalf("fav=1 筛选: %+v", got)
+	}
+
+	// 取消收藏 → 回到原顺序, 筛选为空
+	r, raw = ts.do(t, "POST", "/api/v1/history/fav", tok, map[string]any{"job_id": "jf1", "fav": false})
+	if r.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"fav":false`) {
+		t.Fatalf("取消收藏应200: %d %s", r.StatusCode, raw)
+	}
+	if got = list("?fav=1"); len(got) != 0 {
+		t.Fatalf("取消后筛选应空: %+v", got)
+	}
+
+	// 越权: 他人不能收藏
+	resp, err := http.Post(ts.srv.URL+"/api/v1/users/register", "application/json",
+		strings.NewReader(`{"device":"other-fav"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	r, _ = ts.do(t, "POST", "/api/v1/history/fav", env.Data.Token, map[string]any{"job_id": "jf1", "fav": true})
+	if r.StatusCode != http.StatusNotFound {
+		t.Fatalf("越权收藏应404, got %d", r.StatusCode)
+	}
+}

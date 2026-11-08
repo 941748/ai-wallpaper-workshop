@@ -175,6 +175,7 @@ func (a *API) handleImageDelete(w http.ResponseWriter, r *http.Request) {
 
 // handleHistory 用户图片历史(归档表): jobs 7 天即 Purge, 历史独立存活。
 // image_url: OSS 行=15分钟预签名直链; 本地行=历史取图端点(带 Bearer)。
+// ?fav=1 仅看收藏; 收藏恒置顶。items 附提示词/seed 供展示与同款复现。
 func (a *API) handleHistory(w http.ResponseWriter, r *http.Request) {
 	u, ok := a.requireUser(w, r)
 	if !ok {
@@ -184,7 +185,8 @@ func (a *API) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := a.st.ListArchive(u.UserID, limit)
+	onlyFav := r.URL.Query().Get("fav") == "1"
+	rows, err := a.st.ListArchive(u.UserID, onlyFav, limit)
 	if err != nil {
 		writeFail(w, http.StatusInternalServerError, err.Error())
 		return
@@ -201,9 +203,37 @@ func (a *API) handleHistory(w http.ResponseWriter, r *http.Request) {
 			"job_id": row.JobID, "created_at": row.CreatedAt,
 			"width": row.Width, "height": row.Height, "kind": row.Kind,
 			"fav": row.Fav == 1, "image_url": imgURL,
+			"positive": row.Positive, "seed": row.Seed,
 		})
 	}
 	writeOK(w, map[string]any{"items": items})
+}
+
+// handleHistoryFav 收藏/取消收藏(收藏驱动 history 置顶与 ?fav=1 筛选)。
+func (a *API) handleHistoryFav(w http.ResponseWriter, r *http.Request) {
+	u, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		JobID string `json:"job_id"`
+		Fav   bool   `json:"fav"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || req.JobID == "" {
+		writeFail(w, http.StatusBadRequest, "请求体解析失败")
+		return
+	}
+	row, err := a.st.Archive(req.JobID)
+	if err != nil || row == nil || row.UserID != u.UserID {
+		writeFail(w, http.StatusNotFound, "记录不存在")
+		return
+	}
+	if err := a.st.SetArchiveFav(req.JobID, req.Fav); err != nil {
+		writeFail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.logf("收藏变更 user=%s job=%s fav=%v", u.UserID, req.JobID, req.Fav)
+	writeOK(w, map[string]bool{"fav": req.Fav})
 }
 
 // handleHistoryImage 历史取图(归档双模: OSS 302 / 本地文件; jobs 清理后仍可用)。
