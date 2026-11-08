@@ -18,6 +18,7 @@ private val KEY_DEVICE = stringPreferencesKey("device_id")
 private val KEY_AUTO = stringPreferencesKey("auto_daily") // "1"=开启每日自动换
 private val KEY_AUTO_LAST = stringPreferencesKey("auto_last") // "时间戳|结果"
 private val KEY_LAST_JOB = stringPreferencesKey("last_job") // "jobId|失败时间戳" 断点续传
+private val KEY_FAVS = stringPreferencesKey("favs") // 收藏 jobId 逗号分隔(心形打开即显缓存)
 
 data class SessionData(
     val userId: String = "",
@@ -102,5 +103,15 @@ class Session(private val ctx: Context) {
 
     suspend fun setLastJob(v: String) {
         ctx.dataStore.edit { it[KEY_LAST_JOB] = v }
+    }
+
+    // ---------- 收藏缓存(心形打开即显, 云端返回后纠偏) ----------
+
+    suspend fun favs(): Set<String> =
+        (ctx.dataStore.data.first()[KEY_FAVS] ?: "")
+            .split(",").filter { it.isNotEmpty() }.toSet()
+
+    suspend fun setFavs(ids: Set<String>) {
+        ctx.dataStore.edit { it[KEY_FAVS] = ids.joinToString(",") }
     }
 }

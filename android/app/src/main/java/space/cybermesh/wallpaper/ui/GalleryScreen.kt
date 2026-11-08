@@ -169,16 +169,23 @@ fun GalleryScreen(session: Session) {
         favs = favs + (jobId to next) // 乐观更新
         scope.launch {
             runCatching { Api.historyFav(session.state.value.token, jobId, next) }
-                .onSuccess { resp -> favs = favs + (jobId to resp.fav) }
+                .onSuccess { resp ->
+                    favs = favs + (jobId to resp.fav)
+                    session.setFavs(favs.filterValues { it }.keys) // 落缓存(下次打开秒绘)
+                }
                 .onFailure { favs = favs + (jobId to cur) } // 回滚
         }
     }
 
     LaunchedEffect(Unit) {
         refresh()
-        runCatching { // 收藏态来自云端历史; 失败静默(心形按未收藏显示, 点按可重试)
+        // 收藏态: 先按本地缓存秒绘♥(空窗消除), 云端返回后整体纠偏; 失败保留缓存
+        favs = session.favs().associateWith { true }
+        runCatching {
             val resp = Api.history(session.state.value.token, 100)
-            favs = resp.items.associate { it.jobId to it.fav }
+            val fetched = resp.items.associate { it.jobId to it.fav }
+            favs = fetched
+            session.setFavs(fetched.filterValues { it }.keys)
         }
     }
 
@@ -231,13 +238,22 @@ fun GalleryScreen(session: Session) {
                     scope.launch {
                         quotaMsg = null
                         try {
-                            // 断点续传: 15 分钟内的失败任务只重试"轮询+下载+设置"段, 不重新出图
+                            // 断点续传: 优先补完上次未下载成功的照片(只重试"轮询+下载+设置"段,
+                            // 不重新出图、不烧配额), 窗口 24 小时; 配额检查只发生在真正新出图时
                             val pending = session.lastJob()
                             val parts = pending.split("|")
                             val now = System.currentTimeMillis()
-                            val resumeId = if (parts.size == 2 &&
-                                now - (parts[1].toLongOrNull() ?: 0L) < 15 * 60 * 1000L
+                            var resumeId = if (parts.size == 2 &&
+                                now - (parts[1].toLongOrNull() ?: 0L) < 24 * 60 * 60 * 1000L
                             ) parts[0] else ""
+                            if (resumeId.isNotEmpty()) {
+                                // 仅任务明确失败才废弃转新出图(查询失败多半是网络抖动, 保留续传机会)
+                                val st = runCatching { Api.job(session.state.value.token, resumeId) }.getOrNull()
+                                if (st != null && st.status == "failed") {
+                                    session.setLastJob("")
+                                    resumeId = ""
+                                }
+                            }
                             val jobId = if (resumeId.isNotEmpty()) {
                                 state = RenderState.Rendering(0)
                                 resumeId
