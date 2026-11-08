@@ -132,6 +132,25 @@ data class JobResp(val status: String, val error: String = "")
 data class DeleteImageResp(val deleted: Boolean = false)
 
 @Serializable
+data class HistoryItem(
+    @SerialName("job_id") val jobId: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+    val fav: Boolean = false,
+    @SerialName("image_url") val imageUrl: String = "",
+    val positive: String = "",
+    val seed: Long = 0,
+)
+
+@Serializable
+data class HistoryResp(val items: List<HistoryItem> = emptyList())
+
+@Serializable
+data class FavReq(@SerialName("job_id") val jobId: String, val fav: Boolean)
+
+@Serializable
+data class FavResp(val fav: Boolean = false)
+
+@Serializable
 data class HealthResp(
     val ok: Boolean = false,
     @SerialName("quota_ok") val quotaOk: Boolean = true,
@@ -211,6 +230,16 @@ object Api {
     /** 删除云端图片副本(OSS 对象+服务端本地文件); 失败由调用方降级只删本地。 */
     suspend fun deleteImage(token: String, jobId: String) = withIO {
         call<DeleteImageResp>("POST", "/api/v1/images/delete", token, json.encodeToString(mapOf("job_id" to jobId)))
+    }
+
+    /** 云端图片历史(收藏恒置顶); items 附提示词/seed。 */
+    suspend fun history(token: String, limit: Int = 100): HistoryResp = withIO {
+        call("GET", "/api/v1/history?limit=$limit", token)
+    }
+
+    /** 收藏/取消收藏。 */
+    suspend fun historyFav(token: String, jobId: String, fav: Boolean): FavResp = withIO {
+        call("POST", "/api/v1/history/fav", token, json.encodeToString(FavReq(jobId, fav)))
     }
 
     /** 下载字节(url 为 /api/v1 相对路径或完整 URL; token 非空时带 Bearer)。 */

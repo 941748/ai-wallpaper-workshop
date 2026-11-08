@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -34,11 +35,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
@@ -120,7 +123,13 @@ private fun poolForStage(stage: String): List<String> = when (stage) {
     else -> listOf(stageText(RenderState.Idle))
 }
 
-/** 画廊: 当前壁纸 + 换一张(完整出图链路) + 最近生成点按即设、长按删除。 */
+/** wp-{jobID}.jpg 新命名 → 反查任务ID; 旧时间戳名返回 null(无法关联云端副本)。 */
+private fun jobIdOf(f: File): String? {
+    val mid = f.name.removePrefix("wp-").removeSuffix(".jpg")
+    return mid.takeIf { s -> s.length == 24 && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } }
+}
+
+/** 画廊: 当前壁纸 + 换一张(完整出图链路) + 最近生成点按即设、长按删除、心形收藏。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GalleryScreen(session: Session) {
@@ -133,6 +142,7 @@ fun GalleryScreen(session: Session) {
     var quotaMsg by remember { mutableStateOf<String?>(null) }
     var pendingInstall by remember { mutableStateOf<Pair<String, File>?>(null) }
     var confirmDelete by remember { mutableStateOf<File?>(null) } // 长按待删除项
+    var favs by remember { mutableStateOf(mapOf<String, Boolean>()) } // jobId → 云端收藏态
     var updBusy by remember { mutableStateOf(false) }
 
     // 出图时并行检查更新: 静默下载, 出图完成后弹"立即安装"
@@ -153,7 +163,24 @@ fun GalleryScreen(session: Session) {
         hero = RenderEngine.currentWallpaper(ctx)
         recent = RenderEngine.recent(ctx)
     }
-    LaunchedEffect(Unit) { refresh() }
+
+    fun toggleFav(jobId: String, cur: Boolean) {
+        val next = !cur
+        favs = favs + (jobId to next) // 乐观更新
+        scope.launch {
+            runCatching { Api.historyFav(session.state.value.token, jobId, next) }
+                .onSuccess { resp -> favs = favs + (jobId to resp.fav) }
+                .onFailure { favs = favs + (jobId to cur) } // 回滚
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refresh()
+        runCatching { // 收藏态来自云端历史; 失败静默(心形按未收藏显示, 点按可重试)
+            val resp = Api.history(session.state.value.token, 100)
+            favs = resp.items.associate { it.jobId to it.fav }
+        }
+    }
 
     val busy = state !is RenderState.Done && state !is RenderState.Error && state !is RenderState.Idle
 
@@ -297,10 +324,7 @@ fun GalleryScreen(session: Session) {
 
         // 长按删除确认: 移出本地「最近生成」并同步清理云端副本(旧时间戳名反查不到任务, 只删本地)
         confirmDelete?.let { f ->
-            val mid = f.name.removePrefix("wp-").removeSuffix(".jpg")
-            val jobId = mid.takeIf { s ->
-                s.length == 24 && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
-            }
+            val jobId = jobIdOf(f)
             AlertDialog(
                 onDismissRequest = { confirmDelete = null },
                 title = { Text("删除这张图片？") },
@@ -383,6 +407,22 @@ fun GalleryScreen(session: Session) {
                         contentAlignment = Alignment.Center,
                     ) {
                         CoilThumb(f)
+                        // 心形收藏: 仅新命名文件可反查云端任务; 旧时间戳名不显示
+                        val jobId = jobIdOf(f)
+                        if (jobId != null) {
+                            val isFav = favs[jobId] == true
+                            Text(
+                                text = if (isFav) "♥" else "♡",
+                                color = if (isFav) Color(0xFFFF4D6A) else Color.White,
+                                fontSize = 15.sp,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                                    .clickable(enabled = !busy) { toggleFav(jobId, isFav) }
+                                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                            )
+                        }
                         if (applying.value) {
                             CircularProgressIndicator(Modifier.width(22.dp))
                         }
