@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -20,9 +19,6 @@ import (
 
 // MaxHistory 提示词历史保留条数。
 const MaxHistory = 200
-
-// KeepWallpapers 留档壁纸数量。
-const KeepWallpapers = 30
 
 // LogMaxSize 单个日志文件上限(1MB)。
 const LogMaxSize = 1 << 20
@@ -147,42 +143,6 @@ func (s *Store) CurrentPath() string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
-}
-
-// CleanupWallpapers 仅保留最近 keep 张(排除 current 与 .old), 其余删除。
-func (s *Store) CleanupWallpapers(keep int) error {
-	dir := s.WallpapersDir()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	type item struct {
-		path string
-		mod  time.Time
-	}
-	var imgs []item
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), "wallpaper_") || !strings.HasSuffix(e.Name(), ".png") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		imgs = append(imgs, item{filepath.Join(dir, e.Name()), info.ModTime()})
-	}
-	if len(imgs) <= keep {
-		return nil
-	}
-	sort.Slice(imgs, func(a, b int) bool { return imgs[a].mod.After(imgs[b].mod) })
-	current := s.CurrentPath()
-	for _, it := range imgs[keep:] {
-		if current != "" && strings.EqualFold(it.path, current) {
-			continue // 当前使用中文件永不删除
-		}
-		_ = os.Remove(it.path)
-	}
-	return nil
 }
 
 // ---------- 历史记录 ----------

@@ -439,7 +439,6 @@ func RunOnce(ctx context.Context, env Env) error {
 		}
 	}
 
-	_ = st.CleanupWallpapers(store.KeepWallpapers)
 	st.Log("tick 完成: 换图=%v source=%s 池=%d/%d", changed, source, pool.Count(env.Dir), pol.PoolTarget)
 	return nil
 }

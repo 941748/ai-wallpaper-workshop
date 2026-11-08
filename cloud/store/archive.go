@@ -67,14 +67,21 @@ func (s *Store) Archive(jobID string) (*ArchiveRow, error) {
 	return scanArchive(s.db.QueryRow(`SELECT `+archiveCols+` FROM archive WHERE job_id=?`, jobID))
 }
 
-// ListArchive 用户历史: 收藏置顶, 组内新→旧; onlyFav 时仅收藏。
-func (s *Store) ListArchive(userID string, onlyFav bool, limit int) ([]ArchiveRow, error) {
+// ListArchive 用户历史: 收藏置顶, 组内新→旧; onlyFav 时仅收藏;
+// w/h 均 >0 时按出图规格过滤(按设备取回: 客户端上报自己屏幕, 只看本规格)。
+func (s *Store) ListArchive(userID string, onlyFav bool, w, h, limit int) ([]ArchiveRow, error) {
 	q := `SELECT ` + archiveCols + ` FROM archive WHERE user_id=?`
+	args := []any{userID}
 	if onlyFav {
 		q += ` AND fav=1`
 	}
+	if w > 0 && h > 0 {
+		q += ` AND width=? AND height=?`
+		args = append(args, w, h)
+	}
 	q += ` ORDER BY fav DESC, created_at DESC, rowid DESC LIMIT ?`
-	rows, err := s.db.Query(q, userID, limit)
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

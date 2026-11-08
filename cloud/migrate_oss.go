@@ -56,7 +56,7 @@ func (a *API) migrateOSS() {
 			errN++
 			continue
 		}
-		key := store.OssKeyFor(j.UserID, j.JobID)
+		key := store.OssKeyFor(j.UserID, j.JobID, j.Width, j.Height)
 		t0 := time.Now()
 		if err := ossPutObject(key, data, "image/jpeg"); err != nil {
 			a.logf("OSS 迁移上传失败 job=%s: %v", j.JobID, err)
@@ -79,7 +79,7 @@ func (a *API) migrateOSS() {
 			if err != nil {
 				continue
 			}
-			key := store.OssKeyFor(p.UserID, p.JobID)
+			key := store.OssKeyFor(p.UserID, p.JobID, p.Width, p.Height)
 			if err := ossPutObject(key, data, "image/jpeg"); err != nil {
 				errN++
 				continue
@@ -98,7 +98,7 @@ func (a *API) migrateOSS() {
 		return
 	}
 	for _, j := range rekeys {
-		newKey := store.OssKeyFor(j.UserID, j.JobID)
+		newKey := store.OssKeyFor(j.UserID, j.JobID, j.Width, j.Height)
 		if newKey == j.OssKey {
 			continue
 		}
@@ -118,7 +118,7 @@ func (a *API) migrateOSS() {
 	pgRekeys, err := a.st.OssRekeyPregens()
 	if err == nil {
 		for _, p := range pgRekeys {
-			newKey := store.OssKeyFor(p.UserID, p.JobID)
+			newKey := store.OssKeyFor(p.UserID, p.JobID, p.Width, p.Height)
 			if newKey == p.OssKey {
 				continue
 			}

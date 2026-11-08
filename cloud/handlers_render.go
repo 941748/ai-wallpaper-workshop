@@ -186,7 +186,10 @@ func (a *API) handleHistory(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 	onlyFav := r.URL.Query().Get("fav") == "1"
-	rows, err := a.st.ListArchive(u.UserID, onlyFav, limit)
+	// ?w=&h= 按出图规格过滤(按设备取回: 客户端上报本机屏幕, 只看同规格组)
+	fw, _ := strconv.Atoi(r.URL.Query().Get("w"))
+	fh, _ := strconv.Atoi(r.URL.Query().Get("h"))
+	rows, err := a.st.ListArchive(u.UserID, onlyFav, fw, fh, limit)
 	if err != nil {
 		writeFail(w, http.StatusInternalServerError, err.Error())
 		return

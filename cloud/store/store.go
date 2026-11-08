@@ -1176,8 +1176,13 @@ func (s *Store) DropPregensForFailed() (int64, error) {
 	return res.RowsAffected()
 }
 
-// OssKeyFor 按用户生成对象键(S2 起统一为 u/{user_id}/{jobID}.jpg: 便于按用户
-// 列举/删除/归档保留; kind 不再体现在键上, 类型信息在库里)。
-func OssKeyFor(userID, jobID string) string {
-	return "u/" + userID + "/" + jobID + ".jpg"
+// OssKeyFor 按用户+出图分辨率生成对象键(u/{user_id}/{W}x{H}/{jobID}.jpg):
+// 同用户多设备按规格分目录, 取回按设备规格归组; 宽高未知(0)落 legacy/。
+// 存量平铺键 u/{user_id}/{jobID}.jpg 不强制迁移——读取全走库里的 oss_key,
+// 新旧布局共存, 重键由 migrate-oss 按需另行触发。
+func OssKeyFor(userID, jobID string, w, h int) string {
+	if w > 0 && h > 0 {
+		return fmt.Sprintf("u/%s/%dx%d/%s.jpg", userID, w, h, jobID)
+	}
+	return "u/" + userID + "/legacy/" + jobID + ".jpg"
 }

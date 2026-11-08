@@ -475,7 +475,8 @@ func (c *Client) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 	var out struct {
 		Items []HistoryItem `json:"items"`
 	}
-	if err := c.doJSON(ctx, c.meta, http.MethodGet, "/history?limit=100", nil, &out); err != nil {
+	// 历史响应可达几十KB(100条含提示词), meta 3s 在慢网络会超时 → 用 plan(60s)
+	if err := c.doJSON(ctx, c.plan, http.MethodGet, "/history?limit=100", nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Items, nil
@@ -483,7 +484,7 @@ func (c *Client) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 
 // HistoryFav 收藏/取消收藏。
 func (c *Client) HistoryFav(ctx context.Context, jobID string, fav bool) error {
-	return c.doJSON(ctx, c.meta, http.MethodPost, "/history/fav",
+	return c.doJSON(ctx, c.plan, http.MethodPost, "/history/fav",
 		map[string]any{"job_id": jobID, "fav": fav}, nil)
 }
 

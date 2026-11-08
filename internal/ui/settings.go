@@ -93,7 +93,7 @@ func RunSettings(dir string, st *store.Store, cfg *config.Config) {
 	s := &settings{dir: dir, st: st, cfg: cfg}
 	if err := s.build(); err != nil {
 		st.Log("settings 窗口创建失败: %v", err)
-		showError(nil, "窗口创建失败: %v", err)
+		showError(nil, "窗口创建失败: %v", friendlyErrText(err))
 		return
 	}
 	st.Log("settings: build 完成")
@@ -325,7 +325,7 @@ func (s *settings) rateCurrent(typ, word string) {
 		}
 	}
 	if err := signals.Append(s.dir, ev); err != nil {
-		showError(s.mw, "%v", err)
+		showError(s.mw, "%v", friendlyErrText(err))
 		return
 	}
 	if typ == signals.TypeLiked {
@@ -442,7 +442,7 @@ func (s *settings) addKeyword() {
 	profile, _ := config.LoadProfile(s.dir)
 	profile.CustomKeywords = config.NormalizeKeywords(append(profile.CustomKeywords, kw))
 	if err := profile.Save(s.dir); err != nil {
-		showError(s.mw, "关键词保存失败: %v", err)
+		showError(s.mw, "关键词保存失败: %v", friendlyErrText(err))
 		return
 	}
 	s.kwEdit.SetText("")
@@ -461,7 +461,7 @@ func (s *settings) delKeyword() {
 	removed := profile.CustomKeywords[idx]
 	profile.CustomKeywords = append(profile.CustomKeywords[:idx], profile.CustomKeywords[idx+1:]...)
 	if err := profile.Save(s.dir); err != nil {
-		showError(s.mw, "关键词保存失败: %v", err)
+		showError(s.mw, "关键词保存失败: %v", friendlyErrText(err))
 		return
 	}
 	s.reloadKeywords(profile)
@@ -532,7 +532,7 @@ func (s *settings) saveProfileEdits(quiet bool) bool {
 	// 显式落盘选中包(非 nil, 即使清空): 引擎按此执行一图一包, 不再推断
 	profile.Packs = selectedPackNames(s.selectedPacks)
 	if err := profile.Save(s.dir); err != nil {
-		showError(s.mw, "偏好保存失败: %v", err)
+		showError(s.mw, "偏好保存失败: %v", friendlyErrText(err))
 		return false
 	}
 	s.cfg.ProfileVer++
@@ -791,7 +791,7 @@ func (s *settings) updatePauseHint() {
 func (s *settings) repairTask(btn *walk.PushButton) {
 	exe, err := os.Executable()
 	if err != nil {
-		showError(s.mw, "无法获取程序路径: %v", err)
+		showError(s.mw, "无法获取程序路径: %v", friendlyErrText(err))
 		return
 	}
 	// installed 守卫: 与 tick 同规则, 仅安装目录(bin\)下的程序才写系统级副作用,
@@ -813,7 +813,7 @@ func (s *settings) repairTask(btn *walk.PushButton) {
 			if err != nil {
 				s.taskLbl.SetText("计划任务: 修复失败")
 				s.st.Log("settings: 计划任务修复失败: %v", err)
-				showError(s.mw, "计划任务修复失败, 未能确认注册成功:\n%v\n\n多半是被 360安全等杀毒软件拦截。请暂时关闭杀软的拦截防护, 再点击\"修复计划任务\"重试。", err)
+				showError(s.mw, "计划任务修复失败, 未能确认注册成功:\n%v\n\n多半是被 360安全等杀毒软件拦截。请暂时关闭杀软的拦截防护, 再点击\"修复计划任务\"重试。", friendlyErrText(err))
 				return
 			}
 			s.taskLbl.SetText("计划任务: " + state + " ✓")
@@ -853,7 +853,7 @@ func (s *settings) saveService(quiet bool) bool {
 		s.cfg.Satisfaction.NextAskAt = time.Now().AddDate(0, 0, days).Format(time.RFC3339)
 	}
 	if err := s.cfg.Save(s.dir); err != nil {
-		showError(s.mw, "保存失败: %v", err)
+		showError(s.mw, "保存失败: %v", friendlyErrText(err))
 		return false
 	}
 	s.be, s.cc = makeBackend(s.cfg)
@@ -995,7 +995,6 @@ func (s *settings) buildHistoryPage(tab *walk.TabWidget) error {
 	})
 	s.histFavBtn, _ = walk.NewPushButton(btnRow)
 	s.histFavBtn.SetText("♥ 收藏/取消")
-	s.histFavBtn.SetEnabled(false)
 	s.histFavBtn.Clicked().Attach(func() { s.toggleCloudFav() })
 
 	s.reloadHistory()
@@ -1034,9 +1033,6 @@ func (s *settings) reloadHistory() {
 	s.histCloud = nil
 	if s.histToggle != nil {
 		s.histToggle.SetText("云端历史")
-	}
-	if s.histFavBtn != nil {
-		s.histFavBtn.SetEnabled(false)
 	}
 }
 
@@ -1077,7 +1073,7 @@ func (s *settings) reapplySelected() {
 		return
 	}
 	if err := desktop.SetWallpaper(path); err != nil {
-		showError(s.mw, "应用失败: %v", err)
+		showError(s.mw, "应用失败: %v", friendlyErrText(err))
 		return
 	}
 	s.st.SetCurrent(path)
@@ -1112,7 +1108,7 @@ func (s *settings) loadCloudHistory() {
 		items, err := s.cc.GetHistory(context.Background())
 		s.mw.Synchronize(func() {
 			if err != nil {
-				showError(s.mw, "云端历史加载失败: %v", err)
+				showError(s.mw, "云端历史加载失败: %v", friendlyErrText(err))
 				return
 			}
 			s.histMode = "cloud"
@@ -1210,17 +1206,17 @@ func (s *settings) applyCloud(it cloud.HistoryItem) {
 	go func() {
 		data, err := s.cc.HistoryImage(context.Background(), jobID)
 		if err != nil {
-			s.mw.Synchronize(func() { showError(s.mw, "云端图片下载失败: %v", err) })
+			s.mw.Synchronize(func() { showError(s.mw, "云端图片下载失败: %v", friendlyErrText(err)) })
 			return
 		}
 		path, err := s.st.SaveWallpaper(data, time.Now())
 		if err != nil {
-			s.mw.Synchronize(func() { showError(s.mw, "留档失败: %v", err) })
+			s.mw.Synchronize(func() { showError(s.mw, "留档失败: %v", friendlyErrText(err)) })
 			return
 		}
 		s.mw.Synchronize(func() {
 			if err := desktop.SetWallpaper(path); err != nil {
-				showError(s.mw, "应用失败: %v", err)
+				showError(s.mw, "应用失败: %v", friendlyErrText(err))
 				return
 			}
 			s.st.SetCurrent(path)
@@ -1236,9 +1232,25 @@ func (s *settings) applyCloud(it cloud.HistoryItem) {
 
 // toggleCloudFav 收藏/取消收藏: 乐观翻心+立即置顶重排, 失败回滚; 成功后静默与服务端对齐。
 func (s *settings) toggleCloudFav() {
+	// 不在云端模式: 帮用户切过去(有缓存秒显), 再提示选图——按钮永不"点不动"
+	if s.histMode != "cloud" {
+		if s.cc == nil {
+			showError(s.mw, "当前为直连调试模式, 无云端历史。")
+			return
+		}
+		if s.histCloud != nil {
+			s.histMode = "cloud"
+			s.renderCloudList()
+			s.histToggle.SetText("本地历史")
+		} else {
+			s.loadCloudHistory()
+		}
+		showInfo(s.mw, "已切换到云端历史, 选中一张图片后再点收藏。")
+		return
+	}
 	idx := s.histLB.CurrentIndex()
-	if s.histMode != "cloud" || idx < 0 || idx >= len(s.histCloud) {
-		showInfo(s.mw, "请先在「云端历史」中选择一张图片。")
+	if idx < 0 || idx >= len(s.histCloud) {
+		showInfo(s.mw, "请先选中一张图片, 再点收藏。")
 		return
 	}
 	if s.cc == nil {
@@ -1259,7 +1271,7 @@ func (s *settings) toggleCloudFav() {
 					}
 				}
 				s.renderCloudList()
-				showError(s.mw, "收藏失败: %v", err)
+				showError(s.mw, "收藏失败: %v", friendlyErrText(err))
 				return
 			}
 			s.loadCloudHistory() // 静默确认(与服务端置顶顺序对齐)
@@ -1292,7 +1304,7 @@ func (s *settings) createLink() {
 		resp, err := s.cc.LinkCreate(ctx)
 		s.mw.Synchronize(func() {
 			if err != nil {
-				s.syncLbl.SetText("生成失败: " + err.Error())
+				s.syncLbl.SetText("生成失败: " + friendlyText(err.Error()))
 				return
 			}
 			s.syncLbl.SetText(fmt.Sprintf("配对码 %s 已生成(5 分钟内有效)", resp.Code))
@@ -1320,7 +1332,7 @@ func (s *settings) redeemLink() {
 		resp, err := s.cc.LinkRedeem(ctx, strings.TrimSpace(code))
 		s.mw.Synchronize(func() {
 			if err != nil {
-				s.syncLbl.SetText("配对失败: " + err.Error())
+				s.syncLbl.SetText("配对失败: " + friendlyText(err.Error()))
 				return
 			}
 			s.cfg.UserID = resp.UserID
@@ -1368,7 +1380,7 @@ func (s *settings) checkUpdateManual(btn *walk.PushButton) {
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		showError(s.mw, "无法定位程序路径: %v", err)
+		showError(s.mw, "无法定位程序路径: %v", friendlyErrText(err))
 		restore()
 		return
 	}

@@ -50,40 +50,6 @@ func TestLogRotation(t *testing.T) {
 		t.Fatalf("new log unexpected size %d", len(data))
 	}
 }
-
-func TestCleanupWallpapersProtectsCurrent(t *testing.T) {
-	dir := t.TempDir()
-	s, _ := Open(dir)
-	// 造 35 张壁纸, 最旧的一张设为 current
-	var paths []string
-	for i := 0; i < 35; i++ {
-		p, err := s.SaveWallpaper([]byte("x"), time.Now().Add(-time.Duration(35-i)*time.Minute))
-		if err != nil {
-			t.Fatal(err)
-		}
-		paths = append(paths, p)
-	}
-	// 修改文件修改时间来区分新旧(名称带时间戳, 已足够区分)
-	current := paths[0] // 最旧
-	s.SetCurrent(current)
-	if err := s.CleanupWallpapers(KeepWallpapers); err != nil {
-		t.Fatal(err)
-	}
-	entries, _ := os.ReadDir(s.WallpapersDir())
-	count := 0
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) == ".png" {
-			count++
-		}
-	}
-	if count > KeepWallpapers+1 { // 允许额外保留 1 张受保护的当前壁纸
-		t.Fatalf("too many wallpapers left: %d", count)
-	}
-	if _, err := os.Stat(current); err != nil {
-		t.Fatalf("current wallpaper must never be deleted: %v", err)
-	}
-}
-
 func TestHistoryAppendCap(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := Open(dir)

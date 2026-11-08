@@ -92,7 +92,7 @@ func RunWizard(dir string, st *store.Store, cfg *config.Config) {
 	}
 	if err := w.build(); err != nil {
 		st.Log("wizard 窗口创建失败: %v", err)
-		showError(nil, "窗口创建失败: %v", err)
+		showError(nil, "窗口创建失败: %v", friendlyErrText(err))
 		return
 	}
 	w.setStep(0)
@@ -420,7 +420,7 @@ func (w *wizard) testAndRegister() bool {
 		return false
 	}
 	if err := w.cfg.Save(w.dir); err != nil {
-		showError(w.mw, "配置保存失败: %v", err)
+		showError(w.mw, "配置保存失败: %v", friendlyErrText(err))
 		w.btnNext.SetEnabled(true)
 		return false
 	}
@@ -545,7 +545,7 @@ func (w *wizard) nextFromSurvey() {
 	// 显式落盘选中包(非 nil, 即使清空): 引擎按此执行一图一包, 不再推断
 	w.profile.Packs = selectedPackNames(w.selectedPacks)
 	if err := w.profile.Save(w.dir); err != nil {
-		showError(w.mw, "画像保存失败: %v", err)
+		showError(w.mw, "画像保存失败: %v", friendlyErrText(err))
 		return
 	}
 	w.cfg.ProfileVer++

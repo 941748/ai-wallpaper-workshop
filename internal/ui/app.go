@@ -16,12 +16,12 @@ func Run() int {
 	dir := config.DefaultDir()
 	st, err := store.Open(dir)
 	if err != nil {
-		showError(nil, "数据目录创建失败: %v", err)
+		showError(nil, "数据目录创建失败: %v", friendlyErrText(err))
 		return 1
 	}
 	cfg, err := config.Load(dir)
 	if err != nil {
-		showError(nil, "配置读取失败: %v", err)
+		showError(nil, "配置读取失败: %v", friendlyErrText(err))
 		return 1
 	}
 	if !cfg.Initialized {

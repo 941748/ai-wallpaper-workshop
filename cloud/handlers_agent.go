@@ -56,7 +56,7 @@ func (a *API) handleAgentClaim(w http.ResponseWriter, r *http.Request) {
 		writeOK(w, map[string]any{"task": nil})
 		return
 	}
-	ossKey := store.OssKeyFor(job.UserID, job.JobID)
+	ossKey := store.OssKeyFor(job.UserID, job.JobID, job.Width, job.Height)
 	a.logf("代理领任务 job=%s kind=%s %dx%d wf=%s", job.JobID, job.Kind, job.Width, job.Height, job.WorkflowID)
 	writeOK(w, map[string]any{"task": map[string]any{
 		"job_id":       job.JobID,
@@ -108,7 +108,7 @@ func (a *API) handleAgentRendered(w http.ResponseWriter, r *http.Request) {
 		writeOK(w, map[string]bool{"ok": true})
 		return
 	}
-	ossKey := store.OssKeyFor(job.UserID, job.JobID)
+	ossKey := store.OssKeyFor(job.UserID, job.JobID, job.Width, job.Height)
 	if body.OssKey != "" && body.OssKey != ossKey {
 		// 代理传到了错误的键 → 拒绝落 done(下载会404), 任务留给超时回收明确失败
 		a.logf("代理 oss_key 不匹配 job=%s: got=%s want=%s", job.JobID, body.OssKey, ossKey)

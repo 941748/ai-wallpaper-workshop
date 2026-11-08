@@ -133,12 +133,20 @@ func TestPregenImageOssRedirect(t *testing.T) {
 	}
 }
 
-// TestOssKeyForUserScoped S2 按用户重键金标准。
+// TestOssKeyForUserScoped 分辨率目录键金标准: u/{user}/{W}x{H}/{job}.jpg, 0 尺寸落 legacy。
 func TestOssKeyForUserScoped(t *testing.T) {
-	got := store.OssKeyFor("u_bb85xx", "j-abc123")
-	want := "u/u_bb85xx/j-abc123.jpg"
-	if got != want {
-		t.Fatalf("OssKeyFor: got %s want %s", got, want)
+	cases := []struct {
+		w, h int
+		want string
+	}{
+		{1344, 768, "u/u_bb85xx/1344x768/j-abc123.jpg"},
+		{1080, 2400, "u/u_bb85xx/1080x2400/j-abc123.jpg"},
+		{0, 0, "u/u_bb85xx/legacy/j-abc123.jpg"},
+	}
+	for _, c := range cases {
+		if got := store.OssKeyFor("u_bb85xx", "j-abc123", c.w, c.h); got != c.want {
+			t.Fatalf("OssKeyFor(%d,%d): got %s want %s", c.w, c.h, got, c.want)
+		}
 	}
 }
 
@@ -412,5 +420,70 @@ func TestHistoryFav(t *testing.T) {
 	r, _ = ts.do(t, "POST", "/api/v1/history/fav", env.Data.Token, map[string]any{"job_id": "jf1", "fav": true})
 	if r.StatusCode != http.StatusNotFound {
 		t.Fatalf("越权收藏应404, got %d", r.StatusCode)
+	}
+}
+
+// TestHistoryResolutionFilter 按设备取回: ?w=&h= 过滤同规格组, 缺省不过滤。
+func TestHistoryResolutionFilter(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	uid, tok := ts.register(t)
+
+	mk := func(id string, w, h int) {
+		t.Helper()
+		if err := ts.st.CreateJob(store.Job{
+			JobID: id, UserID: uid, Kind: "gen", Priority: "normal",
+			Positive: id, Width: w, Height: h,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := ts.st.SetJobStatus(id, "done", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := ts.st.SetJobOssKey(id, store.OssKeyFor(uid, id, w, h)); err != nil {
+			t.Fatal(err)
+		}
+		if err := ts.st.ArchiveJob(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("jr-phone", 1080, 2400)
+	mk("jr-phone2", 1080, 2400)
+	mk("jr-pc", 1920, 1080)
+
+	list := func(query string) []string {
+		t.Helper()
+		r, raw := ts.do(t, "GET", "/api/v1/history"+query, tok, nil)
+		if r.StatusCode != http.StatusOK {
+			t.Fatalf("history %q: %d %s", query, r.StatusCode, raw)
+		}
+		var env struct {
+			Data struct {
+				Items []struct {
+					JobID string `json:"job_id"`
+				} `json:"items"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &env); err != nil {
+			t.Fatalf("parse %q: %v (%s)", query, err, raw)
+		}
+		ids := make([]string, 0, len(env.Data.Items))
+		for _, it := range env.Data.Items {
+			ids = append(ids, it.JobID)
+		}
+		return ids
+	}
+
+	if got := list(""); len(got) != 3 {
+		t.Fatalf("缺省应返回全部3条: %+v", got)
+	}
+	if got := list("?w=1080&h=2400"); len(got) != 2 {
+		t.Fatalf("手机规格应2条: %+v", got)
+	}
+	if got := list("?w=1920&h=1080"); len(got) != 1 || got[0] != "jr-pc" {
+		t.Fatalf("PC 规格应仅 jr-pc: %+v", got)
+	}
+	// 归档行的 oss_key 落分辨率目录
+	if a, _ := ts.st.Archive("jr-phone"); a == nil || a.OssKey != "u/"+uid+"/1080x2400/jr-phone.jpg" {
+		t.Fatalf("归档键应含分辨率目录: %+v", a)
 	}
 }

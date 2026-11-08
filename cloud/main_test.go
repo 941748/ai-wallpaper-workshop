@@ -1152,7 +1152,7 @@ func TestAgentRenderFlow(t *testing.T) {
 	if task == nil || task["job_id"] != "j-agent1" || task["positive"] != "阳光海岸" ||
 		task["negative"] != "低质量, 模糊" || task["width"] != float64(1344) ||
 		task["seed"] != float64(42) || task["workflow_id"] != "std" ||
-		task["oss_key"] != "u/"+uid+"/j-agent1.jpg" {
+		task["oss_key"] != "u/"+uid+"/1344x768/j-agent1.jpg" {
 		t.Fatalf("claim 任务字段: %+v", task)
 	}
 	if j, _ := ts.st.Job("j-agent1"); j == nil || j.Status != "running" {
@@ -1167,13 +1167,13 @@ func TestAgentRenderFlow(t *testing.T) {
 
 	// 4) 回报成功 → done + oss_key + 归档; 幂等
 	code, raw = agentPost("/api/v1/agent/rendered", map[string]any{
-		"job_id": "j-agent1", "ok": true, "oss_key": "u/" + uid + "/j-agent1.jpg",
+		"job_id": "j-agent1", "ok": true, "oss_key": "u/" + uid + "/1344x768/j-agent1.jpg",
 	})
 	if code != 200 {
 		t.Fatalf("rendered: %d %s", code, raw)
 	}
 	j, _ := ts.st.Job("j-agent1")
-	if j == nil || j.Status != "done" || j.OssKey != "u/"+uid+"/j-agent1.jpg" {
+	if j == nil || j.Status != "done" || j.OssKey != "u/"+uid+"/1344x768/j-agent1.jpg" {
 		t.Fatalf("done 状态: %+v", j)
 	}
 	if arc, _ := ts.st.Archive("j-agent1"); arc == nil {
@@ -1206,7 +1206,7 @@ func TestAgentRenderFlow(t *testing.T) {
 	}
 
 	// 7) pregen 联动: 领走 → 回报 → ready + oss_key
-	if err := ts.st.CreateJob(store.Job{JobID: "pg-agent1", UserID: uid, Kind: "pregen", Priority: "idle", Positive: "p"}); err != nil {
+	if err := ts.st.CreateJob(store.Job{JobID: "pg-agent1", UserID: uid, Kind: "pregen", Priority: "idle", Positive: "p", Width: 1344, Height: 768}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ts.st.InsertPregen(store.Pregen{
@@ -1219,11 +1219,11 @@ func TestAgentRenderFlow(t *testing.T) {
 		t.Fatalf("idle 任务应可被领走: %+v", task)
 	}
 	if code, raw = agentPost("/api/v1/agent/rendered", map[string]any{
-		"job_id": "pg-agent1", "ok": true, "oss_key": "u/" + uid + "/pg-agent1.jpg",
+		"job_id": "pg-agent1", "ok": true, "oss_key": "u/" + uid + "/1344x768/pg-agent1.jpg",
 	}); code != 200 {
 		t.Fatalf("pregen 回报: %d %s", code, raw)
 	}
-	if p, _ := ts.st.PeekPregenByJob(uid, "pg-agent1"); p == nil || !p.Ready || p.OssKey != "u/"+uid+"/pg-agent1.jpg" {
+	if p, _ := ts.st.PeekPregenByJob(uid, "pg-agent1"); p == nil || !p.Ready || p.OssKey != "u/"+uid+"/1344x768/pg-agent1.jpg" {
 		t.Fatalf("pregen 联动: %+v", p)
 	}
 
