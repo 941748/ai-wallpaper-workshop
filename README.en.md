@@ -16,7 +16,7 @@ ComfyUI (Z-Image Turbo) renders the image → it is fitted to your screen's phys
 
 No sign-up, no login, no tray icon, no resident process — close the window and there is no process left in the system.
 
-**Current version: v1.2.0** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~14 MB single file.
+**Current version: v1.2.1** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~14 MB single file.
 
 ## Download
 
@@ -27,14 +27,14 @@ No sign-up, no login, no tray icon, no resident process — close the window and
 | GitHub Release (mirror) | https://github.com/941748/ai-wallpaper-workshop/releases | Same file, faster overseas |
 
 - Requirements: Windows 10 / 11 (64-bit) + WebView2 runtime (bundled with Win11; if missing, the app prompts and installs it automatically).
-- After downloading, double-click `AIWallpaper.exe` to run the setup wizard; automatic wallpaper changes begin once the wizard is done.
+- After downloading, double-click `AIWallpaper.exe` to open the settings panel directly; first-run registration and the default style pack are completed silently in the background.
 - **Existing users never upgrade manually**: the client checks for updates silently on each cycle, then downloads, verifies and swaps itself in.
 - **Android**: click "Download for Android" on the website, or grab `AIWallpaper-Android-*.apk` from Gitee Release; in-app update check included.
 
 ## Features
 
 - **Effortless preference learning**: a five-dimension questionnaire (style / subject / palette / mood / composition, with one-click style packs) builds your profile;
-  afterwards it detects preference drift from your natural actions (re-running the wizard, re-applying a past wallpaper, satisfaction check-ins) and quietly refines the profile.
+  afterwards it detects preference drift from your natural actions (resetting preferences, re-applying a past wallpaper, satisfaction check-ins) and quietly refines the profile.
 - **Hourly automatic refresh**: the scheduled task launches a process that lives for seconds — it renders, swaps, and exits, with nothing running in the background.
 - **Cloud LLM planning + silent fallback**: the LLM plans the next image from your profile, the last 10 rounds, and drift events;
   if it is unreachable or times out, it falls back to the local weighted-sampling engine transparently.
@@ -43,16 +43,14 @@ No sign-up, no login, no tray icon, no resident process — close the window and
 - **Pre-generation pool**: when the render machine is idle it pre-generates the next round, so a hit changes the wallpaper in ~10 seconds (saving the ~30 seconds of on-demand rendering).
 - **Never intrusive**: quiet hours, full-screen apps, and the lock screen are all skipped; satisfaction check-ins follow a memory curve (3→7→15→30→60→90 days, capped) — fewer prompts, but they never disappear.
 - **Privacy-friendly**: anonymous token, zero sign-up; profile and history stay entirely on your machine; all outbound calls go through the cloud service you self-host.
+- **Favorites & delete sync to the cloud**: every local image can be hearted or deleted (timestamp-named archives included), cloud copies are cleaned up alongside, and phone and PC see the same favorites.
+- **All paired devices at a glance**: the Settings page lists every paired device — phones show their model, PCs show their machine name.
+- **Staged swap progress**: "Swap Now" renders on demand with four playful progress stages — planning → cloud rendering (with seconds) → download → apply.
 - **Lightweight**: the client is a ~14 MB single file (compiled Go, no runtime dependencies).
 
 ## Screenshots
 
-Four-step wizard: connect to the service → preference questionnaire (five-dimension tri-state chips, with one-click style packs) → first wallpaper → done (the hourly task registers silently on the final step).
-
-<p align="center">
-  <img src="docs/screenshots/wizard-connect.png" width="49%" />
-  <img src="docs/screenshots/wizard-survey.png" width="49%" />
-</p>
+Settings panel: current wallpaper (feedback / swap now) → preferences (five-dimension tri-state chips + one-click style packs) → history (local/cloud favorites & recall) → settings (interval / update / device sync).
 
 <p align="center">
   <img src="docs/screenshots/sample-lake.jpg" width="66%" />
@@ -62,7 +60,7 @@ Four-step wizard: connect to the service → preference questionnaire (five-dime
 
 ```
 ┌──────── Clients (Windows single file ~14 MB / Android APK) ────────┐
-│ Wizard · Settings · History favorites   Scheduled tick · resume · │
+│ Settings panel · History favorites      Scheduled tick · resume · │
 │ Local prompt engine (LLM fallback)      silent self-update        │
 │                             Profile / drift signals               │
 └──────────────────────────┬────────────────────────────────────────┘
@@ -93,7 +91,7 @@ Four-step wizard: connect to the service → preference questionnaire (five-dime
 
 1. **Tri-state questionnaire**: 90 tags across five dimensions (style 22 / subject 42 / palette 6 / mood 10 / composition 10),
    picked as "like / neutral / dislike" and mapped to profile weights (0.9 / 0.3 / 0.05); style packs can be checked in one click.
-2. **Drift detection**: only real user actions are adopted (re-running the wizard, re-applying a wallpaper, adjusting weights, check-in choices);
+2. **Drift detection**: only real user actions are adopted (resetting preferences, re-applying a wallpaper, adjusting weights, check-in choices);
    the profile is refined once same-direction evidence accumulates. It never relies on guessed signals like "how long a wallpaper survived", avoiding intrusion and misjudgement.
 
 ## Quick start
@@ -104,7 +102,7 @@ The rendering pipeline has a single shape: **client → cloud → render machine
 
 1. A server (may be the same machine): compile and run the cloud service (see "Cloud service deployment"), configure the LLM key and OSS credentials.
 2. A render machine: ComfyUI + a consumer NVIDIA GPU (Z-Image Turbo, ~30 s/image at 1080p), plus `aw-agent.exe` (see "ComfyUI checklist") — it claims tasks, renders and uploads; no inbound ports needed.
-3. In wizard step 1, enter the cloud service address → done.
+3. The cloud service address is preconfigured — just double-click and run.
 
 ## Build
 
@@ -138,7 +136,7 @@ go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist\AIWallpaper.exe .
 
 ```
 wallpaper/
-├── main.go                       # no args = GUI (wizard/settings); --tick = one silent run; --apply-update = swap helper
+├── main.go                       # no args = GUI (settings panel); --tick = one silent run; --apply-update = swap helper
 ├── build.ps1                     # one-shot build (tests → client → cloud service)
 ├── assets/workflow_template.json # Z-Image Turbo workflow template (placeholder injection; aw-agent default.json shares it)
 ├── aw-agent/                    # render-machine unified agent (claim & render + OSS upload + watchdog + auto-update)
@@ -154,7 +152,7 @@ wallpaper/
 │   ├── cloud/                    # cloud client (signup/get prompt/report/retry queue)
 │   ├── update/                   # silent self-update (version check/download verify/helper swap)
 │   ├── tick/                     # --tick full orchestration (incl. satisfaction check-in & self-update)
-│   └── ui/                       # walk native windows: wizard/settings/check-in dialog
+│   └── ui/                       # Wails Bridge bindings + check-in/uninstall dialogs
 ├── cloud/                        # standalone cloud service (compiled & deployed separately)
 │   ├── main.go                   # wiring + admin dashboard /admin?token=
 │   ├── api.go                    # all /api/v1 endpoints
@@ -172,14 +170,14 @@ wallpaper/
 
 | How it runs | Behaviour |
 | --- | --- |
-| Double-click (no args) | First run → setup wizard; afterwards → settings panel. **Closing the window = the process exits immediately** |
+| Double-click (no args) | Opens the settings panel directly (first-run registration completes silently in the background). **Closing the window = the process exits immediately** |
 | `AIWallpaper.exe --tick` | Fired hourly by the scheduled task: renders and swaps the wallpaper silently with no window, then exits |
 | `AIWallpaper.exe --apply-update ...` | Internal swap helper (used by silent self-update; ordinary users need not care) |
 
-Settings panel tabs: Preferences (weight tuning / re-init) | Service & Schedule (address / test connection / interval / task register & delete / change now) |
+Settings panel tabs: Current Wallpaper (feedback / Swap Now) | Preferences (weights / reset) | History (local & cloud favorites, delete, favorites-only) | Settings (interval / task repair / updates / device sync) |
 History (thumbnails / re-apply / open folder) | Sync (anonymous user_id / QR pairing for a new device) | Update & Check-in (version / check for updates / check-in cycle).
 
-All the manual actions above (re-running the wizard, re-applying from History, adjusting weights) are recorded locally as drift events and reported to the cloud,
+All the manual actions above (resetting preferences, re-applying from History, adjusting weights) are recorded locally as drift events and reported to the cloud,
 serving as the basis for the LLM to plan the next prompt.
 
 Data directory `%LOCALAPPDATA%\AIWallpaper\`:
@@ -190,8 +188,9 @@ profile.json         preference profile (5-dimension weights + negative fragment
 prompt_history.json  last 200 render combinations (last 30 deduplicated)
 cloud_queue.json     offline retry queue (retried for up to 7 days)
 signals.json         drift events pending upload
+favs.json            local favorite marks (hearts for timestamp-named archives)
 wallpapers\         wallpaper archive (kept forever, no cap - disk space is yours to manage)
-bin\AIWallpaper.exe  the official copy made when the wizard registers the scheduled task
+bin\AIWallpaper.exe  the official copy made during silent first-run setup
 logs\runtime.log     runtime log (1 MB × 3, rotated)
 ```
 
@@ -316,11 +315,11 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
    ```json
    {
-     "version": "1.2.0",
-     "file": "AIWallpaper-1.2.0.exe",
+     "version": "1.2.1",
+     "file": "AIWallpaper-1.2.1.exe",
      "sha256": "<64-hex>",
-     "size": 10866176,
-     "notes": "v1.2.0: fresh UI, instant cloud history, single cloud pipeline",
+     "size": 14075392,
+     "notes": "v1.2.1: cloud-synced favorites & delete, paired-device list, staged swap progress",
      "url": "https://www.cybermesh.space/go/dl"
    }
    ```
@@ -358,7 +357,7 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 ## Development & acceptance
 
 - `go test ./...` all green (incl. cross-module end-to-end: real tick ↔ real cloud ↔ simulated render agent / mock LLM)
-- Double-click `dist\AIWallpaper.exe` to enter the wizard; after finishing, the wallpaper changes immediately and the scheduled task is registered
+- Double-click `dist\AIWallpaper.exe` to open the settings panel; first-run task registration and shortcuts complete in the background
 - After closing the window, `tasklist | findstr /I AIWallpaper` shows no leftover; `schtasks /Run /TN AIWallpaper` swaps silently with no window
 - Run offline: the old wallpaper is kept, events enter the retry queue, and are reported automatically once reconnected
 - Satisfaction check-in dialog on due: Satisfied → cycle increments; Change style → swaps immediately and resets; Later → postponed by 3 days
