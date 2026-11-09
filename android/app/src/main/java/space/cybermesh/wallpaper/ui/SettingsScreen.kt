@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import space.cybermesh.wallpaper.net.Api
+import space.cybermesh.wallpaper.net.DeviceRow
 import space.cybermesh.wallpaper.net.Session
 import space.cybermesh.wallpaper.net.SessionData
 import space.cybermesh.wallpaper.net.Update
@@ -74,6 +75,27 @@ fun SettingsScreen(session: Session) {
         InfoRow("身份", if (sessionData.loggedIn) sessionData.userId else "未连接")
 
         Text("与电脑端共享偏好", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        // 生成配对码 = 多设备一致性入口(手机↔PC/换机/重装共享身份与偏好), 已配对也要可用:
+        // 恢复链路 = 新设备输入本码 adopt 当前身份(负责人 2026-11-09 定位)
+        val generateCode: () -> Unit = {
+            scope.launch {
+                busy = true
+                msg = null
+                try {
+                    val r = Api.linkCreate(sessionData.token)
+                    createdCode = r.code to r.url
+                } catch (e: Exception) {
+                    msg = "生成失败: ${friendlyError(e)}"
+                }
+                busy = false
+            }
+        }
+        val genButton: @Composable () -> Unit = {
+            OutlinedButton(
+                enabled = !busy && sessionData.loggedIn,
+                onClick = generateCode,
+            ) { Text("生成配对码") }
+        }
         if (paired == true) {
             Text(
                 "✓ 已与电脑端配对",
@@ -90,6 +112,16 @@ fun SettingsScreen(session: Session) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "在另一台设备输入此码即可共享当前身份的偏好与云端图片",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                genButton()
+            }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(
@@ -121,25 +153,48 @@ fun SettingsScreen(session: Session) {
                         }
                     },
                 ) { Text("输入配对码") }
-                OutlinedButton(
-                    enabled = !busy && sessionData.loggedIn,
-                    onClick = {
-                        scope.launch {
-                            busy = true
-                            msg = null
-                            try {
-                                val r = Api.linkCreate(sessionData.token)
-                                createdCode = r.code to r.url
-                            } catch (e: Exception) {
-                                msg = "生成失败: ${friendlyError(e)}"
-                            }
-                            busy = false
-                        }
-                    },
-                ) { Text("生成配对码") }
+                genButton()
             }
         }
         msg?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+
+        // 已配对设备: 手机显示型号、PC 显示机器名, 配对几台显示几台
+        Text("已配对设备", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        var devices by remember { mutableStateOf<List<DeviceRow>?>(null) }
+        LaunchedEffect(sessionData.token, sessionData.userId) {
+            devices = if (sessionData.token.isNotEmpty()) {
+                try {
+                    Api.devices(sessionData.token)
+                } catch (_: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
+        }
+        val devList = devices
+        when {
+            devList == null -> Text(
+                "读取中…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            devList.isEmpty() -> Text(
+                "还没有配对的设备 — 用配对码把电脑拉进来",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> devList.forEach { d ->
+                val icon = if (d.type == "android") "📱" else "💻"
+                val name = if (d.type == "android" && d.model.isNotEmpty()) d.model else d.device
+                val cur = if (d.device == sessionData.deviceId) "  (本机)" else ""
+                Text(
+                    "$icon  $name$cur",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
 
         Text("更新", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

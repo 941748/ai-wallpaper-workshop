@@ -307,7 +307,7 @@ fun GalleryScreen(session: Session) {
             }
         } else {
             Text(
-                "还没有壁纸 — 点右上角「换一张」生成你的第一张",
+                "偏好里，每个维度只选择一个标签，再试试「换一张」",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 28.dp),

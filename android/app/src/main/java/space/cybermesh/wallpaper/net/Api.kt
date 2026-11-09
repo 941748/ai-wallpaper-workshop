@@ -151,6 +151,17 @@ data class FavReq(@SerialName("job_id") val jobId: String, val fav: Boolean)
 data class FavResp(val fav: Boolean = false)
 
 @Serializable
+data class DeviceRow(
+    val device: String = "",
+    val type: String = "",
+    val model: String = "",
+    @SerialName("last_seen") val lastSeen: String = "",
+)
+
+@Serializable
+data class DevicesResp(val devices: List<DeviceRow> = emptyList())
+
+@Serializable
 data class HealthResp(
     val ok: Boolean = false,
     @SerialName("quota_ok") val quotaOk: Boolean = true,
@@ -240,6 +251,11 @@ object Api {
     /** 收藏/取消收藏。 */
     suspend fun historyFav(token: String, jobId: String, fav: Boolean): FavResp = withIO {
         call("POST", "/api/v1/history/fav", token, json.encodeToString(FavReq(jobId, fav)))
+    }
+
+    /** 已配对设备列表(设置页: 手机显示型号、PC 显示机器名)。 */
+    suspend fun devices(token: String): List<DeviceRow> = withIO {
+        call<DevicesResp>("GET", "/api/v1/devices", token).devices
     }
 
     /** 下载字节(url 为 /api/v1 相对路径或完整 URL; token 非空时带 Bearer)。 */
