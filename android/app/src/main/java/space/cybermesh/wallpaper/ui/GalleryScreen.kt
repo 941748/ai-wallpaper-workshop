@@ -145,6 +145,7 @@ fun GalleryScreen(session: Session) {
     var pendingInstall by remember { mutableStateOf<Pair<String, File>?>(null) }
     var confirmDelete by remember { mutableStateOf<File?>(null) } // 长按待删除项
     var favs by remember { mutableStateOf(mapOf<String, Boolean>()) } // jobId → 云端收藏态
+    var favOnly by remember { mutableStateOf(false) } // 收藏筛选: 只显示红心图
     var updBusy by remember { mutableStateOf(false) }
 
     // 出图时并行检查更新: 静默下载, 出图完成后弹"立即安装"
@@ -238,6 +239,17 @@ fun GalleryScreen(session: Session) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("画廊", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            // 收藏筛选: 只显示带红心的图(旧时间戳文件无法关联云端收藏, 不入列)
+            OutlinedButton(
+                onClick = { favOnly = !favOnly },
+                enabled = !busy,
+                modifier = Modifier.padding(end = 8.dp),
+            ) {
+                Text(
+                    if (favOnly) "♥ 收藏中" else "♡ 收藏",
+                    color = if (favOnly) Color(0xFFFF4D6A) else MaterialTheme.colorScheme.primary,
+                )
+            }
             Button(
                 enabled = !busy,
                 onClick = {
@@ -359,15 +371,38 @@ fun GalleryScreen(session: Session) {
             }
         }
 
+        // 收藏筛选: 仅新命名(wp-{jobID}.jpg)且云端 fav=true 的图入列
+        val shown = if (favOnly) {
+            recent.filter { f ->
+                jobIdOf(f)?.let { favs[it] == true } == true
+            }
+        } else {
+            recent
+        }
         if (recent.isNotEmpty()) {
-            Text("最近生成 · 点按即设为壁纸", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text(
+                if (favOnly) "收藏 · ${shown.size} 张 · 点按即设为壁纸"
+                else "最近生成 · 点按即设为壁纸",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            if (favOnly && shown.isEmpty()) {
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "还没有收藏 — 点图片右上角 ♡ 收藏后在这里集中查看",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
+                Spacer(Modifier.weight(1f))
+                return@Column
+            }
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.weight(1f),
             ) {
-                items(recent) { f ->
+                items(shown) { f ->
                     val applying = remember { mutableStateOf(false) }
                     Box(
                         modifier = Modifier
