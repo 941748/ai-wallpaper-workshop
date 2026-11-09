@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"flag"
 	"os"
 
@@ -25,6 +26,9 @@ import (
 	"wallpaper/internal/ui"
 	"wallpaper/internal/update"
 )
+
+//go:embed all:frontend
+var assets embed.FS
 
 func main() {
 	tickMode := flag.Bool("tick", false, "计划任务单次运行(无窗口静默)")
@@ -59,7 +63,7 @@ func main() {
 		return
 	}
 
-	os.Exit(ui.Run())
+	os.Exit(ui.Run(assets))
 }
 
 // runTick 计划任务单次流程: 全程静默, 任何失败均保留旧壁纸。

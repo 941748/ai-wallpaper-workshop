@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,17 +40,27 @@ func ossConfigured() bool {
 
 // presignOSSGET 生成对象 GET 预签名 URL(默认 15 分钟有效)。
 func presignOSSGET(key string, expire time.Duration) (string, error) {
-	return presignOSSGETAt(key, time.Now().Add(expire).Unix())
+	return presignOSSGETAt(key, time.Now().Add(expire).Unix(), "")
 }
 
-// presignOSSGETAt 纯函数版(供测试注入固定 Expires)。
-func presignOSSGETAt(key string, expires int64) (string, error) {
+// presignOSSGETThumb 预签名缩略图(预览专用): 实测原图 1.4MB → 560宽 q80 约 57KB(25 倍差距)。
+// x-oss-process 必须参与签名(实测不参与则 SignatureDoesNotMatch); URL 中该参数原样不转义(对真实桶实证)。
+func presignOSSGETThumb(key string, expire time.Duration) (string, error) {
+	return presignOSSGETAt(key, time.Now().Add(expire).Unix(), "image/resize,w_560/quality,q_80")
+}
+
+// presignOSSGETAt 纯函数版(供测试注入固定 Expires; process 非空时参与签名并追加到 URL)。
+func presignOSSGETAt(key string, expires int64, process string) (string, error) {
 	ak, secret, bucket, endpoint := ossEnv()
 	if ak == "" || secret == "" || bucket == "" || endpoint == "" {
 		return "", fmt.Errorf("OSS 未配置")
 	}
 	key = strings.TrimPrefix(key, "/")
-	sts := "GET\n\n\n" + strconv.FormatInt(expires, 10) + "\n/" + bucket + "/" + key
+	resource := "/" + bucket + "/" + key
+	if process != "" {
+		resource += "?x-oss-process=" + process
+	}
+	sts := "GET\n\n\n" + strconv.FormatInt(expires, 10) + "\n" + resource
 	mac := hmac.New(sha1.New, []byte(secret))
 	mac.Write([]byte(sts))
 	sig := base64.StdEncoding.EncodeToString(mac.Sum(nil))
@@ -58,9 +69,12 @@ func presignOSSGETAt(key string, expires int64) (string, error) {
 	for i, s := range segs {
 		segs[i] = url.PathEscape(s)
 	}
-	return fmt.Sprintf("https://%s.%s/%s?OSSAccessKeyId=%s&Expires=%d&Signature=%s",
-		bucket, endpoint, strings.Join(segs, "/"),
-		url.QueryEscape(ak), expires, url.QueryEscape(sig)), nil
+	u := fmt.Sprintf("https://%s.%s/%s?OSSAccessKeyId=%s&Expires=%d&Signature=%s",
+		bucket, endpoint, strings.Join(segs, "/"), url.QueryEscape(ak), expires, url.QueryEscape(sig))
+	if process != "" {
+		u += "&x-oss-process=" + process
+	}
+	return u, nil
 }
 
 // ---------- 对象管理操作(PUT/COPY/DELETE, V1 header 认证) ----------
@@ -182,4 +196,38 @@ func ossDeleteObject(key string) error {
 		return fmt.Errorf("OSS DELETE HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	return nil
+}
+
+// ossBucketStat 桶存储统计(GetBucketStat: GET /?stat, V1 header 签名, 子资源参与签名)。
+// 返回已用字节数与对象数; 未配置或失败返回 error(看板显示"-"不阻塞)。
+func ossBucketStat() (storage, objects int64, err error) {
+	if !ossConfigured() {
+		return 0, 0, fmt.Errorf("OSS 未配置")
+	}
+	_, _, bucket, endpoint := ossEnv()
+	date, auth := ossSignHeader("GET", "/"+bucket+"/?stat", "", "", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://"+bucket+"."+endpoint+"/?stat", nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	req.Header.Set("Date", date)
+	req.Header.Set("Authorization", auth)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		return 0, 0, fmt.Errorf("OSS STAT HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	// GetBucketStat 返回 XML(<BucketStat><Storage>..</ObjectCount>), 非 JSON
+	var st struct {
+		Storage     int64 `xml:"Storage"`
+		ObjectCount int64 `xml:"ObjectCount"`
+	}
+	if err := xml.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return 0, 0, err
+	}
+	return st.Storage, st.ObjectCount, nil
 }

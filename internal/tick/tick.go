@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"wallpaper/internal/backend"
-	"wallpaper/internal/backend/comfyui"
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
 	"wallpaper/internal/desktop"
@@ -224,16 +223,13 @@ func RunOnce(ctx context.Context, env Env) error {
 	}
 	history, _ := st.LoadHistory()
 
-	// ---------- 云端 / 直连(不可达也不终止: 本地备用池仍可换图) ----------
+	// ---------- 云端(唯一出图模式; 不可达也不终止: 本地备用池仍可换图) ----------
 	var (
 		cc      *cloud.Client
 		cloudOK bool
 		be      backend.ImageBackend
 	)
-	if cfg.DirectMode && cfg.DirectURL != "" {
-		be = comfyui.New(cfg.DirectURL, cfg.DirectToken)
-		st.Log("tick: 直连调试模式 %s", cfg.DirectURL)
-	} else {
+	{
 		device, _ := os.Hostname()
 		cc = cloud.New(cfg.CloudURL, cfg.UserID, cfg.Token, device)
 		if h, err := cc.Health(ctx); err != nil {

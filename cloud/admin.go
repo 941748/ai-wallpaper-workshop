@@ -147,6 +147,7 @@ code{color:var(--acc)}
 <div class="kpi"><div class="l">配额(出图 时/天)</div><div class="v" style="font-size:15px">{{.KQuotaG}}</div></div>
 <div class="kpi"><div class="l">出图机代理</div><div class="v" style="font-size:15px">{{.KAgent}}</div></div>
 <div class="kpi"><div class="l">配额(LLM 时/天)</div><div class="v" style="font-size:15px">{{.KQuotaL}}</div></div>
+<div class="kpi"><div class="l">OSS 存储</div><div class="v" style="font-size:15px">{{.KOss}}</div></div>
 </div>
 <h2>用量(近 7 天)</h2>
 <div class="charts"><div class="chart"><h3>LLM / 出图 调用次数</h3><div class="box" id="cUsage"></div></div>
@@ -286,6 +287,25 @@ window.addEventListener('resize', ()=>{ for (const k in CH) CH[k].resize(); });
 </body></html>`))
 
 // ---------- 数据组装 ----------
+
+// humanBytes 字节数转人可读(看板 KPI 用)。
+func humanBytes(n int64) string {
+	const (
+		KB = 1 << 10
+		MB = 1 << 20
+		GB = 1 << 30
+	)
+	switch {
+	case n >= GB:
+		return fmt.Sprintf("%.2f GB", float64(n)/GB)
+	case n >= MB:
+		return fmt.Sprintf("%.1f MB", float64(n)/MB)
+	case n >= KB:
+		return fmt.Sprintf("%.1f KB", float64(n)/KB)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
 
 type userTblRow struct {
 	UserID, CreatedAt, LastAt, PackCN   string
@@ -658,6 +678,11 @@ func (a *API) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	data["KQuotaG"] = fmt.Sprintf("%d / %d", a.genHour, a.genDay)
 	data["KAgent"] = a.agentStatusText()
 	data["KQuotaL"] = fmt.Sprintf("%d / %d", a.llmHour, a.llmDay)
+	if storage, objects, err := ossBucketStat(); err == nil {
+		data["KOss"] = fmt.Sprintf("%s · %d 个", humanBytes(storage), objects)
+	} else {
+		data["KOss"] = "—"
+	}
 
 	verRows, _ := a.st.ClientVerDist()
 	verMap := map[string]int64{}

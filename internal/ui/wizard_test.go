@@ -55,18 +55,6 @@ func TestSurveyEqual(t *testing.T) {
 	}
 }
 
-func TestCycleAttitude(t *testing.T) {
-	if got := cycleAttitude(survey.Neutral); got != survey.Like {
-		t.Errorf("中立应循环到喜欢, got %v", got)
-	}
-	if got := cycleAttitude(survey.Like); got != survey.Dislike {
-		t.Errorf("喜欢应循环到讨厌, got %v", got)
-	}
-	if got := cycleAttitude(survey.Dislike); got != survey.Neutral {
-		t.Errorf("讨厌应循环到中立, got %v", got)
-	}
-}
-
 func TestPresetPacksTemplate(t *testing.T) {
 	if len(taxonomy.PresetPacks) != 7 {
 		t.Fatalf("风格包数量 %d, 应为 7(定稿)", len(taxonomy.PresetPacks))

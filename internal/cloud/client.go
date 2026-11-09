@@ -472,11 +472,17 @@ type HistoryItem struct {
 
 // GetHistory 云端图片历史(limit 内收藏置顶, 组内新→旧)。
 func (c *Client) GetHistory(ctx context.Context) ([]HistoryItem, error) {
+	return c.GetHistoryPage(ctx, 0, 100)
+}
+
+// GetHistoryPage 分页拉取云端历史(offset 起, 全部召回翻页用)。
+func (c *Client) GetHistoryPage(ctx context.Context, offset, limit int) ([]HistoryItem, error) {
 	var out struct {
 		Items []HistoryItem `json:"items"`
 	}
+	path := fmt.Sprintf("/history?limit=%d&offset=%d", limit, offset)
 	// 历史响应可达几十KB(100条含提示词), meta 3s 在慢网络会超时 → 用 plan(60s)
-	if err := c.doJSON(ctx, c.plan, http.MethodGet, "/history?limit=100", nil, &out); err != nil {
+	if err := c.doJSON(ctx, c.plan, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Items, nil
@@ -491,6 +497,11 @@ func (c *Client) HistoryFav(ctx context.Context, jobID string, fav bool) error {
 // HistoryImage 下载历史图(服务端双模: OSS 302 或本地文件, doRaw 跟随重定向)。
 func (c *Client) HistoryImage(ctx context.Context, jobID string) ([]byte, error) {
 	return c.doRaw(ctx, c.long, http.MethodGet, "/history/"+url.PathEscape(jobID)+"/image")
+}
+
+// HistoryImageThumb 下载历史图缩略图(560宽 q80; 预览专用, 体积约为全图 1/25)。
+func (c *Client) HistoryImageThumb(ctx context.Context, jobID string) ([]byte, error) {
+	return c.doRaw(ctx, c.long, http.MethodGet, "/history/"+url.PathEscape(jobID)+"/image?thumb=1")
 }
 
 // allowedDownloadPrefixes 更新包下载的允许来源前缀(自有云端 + 官方软件源镜像)。

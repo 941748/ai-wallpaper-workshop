@@ -23,7 +23,7 @@ func setOSSEnv(t *testing.T) {
 // TestPresignOSSGETGolden 预签名 URL 金标准(算法已对真实桶实证, 此处锁死不回退)。
 func TestPresignOSSGETGolden(t *testing.T) {
 	setOSSEnv(t)
-	got, err := presignOSSGETAt("images/a b.jpg", 1794000000)
+	got, err := presignOSSGETAt("images/a b.jpg", 1794000000, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,8 +35,26 @@ func TestPresignOSSGETGolden(t *testing.T) {
 
 	// 未配置 → 明确报错(端点据此回退本地)
 	t.Setenv("AW_OSS_AK_ID", "")
-	if _, err := presignOSSGETAt("k", 1); err == nil {
+	if _, err := presignOSSGETAt("k", 1, ""); err == nil {
 		t.Fatal("未配置应报错")
+	}
+}
+
+// TestPresignOSSGETThumb 缩略图预签名: x-oss-process 参与签名且追加到 URL(对真实桶实证的金标准)。
+func TestPresignOSSGETThumb(t *testing.T) {
+	setOSSEnv(t)
+	got, err := presignOSSGETThumb("u/a/b.jpg", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// URL 中原样追加(对真实桶实证的写法: 服务端会 decode query value)
+	if !strings.Contains(got, "&x-oss-process=image/resize,w_560/quality,q_80") {
+		t.Fatalf("URL 应含原样 x-oss-process: %s", got)
+	}
+	// process 参与签名 → 与不带 process 的签名必然不同
+	plain, _ := presignOSSGETAt("u/a/b.jpg", time.Now().Add(time.Minute).Unix(), "")
+	if got == plain {
+		t.Fatal("process 必须参与签名计算")
 	}
 }
 
@@ -268,13 +286,13 @@ func TestHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 列表含该条, image_url 指向历史取图端点
+	// 列表含该条; image_url 已不下发(双端前端均不读, 预览走 /history/{id}/image 端点)
 	r, raw := ts.do(t, "GET", "/api/v1/history", tok, nil)
 	if r.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"job_id":"jobh1"`) {
 		t.Fatalf("history 应含 jobh1: %d %s", r.StatusCode, raw)
 	}
-	if !strings.Contains(string(raw), "/api/v1/history/jobh1/image") {
-		t.Fatalf("image_url 应为历史端点: %s", raw)
+	if strings.Contains(string(raw), "image_url") {
+		t.Fatalf("image_url 不应再下发: %s", raw)
 	}
 
 	// 取图 200
@@ -353,7 +371,6 @@ func TestHistoryFav(t *testing.T) {
 
 	type item struct {
 		JobID    string `json:"job_id"`
-		Positive string `json:"positive"`
 		Fav      bool   `json:"fav"`
 	}
 	list := func(query string) []item {
@@ -382,8 +399,8 @@ func TestHistoryFav(t *testing.T) {
 		t.Fatalf("收藏应200: %d %s", r.StatusCode, raw)
 	}
 	got := list("")
-	if len(got) != 2 || got[0].JobID != "jf1" || !got[0].Fav || got[0].Positive != "ink wash mountains" {
-		t.Fatalf("收藏应置顶且带提示词: %+v", got)
+	if len(got) != 2 || got[0].JobID != "jf1" || !got[0].Fav {
+		t.Fatalf("收藏应置顶: %+v", got)
 	}
 
 	// ?fav=1 仅看收藏

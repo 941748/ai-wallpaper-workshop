@@ -10,18 +10,14 @@ import (
 	"github.com/lxn/walk"
 
 	"wallpaper/internal/backend"
-	"wallpaper/internal/backend/comfyui"
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
 	"wallpaper/internal/desktop"
 	"wallpaper/internal/prompt"
 )
 
-// makeBackend 依据配置返回出图后端(cloud 默认 / comfyui-direct 调试)与云客户端(直连时 nil)。
+// makeBackend 返回出图后端与云客户端(云端为唯一出图模式)。
 func makeBackend(cfg *config.Config) (backend.ImageBackend, *cloud.Client) {
-	if cfg.DirectMode && cfg.DirectURL != "" {
-		return comfyui.New(cfg.DirectURL, cfg.DirectToken), nil
-	}
 	cc := cloud.New(cfg.CloudURL, cfg.UserID, cfg.Token, hostName())
 	return &cloud.Backend{C: cc}, cc
 }
@@ -50,18 +46,8 @@ func ensureRegistered(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// testConnection 连通性测试: 云主站+配额由 err 表达, 并探测出图链路是否可用(renderOK)。
-// 直连模式直接 ping ComfyUI; 云端模式读 /health 的 render_ok(服务端探测出图机)。
+// testConnection 连通性测试: 云主站+配额由 err 表达, 并读 /health 的 render_ok 探测出图链路。
 func testConnection(cfg *config.Config) (renderOK bool, err error) {
-	if cfg.DirectMode {
-		c := comfyui.New(cfg.DirectURL, cfg.DirectToken)
-		if c.BaseURL == "" {
-			return false, fmt.Errorf("请填写 ComfyUI 地址")
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		return c.Reachable(ctx), nil
-	}
 	c := cloud.New(cfg.CloudURL, cfg.UserID, cfg.Token, hostName())
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

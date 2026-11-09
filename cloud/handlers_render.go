@@ -189,24 +189,23 @@ func (a *API) handleHistory(w http.ResponseWriter, r *http.Request) {
 	// ?w=&h= 按出图规格过滤(按设备取回: 客户端上报本机屏幕, 只看同规格组)
 	fw, _ := strconv.Atoi(r.URL.Query().Get("w"))
 	fh, _ := strconv.Atoi(r.URL.Query().Get("h"))
-	rows, err := a.st.ListArchive(u.UserID, onlyFav, fw, fh, limit)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := a.st.ListArchive(u.UserID, onlyFav, fw, fh, offset, limit)
 	if err != nil {
 		writeFail(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		imgURL := "/api/v1/history/" + row.JobID + "/image"
-		if row.OssKey != "" {
-			if signed, err := presignOSSGET(row.OssKey, 15*time.Minute); err == nil {
-				imgURL = signed
-			}
-		}
+		// positive(提示词)为内部留存数据; image_url 双端前端均不读(预览走
+		// /history/{id}/image 端点) —— 都不下发, 每行省一次签名与几十字节
 		items = append(items, map[string]any{
 			"job_id": row.JobID, "created_at": row.CreatedAt,
 			"width": row.Width, "height": row.Height, "kind": row.Kind,
-			"fav": row.Fav == 1, "image_url": imgURL,
-			"positive": row.Positive, "seed": row.Seed,
+			"fav": row.Fav == 1, "seed": row.Seed,
 		})
 	}
 	writeOK(w, map[string]any{"items": items})
@@ -251,7 +250,12 @@ func (a *API) handleHistoryImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if row.OssKey != "" {
-		if signed, err := presignOSSGET(row.OssKey, 15*time.Minute); err == nil {
+		// ?thumb=1 预览缩略图(560宽q80, 实测原图1.4MB→57KB); 召回/下载不带参数走全图
+		sign := presignOSSGET
+		if r.URL.Query().Get("thumb") == "1" {
+			sign = presignOSSGETThumb
+		}
+		if signed, err := sign(row.OssKey, 15*time.Minute); err == nil {
 			w.Header().Set("Cache-Control", "no-store")
 			http.Redirect(w, r, signed, http.StatusFound)
 			return

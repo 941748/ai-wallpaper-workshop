@@ -48,11 +48,6 @@ type Config struct {
 	Token    string `json:"token"`
 	CloudURL string `json:"cloud_url"`
 
-	// 直连调试模式(仅局域网联调, 默认关闭)
-	DirectMode  bool   `json:"direct_mode"`
-	DirectURL   string `json:"direct_url"`
-	DirectToken string `json:"direct_token"`
-
 	// 调度
 	IntervalHours int `json:"interval_hours"` // 用户选择的换图频率(小时; 换图节流, 不影响计划任务节律)
 	PhaseMinutes  int `json:"phase_minutes"`  // 0~59 换图相位(按 user_id hash 分散)

@@ -68,8 +68,9 @@ func (s *Store) Archive(jobID string) (*ArchiveRow, error) {
 }
 
 // ListArchive 用户历史: 收藏置顶, 组内新→旧; onlyFav 时仅收藏;
-// w/h 均 >0 时按出图规格过滤(按设备取回: 客户端上报自己屏幕, 只看本规格)。
-func (s *Store) ListArchive(userID string, onlyFav bool, w, h, limit int) ([]ArchiveRow, error) {
+// w/h 均 >0 时按出图规格过滤(按设备取回: 客户端上报自己屏幕, 只看本规格);
+// offset>0 跳过前 N 条(全部召回翻页用)。
+func (s *Store) ListArchive(userID string, onlyFav bool, w, h, offset, limit int) ([]ArchiveRow, error) {
 	q := `SELECT ` + archiveCols + ` FROM archive WHERE user_id=?`
 	args := []any{userID}
 	if onlyFav {
@@ -79,8 +80,8 @@ func (s *Store) ListArchive(userID string, onlyFav bool, w, h, limit int) ([]Arc
 		q += ` AND width=? AND height=?`
 		args = append(args, w, h)
 	}
-	q += ` ORDER BY fav DESC, created_at DESC, rowid DESC LIMIT ?`
-	args = append(args, limit)
+	q += ` ORDER BY fav DESC, created_at DESC, rowid DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err

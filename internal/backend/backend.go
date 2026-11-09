@@ -1,5 +1,5 @@
 // Package backend 定义出图后端抽象。
-// 两个实现: cloud(默认, 经云端 /generate 代理)与 comfyui-direct(调试, 直连 ComfyUI)。
+// 实现: cloud(经云端 /generate 代理, 唯一模式); runninghub 为预留。
 package backend
 
 import "context"
