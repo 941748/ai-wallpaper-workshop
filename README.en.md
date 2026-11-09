@@ -16,7 +16,7 @@ ComfyUI (Z-Image Turbo) renders the image → it is fitted to your screen's phys
 
 No sign-up, no login, no tray icon, no resident process — close the window and there is no process left in the system.
 
-**Current version: v1.1.17** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~10 MB single file.
+**Current version: v1.2.0** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~14 MB single file.
 
 ## Download
 
@@ -26,7 +26,7 @@ No sign-up, no login, no tray icon, no resident process — close the window and
 | Gitee Release (recommended in China) | https://gitee.com/QQ941748/ai-wallpaper-workshop/releases | Download the latest `AIWallpaper.exe` |
 | GitHub Release (mirror) | https://github.com/941748/ai-wallpaper-workshop/releases | Same file, faster overseas |
 
-- Requirements: Windows 10 / 11 (64-bit).
+- Requirements: Windows 10 / 11 (64-bit) + WebView2 runtime (bundled with Win11; if missing, the app prompts and installs it automatically).
 - After downloading, double-click `AIWallpaper.exe` to run the setup wizard; automatic wallpaper changes begin once the wizard is done.
 - **Existing users never upgrade manually**: the client checks for updates silently on each cycle, then downloads, verifies and swaps itself in.
 - **Android**: click "Download for Android" on the website, or grab `AIWallpaper-Android-*.apk` from Gitee Release; in-app update check included.
@@ -43,7 +43,7 @@ No sign-up, no login, no tray icon, no resident process — close the window and
 - **Pre-generation pool**: when the render machine is idle it pre-generates the next round, so a hit changes the wallpaper in ~10 seconds (saving the ~30 seconds of on-demand rendering).
 - **Never intrusive**: quiet hours, full-screen apps, and the lock screen are all skipped; satisfaction check-ins follow a memory curve (3→7→15→30→60→90 days, capped) — fewer prompts, but they never disappear.
 - **Privacy-friendly**: anonymous token, zero sign-up; profile and history stay entirely on your machine; all outbound calls go through the cloud service you self-host.
-- **Lightweight**: the client is a ~10 MB single file (compiled Go, no runtime dependencies).
+- **Lightweight**: the client is a ~14 MB single file (compiled Go, no runtime dependencies).
 
 ## Screenshots
 
@@ -61,7 +61,7 @@ Four-step wizard: connect to the service → preference questionnaire (five-dime
 ## How it works
 
 ```
-┌──────── Clients (Windows single file ~10 MB / Android APK) ────────┐
+┌──────── Clients (Windows single file ~14 MB / Android APK) ────────┐
 │ Wizard · Settings · History favorites   Scheduled tick · resume · │
 │ Local prompt engine (LLM fallback)      silent self-update        │
 │                             Profile / drift signals               │
@@ -98,16 +98,9 @@ Four-step wizard: connect to the service → preference questionnaire (five-dime
 
 ## Quick start
 
-### Option 1: Direct mode (self-contained, for users who already have a GPU + ComfyUI)
+The rendering pipeline has a single shape: **client → cloud → render machine (aw-agent)** — no other mode.
 
-**No cloud service needed**: in wizard step 1, tick "Connect to a LAN ComfyUI directly" and enter the address — rendering and wallpaper changes work in full
-(prompts come from the local engine, no LLM required).
-
-1. Prepare ComfyUI and the models (see "ComfyUI checklist" below).
-2. Build or download the client (see "Download" and "Build").
-3. Double-click to run → tick direct mode in the wizard → enter `http://127.0.0.1:8188` → finish the wizard.
-
-### Option 2: Cloud mode (recommended, works even without a GPU)
+### Cloud deployment
 
 1. A server (may be the same machine): compile and run the cloud service (see "Cloud service deployment"), configure the LLM key and OSS credentials.
 2. A render machine: ComfyUI + a consumer NVIDIA GPU (Z-Image Turbo, ~30 s/image at 1080p), plus `aw-agent.exe` (see "ComfyUI checklist") — it claims tasks, renders and uploads; no inbound ports needed.
@@ -153,7 +146,7 @@ wallpaper/
 │   ├── config/                   # config & profile read/write (%LOCALAPPDATA%\AIWallpaper)
 │   ├── taxonomy/                 # 5-dimension attribute dictionary (style/subject/palette/mood/composition)
 │   ├── prompt/                   # local prompt engine (weighted sampling/exploration/dedup/negative)
-│   ├── backend/                  # ImageBackend interface + comfyui direct / runninghub reserved
+│   ├── backend/                  # ImageBackend interface (cloud impl / runninghub reserved)
 │   ├── desktop/                  # resolution probe/scale-crop/wallpaper swap/quiet detection/low priority
 │   ├── scheduler/                # scheduled-task XML generation + schtasks register/delete/run-now
 │   ├── store/                    # data dir/file lock/log rotation/wallpaper archive cleanup
@@ -323,11 +316,11 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
    ```json
    {
-     "version": "1.1.17",
-     "file": "AIWallpaper-1.1.17.exe",
+     "version": "1.2.0",
+     "file": "AIWallpaper-1.2.0.exe",
      "sha256": "<64-hex>",
      "size": 10866176,
-     "notes": "v1.1.17: instant cloud history, friendlier error messages",
+     "notes": "v1.2.0: fresh UI, instant cloud history, single cloud pipeline",
      "url": "https://www.cybermesh.space/go/dl"
    }
    ```
@@ -354,7 +347,7 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
 ## FAQ
 
-- **Does it work offline?** Direct mode is fully local; cloud mode requires the client to reach your cloud service.
+- **Does it work offline?** The client needs access to your cloud service; offline the backup pool still swaps wallpapers and uploads resume once reconnected.
 - **Render speed and cost?** Z-Image Turbo takes ~30 s/image at 1080p on an RTX 4060;
   at one image per hour, a single consumer GPU can serve dozens of users.
 - **Which LLMs are supported?** Any OpenAI-compatible endpoint (default Xiaomi MiMo); with no key configured it uses the local engine automatically, with no loss of function.
