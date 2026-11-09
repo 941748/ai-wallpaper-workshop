@@ -7,88 +7,6 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<!-- ===================== 向导视图 ===================== -->
-<div id="wizard" class="view hidden">
-  <aside class="wiz-side">
-    <div class="brand"><span class="brand-dot"></span><span class="brand-name">AI 壁纸工坊</span></div>
-    <div class="wiz-steps">
-      <div class="wiz-step" data-step="0"><span class="num">1</span>连接服务</div>
-      <div class="wiz-step" data-step="1"><span class="num">2</span>偏好问卷</div>
-      <div class="wiz-step" data-step="2"><span class="num">3</span>首张壁纸</div>
-      <div class="wiz-step" data-step="3"><span class="num">4</span>完成</div>
-    </div>
-  </aside>
-  <main class="wiz-main">
-    <!-- 步骤0: 连接 -->
-    <section class="wiz-page" id="wp-0">
-      <h1>连接服务</h1>
-      <p class="muted">客户端所有出图与大模型调用都经云端代理, 服务地址由官方云端提供、默认即可; 本地调试可勾选直连模式。</p>
-      <div class="card">
-        <div class="btn-row">
-          <button class="btn" id="wiz-test">测试连接</button>
-          <span class="status" id="wiz-conn-status"></span>
-        </div>
-      </div>
-      <div class="nav-row"><span></span><button class="btn primary" id="wiz-next-0">下一步</button></div>
-    </section>
-
-    <!-- 步骤1: 问卷 -->
-    <section class="wiz-page hidden" id="wp-1">
-      <h1>偏好问卷</h1>
-      <div class="card">
-        <div class="card-title">① 风格包 · 一键多选</div>
-        <div class="muted">选中即按整组风格出图; 与下方细选互不影响, 两者可叠加。</div>
-        <div class="pack-row" id="wiz-packs"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">② 细选 · 可选(不选则跟随风格包)</div>
-        <div class="muted">筹码: 点一下 = 喜欢 ✓, 再点 = 不喜欢 ✕, 再点 = 取消; 紫边 = 被风格包覆盖; 色调/情绪/构图只勾 1 项即锁定。</div>
-        <div class="dim-tabs" id="wiz-dimtabs"></div>
-        <div class="chip-grid" id="wiz-chips"></div>
-        <div class="sum-bar">
-          <span>已选: 喜欢 <b class="g" id="wiz-likes">0</b> 项 · 讨厌 <b class="r" id="wiz-dislikes">0</b> 项</span>
-          <span class="muted" id="wiz-summary"></span>
-          <span class="flex"></span>
-          <button class="btn sm" id="wiz-cleardim">清空本维</button>
-        </div>
-      </div>
-      <div class="nav-row"><button class="btn" id="wiz-back-1">上一步</button><button class="btn primary" id="wiz-next-1">下一步</button></div>
-    </section>
-
-    <!-- 步骤2: 首张壁纸 -->
-    <section class="wiz-page hidden" id="wp-2">
-      <h1>首张壁纸</h1>
-      <div class="preview-box">
-        <img id="wiz-preview" class="hidden" alt="">
-        <div id="wiz-preview-empty" class="muted">正在生成第一张壁纸… 通常 30–60 秒</div>
-      </div>
-      <div class="progress hidden" id="wiz-progress"><div class="bar" id="wiz-progress-bar"></div></div>
-      <div class="status center" id="wiz-first-status"></div>
-      <div class="nav-row">
-        <button class="btn" id="wiz-back-2">上一步</button>
-        <button class="btn" id="wiz-again">换一张</button>
-        <button class="btn primary" id="wiz-next-2">喜欢, 就用这张</button>
-      </div>
-    </section>
-
-    <!-- 步骤3: 完成 -->
-    <section class="wiz-page hidden" id="wp-3">
-      <div class="done-hero">
-        <div class="done-check">✔</div>
-        <h1>初始化完成</h1>
-        <div class="status" id="wiz-reg-status"></div>
-        <p class="muted center-p">
-          之后每小时由 Windows 计划任务静默出图并自动更换壁纸, 本程序不会常驻后台<br>
-          关闭窗口后系统中没有任何本程序的进程; 需要时从桌面快捷方式或重新运行即可打开设置面板<br>
-          在设置面板里你可以随时: 调整偏好问卷 · 修改换图频率 · 暂停换图 · 卸载本程序
-        </p>
-        <pre class="recap" id="wiz-recap"></pre>
-        <div class="nav-row center"><button class="btn primary" id="wiz-finish">完成</button></div>
-      </div>
-    </section>
-  </main>
-</div>
-
 <!-- ===================== 设置视图 ===================== -->
 <div id="app" class="view hidden">
   <aside id="sidebar">
@@ -149,7 +67,6 @@
 
       <div class="btn-row">
         <button class="btn primary" id="pf-save">保存偏好</button>
-        <button class="btn" id="pf-reinit">重新初始化向导</button>
         <button class="btn danger" id="pf-reset">重置所有偏好</button>
         <button class="btn" id="pf-opendir">打开数据目录</button>
       </div>
@@ -171,7 +88,9 @@
       </div>
       <div class="btn-row">
         <button class="btn" id="hist-refresh">刷新</button>
+        <button class="btn" id="hist-favonly" title="列表只显示已收藏(红心)的图片">♡ 只看收藏</button>
         <button class="btn primary" id="hist-apply">重新应用这张</button>
+        <button class="btn" id="hist-del" title="删除选中的本地图(有云端副本时同步清理)">删除</button>
         <button class="btn" id="hist-recallall" title="把云端全部本地图拉回本地(已有跳过)">全部召回</button>
         <button class="btn" id="hist-fav" title="收藏/取消">♥ 收藏</button>
         <button class="btn" id="hist-toggle">云端历史</button>
@@ -228,6 +147,8 @@
           <button class="btn" id="st-redeem">输入配对码</button>
         </div>
         <div class="status" id="st-sync-status"></div>
+        <div class="muted" id="st-devices-title">已配对设备</div>
+        <div id="st-devices"></div>
       </div>
       <div class="btn-row">
         <button class="btn primary" id="st-save">保存设置</button>
@@ -253,7 +174,6 @@
 </div>
 
 <script src="app.js"></script>
-<script src="wizard.js"></script>
 <script src="prefs.js"></script>
 <script src="history.js"></script>
 <script src="settings.js"></script>

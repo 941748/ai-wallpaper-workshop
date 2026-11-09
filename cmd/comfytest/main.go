@@ -202,7 +202,7 @@ func applyWallpaper(path string, logf func(string, ...any)) error {
 	if err != nil {
 		return err
 	}
-	archived, err := st.SaveWallpaper(final, time.Now())
+	archived, err := st.SaveWallpaper("", final, time.Now()) // 本地文件入参无任务ID → 时间戳留档
 	if err != nil {
 		return fmt.Errorf("留档失败: %w", err)
 	}

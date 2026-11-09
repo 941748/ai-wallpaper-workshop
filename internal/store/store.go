@@ -115,8 +115,17 @@ func (s *Store) WallpapersDir() string { return filepath.Join(s.Dir, "wallpapers
 // BinDir 程序副本目录(计划任务指向)。
 func (s *Store) BinDir() string { return filepath.Join(s.Dir, "bin") }
 
-// SaveWallpaper 保存成品图并返回路径(同一时间戳追加序号避免覆盖)。
-func (s *Store) SaveWallpaper(data []byte, at time.Time) (string, error) {
+// SaveWallpaper 保存成品图并返回路径。
+// jobID 非空时以 {jobID}.png 命名(jobs 表主键: 云端归档可反查、收藏跨端同步、召回去重 os.Stat);
+// 为空(备用池图/无任务来源)回退时间戳命名, 同一秒内追加序号避免覆盖。
+func (s *Store) SaveWallpaper(jobID string, data []byte, at time.Time) (string, error) {
+	if jobID != "" {
+		path := filepath.Join(s.WallpapersDir(), jobID+".png")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
 	base := "wallpaper_" + at.Format("20060102_150405")
 	path := filepath.Join(s.WallpapersDir(), base+".png")
 	for i := 1; ; i++ {

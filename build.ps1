@@ -41,6 +41,6 @@ Write-Host "[4/4] 产物列表:"
 Get-ChildItem dist | Format-Table Name, @{Name="MB";Expression={[math]::Round($_.Length/1MB,1)}} -AutoSize
 
 Write-Host ""
-Write-Host "客户端分发: 把 dist\AIWallpaper.exe 发给用户双击运行(首次进入初始化向导)。"
+Write-Host "客户端分发: 把 dist\AIWallpaper.exe 发给用户双击运行(首装后台自动初始化, 无向导)。"
 Write-Host "云服务发布: 见 README.md 的「云服务部署」章节。"
 Write-Host "=== 构建完成 ===" -ForegroundColor Green

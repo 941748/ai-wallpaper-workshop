@@ -1,12 +1,109 @@
 // 设置视图: 当前壁纸页 + 偏好页
 
 // ================= 当前壁纸 =================
+// 出图进度文案池(与安卓端 GalleryScreen 逐字一致): 进入阶段洗牌成牌堆,
+// 每 1.5s 轮播一条, 走完一轮重洗; {t} 占位替换为生成秒数。
+const SWAP_POOLS = {
+  plan: [
+    "正在分析你的偏好…",
+    "AI 正在构思画什么…",
+    "从你的风格包里挑选手牌…",
+    "正在组合今天的画面…",
+    "翻翻你最近喜欢的风格…",
+    "给画面挑一束好光线…",
+    "让你的画像提供点灵感…",
+    "构思一个不重样的构图…",
+    "正在酝酿一个新点子…",
+    "帮你避开昨天的审美…",
+    "挑个你没见过的角度…",
+    "今天也要独一无二…",
+  ],
+  render: [
+    "云端生成中… {t}s",
+    "GPU 正在渲染细节…",
+    "光影与上色处理中…",
+    "一笔一笔画出来…",
+    "空气感正在到位…",
+    "质感逐渐清晰…",
+    "高清细节放大中…",
+    "快了，别眨眼…",
+    "收尾的高光时刻…",
+    "颜料还没干，稍等…",
+    "曲线和色彩正在碰撞…",
+    "{t}s · 马上见面…",
+  ],
+  down: [
+    "正在下载成品…",
+    "把新画装进手机…",
+    "信号在路上狂奔…",
+    "传输中，马上见面…",
+    "新壁纸正在过安检…",
+  ],
+  apply: [
+    "正在设置壁纸…",
+    "桌面与锁屏一起换新…",
+    "正在给桌面铺上新画…",
+    "最后一步，揭幕…",
+    "换上新装…",
+  ],
+};
+
 window.initCurrent = function () {
   const $ = (id) => document.getElementById(id);
 
   $("cur-like").onclick = () => rate("liked", "喜欢");
   $("cur-dislike").onclick = () => rate("disliked", "不喜欢");
   $("cur-swap").onclick = swapNow;
+
+  // ---- 进度轮播(阶段事件驱动, 对齐安卓) ----
+  let prog = null; // {stage, deck, deckStage, tick, renderStart, timer, off}
+  const shuffle = (a) => {
+    const r = a.slice();
+    for (let i = r.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [r[i], r[j]] = [r[j], r[i]];
+    }
+    return r;
+  };
+  function paintSwap() {
+    if (!prog || prog.deck.length === 0) return;
+    let raw = prog.deck[prog.tick % prog.deck.length];
+    if (raw.indexOf("{t}") >= 0) {
+      const sec = prog.renderStart ? Math.floor((Date.now() - prog.renderStart) / 1000) : "…";
+      raw = raw.replace("{t}", sec);
+    }
+    setStatus($("cur-status"), raw, "hint");
+  }
+  function setStage(s) {
+    if (!prog || !SWAP_POOLS[s] || s === prog.deckStage) return;
+    prog.deckStage = s;
+    prog.deck = shuffle(SWAP_POOLS[s]);
+    prog.tick = 0;
+    if (s === "render" && !prog.renderStart) prog.renderStart = Date.now();
+    paintSwap();
+  }
+  function startSwapProgress() {
+    stopSwapProgress();
+    prog = { deckStage: "", deck: [], tick: 0, renderStart: 0, timer: null, off: null };
+    setStage("plan");
+    if (window.runtime && window.runtime.EventsOn) {
+      prog.off = window.runtime.EventsOn("swap-progress", (p) => p && setStage(p.stage));
+    }
+    prog.timer = setInterval(() => {
+      if (!prog) return;
+      prog.tick++;
+      if (prog.deck.length > 0 && prog.tick % prog.deck.length === 0) {
+        prog.deck = shuffle(prog.deck); // 一轮走完重新洗牌, 下轮顺序不同
+      }
+      paintSwap();
+    }, 1500);
+  }
+  function stopSwapProgress() {
+    if (!prog) return;
+    clearInterval(prog.timer);
+    if (prog.off) prog.off();
+    prog = null;
+  }
 
   async function rate(typ, word) {
     try {
@@ -21,7 +118,7 @@ window.initCurrent = function () {
     const btn = $("cur-swap");
     if (btn.disabled) return;
     btn.disabled = true;
-    setStatus($("cur-status"), "正在出图…(约 1-2 分钟, 完成后自动生效)", "hint");
+    startSwapProgress();
     try {
       const r = await B.SwapNow();
       if (r.changed) {
@@ -36,8 +133,10 @@ window.initCurrent = function () {
       }
     } catch (e) {
       setStatus($("cur-status"), "触发失败: " + e, "err");
+    } finally {
+      stopSwapProgress();
+      btn.disabled = false;
     }
-    btn.disabled = false;
   }
 
   window.loadCurrent = async function () {
@@ -159,17 +258,6 @@ window.initPrefs = function () {
     }
   };
 
-  $("pf-reinit").onclick = async () => {
-    const ok = await confirmBox("重新初始化向导",
-      "将重新运行初始化向导并重新勾选偏好问卷。\n这会被记为一次偏好漂移依据, 帮助后续出图更贴近你。\n继续吗?");
-    if (!ok) return;
-    try {
-      await B.RestartWizard();
-      location.reload();
-    } catch (e) {
-      setStatus($("pf-status"), "" + e, "err");
-    }
-  };
   $("pf-opendir").onclick = () => B.OpenFolder("");
 
   window.loadPrefs = async () => {

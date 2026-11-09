@@ -795,6 +795,53 @@ func TestDeviceInfoRegister(t *testing.T) {
 	}
 }
 
+// TestDevicesList 配对设备列表端点: 同一身份配对几台返回几台(类型/型号/机器名, 双端设置页数据源)。
+func TestDevicesList(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	_, token := ts.register(t) // test-pc, AddDevice 默认 device_type=pc
+
+	// 手机扫码配对(与安卓同链路): redeem 携带 device_info 型号
+	resp, raw := ts.do(t, "POST", "/api/v1/devices/link", token, map[string]any{"action": "create"})
+	_ = resp.Body.Close()
+	var linkEnv struct {
+		Data struct {
+			Code string `json:"code"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &linkEnv); err != nil || linkEnv.Data.Code == "" {
+		t.Fatalf("配对码生成失败: %s", raw)
+	}
+	resp, raw = ts.do(t, "POST", "/api/v1/devices/link", "", map[string]any{
+		"action": "redeem", "code": linkEnv.Data.Code, "device": "and-1",
+		"device_info": map[string]any{"type": "android", "model": "Xiaomi 14"},
+	})
+	_ = resp.Body.Close()
+
+	resp, raw = ts.do(t, "GET", "/api/v1/devices", token, nil)
+	_ = resp.Body.Close()
+	var env struct {
+		Data struct {
+			Devices []store.DeviceRow `json:"devices"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("解析失败: %s", raw)
+	}
+	if len(env.Data.Devices) != 2 {
+		t.Fatalf("want 2 devices, got %d: %s", len(env.Data.Devices), raw)
+	}
+	byDev := map[string]store.DeviceRow{}
+	for _, d := range env.Data.Devices {
+		byDev[d.Device] = d
+	}
+	if d, ok := byDev["test-pc"]; !ok || d.Type != "pc" {
+		t.Fatalf("pc 行缺失/类型错: %+v", byDev)
+	}
+	if d, ok := byDev["and-1"]; !ok || d.Type != "android" || d.Model != "Xiaomi 14" {
+		t.Fatalf("android 行缺失/型号错: %+v", byDev)
+	}
+}
+
 // TestAndroidSnapshotGuard 安卓渲染带 device_id: 屏幕进 devices, 不回写共享快照 screen(方案A)。
 func TestAndroidSnapshotGuard(t *testing.T) {
 	ts := newTestServer(t, "", false)

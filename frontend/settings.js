@@ -1,7 +1,44 @@
 // 设置页: 服务/换图/回访/更新/设备同步/卸载
 
+// 设备名转义(设备名来自各端上报, 拼进 innerHTML 前统一转义)
+function escDev(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 window.initSettings = function () {
   const $ = (id) => document.getElementById(id);
+
+  // 已配对设备列表: 手机显示型号、PC 显示机器名, 配对几台显示几台。
+  // 跨境慢网单独异步拉取, 不拖住设置页打开。
+  async function loadDevices() {
+    const title = $("st-devices-title");
+    const el = $("st-devices");
+    title.textContent = "已配对设备…";
+    el.innerHTML = "";
+    try {
+      const list = await B.GetPairedDevices();
+      title.textContent = "已配对设备 (" + list.length + ")";
+      if (!list.length) {
+        el.innerHTML = '<div class="muted">还没有配对的设备 — 点上方配对码把手机/其他电脑拉进来</div>';
+        return;
+      }
+      el.innerHTML = list
+        .map((d) => {
+          const icon = d.type === "android" ? "📱" : "💻";
+          return (
+            "<div>" + icon + " " + escDev(d.name) +
+            (d.current ? ' <span class="muted">(本机)</span>' : "") +
+            "</div>"
+          );
+        })
+        .join("");
+    } catch (e) {
+      title.textContent = "已配对设备";
+      el.innerHTML = '<div class="muted">设备列表获取失败: ' + escDev(e) + "</div>";
+    }
+  }
 
   // 自动换图开关 → 暂停时长可用性
   $("st-auto").onchange = (e) => {
@@ -50,6 +87,7 @@ window.initSettings = function () {
       setStatus($("st-status"), "");
       setStatus($("st-conn-status"), "");
       setStatus($("st-sync-status"), "");
+      loadDevices(); // 设备列表异步拉取(结果自渲染, 失败自提示)
     } catch (e) {
       setStatus($("st-status"), "" + e, "err");
     }
@@ -154,8 +192,7 @@ window.initSettings = function () {
       }
       btn.textContent = "下载中…";
       $("st-upd-progress").classList.remove("hidden");
-      const onProg = (e) => {
-        const p = e.detail;
+      const onProg = (p) => {
         if (p.total > 0) {
           $("st-upd-bar").style.width = Math.round((p.got * 100) / p.total) + "%";
           btn.textContent = "下载中 " + (p.got >> 20) + "/" + (p.total >> 20) + " MB";
@@ -163,9 +200,10 @@ window.initSettings = function () {
           btn.textContent = "下载中 " + (p.got >> 20) + " MB";
         }
       };
-      window.addEventListener("update-progress", onProg);
+      // Wails 事件经 runtime.EventsOn 投递(window 事件桥在 Wails 下不触发)
+      const offProg = window.runtime.EventsOn("update-progress", onProg);
       const ur = await B.DoUpdate();
-      window.removeEventListener("update-progress", onProg);
+      offProg();
       if (ur.status === "error") {
         setStatus($("st-status"), ur.message, "err");
         btn.textContent = "检查更新";

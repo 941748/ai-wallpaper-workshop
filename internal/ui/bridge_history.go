@@ -11,6 +11,7 @@ import (
 
 	"wallpaper/internal/desktop"
 	"wallpaper/internal/signals"
+	"wallpaper/internal/store"
 )
 
 // ---------- 历史页: 本地 ----------
@@ -21,6 +22,20 @@ type HistItem struct {
 	Path  string `json:"path"`
 	At    string `json:"at"`    // "01-02 15:04"
 	JobID string `json:"jobId"` // 新命名提取; 旧文件为空
+	Fav   bool   `json:"fav"`   // 本地收藏清单(favs.json); jobId 行另与云端收藏合并(前端)
+}
+
+// isJobIDFile 判定文件名(去扩展)是否为 24 位十六进制任务ID(与安卓端 jobIdOf 同规则)。
+func isJobIDFile(s string) bool {
+	if len(s) != 24 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // GetLocalHistory 本地壁纸留档(新→旧)。文件名规则:
@@ -29,7 +44,9 @@ type HistItem struct {
 func (b *Bridge) GetLocalHistory() []HistItem {
 	b.mu.Lock()
 	st := b.st
+	dir := b.dir
 	b.mu.Unlock()
+	favs, _ := store.LoadLocalFavs(dir)
 	entries, err := os.ReadDir(st.WallpapersDir())
 	if err != nil {
 		return []HistItem{}
@@ -50,7 +67,9 @@ func (b *Bridge) GetLocalHistory() []HistItem {
 		name := e.Name()
 		jobID := ""
 		if !strings.HasPrefix(name, "wallpaper_") {
-			jobID = strings.TrimSuffix(name, filepath.Ext(name))
+			if id := strings.TrimSuffix(name, filepath.Ext(name)); isJobIDFile(id) {
+				jobID = id
+			}
 		}
 		rows = append(rows, row{
 			item: HistItem{
@@ -58,6 +77,7 @@ func (b *Bridge) GetLocalHistory() []HistItem {
 				Path:  filepath.Join(st.WallpapersDir(), name),
 				At:    info.ModTime().Format("01-02 15:04"),
 				JobID: jobID,
+				Fav:   favs[name],
 			},
 			mod: info.ModTime(),
 		})
@@ -68,6 +88,71 @@ func (b *Bridge) GetLocalHistory() []HistItem {
 		out = append(out, r.item)
 	}
 	return out
+}
+
+// SetLocalFav 本地收藏标记(旧时间戳命名文件用; {jobID}.png 行以云端收藏为准, 跨端同步)。
+func (b *Bridge) SetLocalFav(name string, fav bool) error {
+	b.mu.Lock()
+	dir := b.dir
+	b.mu.Unlock()
+	if name == "" {
+		return fmt.Errorf("文件名为空")
+	}
+	if err := store.SetLocalFav(dir, name, fav); err != nil {
+		return fmt.Errorf("收藏保存失败: %s", friendlyErrText(err))
+	}
+	return nil
+}
+
+// DeleteLocal 删除本地图(与安卓长按删除一致): jobId 行先同步清理云端副本(失败降级只删本地),
+// 再删本地文件。当前壁纸拒删 —— PC 预览直接读本地文件, 删后预览空白(安卓可读系统壁纸无此限)。
+func (b *Bridge) DeleteLocal(name string) (string, error) {
+	b.mu.Lock()
+	cc := b.cc
+	st := b.st
+	dir := b.dir
+	b.mu.Unlock()
+	// 文件名只在本目录内反查, 不拼接用户输入(防穿越)
+	if name == "" || name != filepath.Base(name) || !strings.HasSuffix(strings.ToLower(name), ".png") {
+		return "", fmt.Errorf("文件名无效")
+	}
+	path := filepath.Join(st.WallpapersDir(), name)
+	if cur := st.CurrentPath(); cur != "" &&
+		strings.EqualFold(filepath.Clean(cur), filepath.Clean(path)) {
+		return "", fmt.Errorf("这张正在使用中(当前壁纸) — 请先「立即换一张」, 再删除它")
+	}
+	jobID := ""
+	if !strings.HasPrefix(name, "wallpaper_") {
+		if id := strings.TrimSuffix(name, filepath.Ext(name)); isJobIDFile(id) {
+			jobID = id
+		}
+	}
+	cloudErrText := ""
+	if jobID != "" && cc != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := cc.DeleteImage(ctx, jobID)
+		cancel()
+		if err != nil {
+			// 安卓同款降级: 云端清理失败不拦本地删除
+			cloudErrText = ", 云端副本清理失败"
+			b.st.Log("删除: 云端副本清理失败 job=%s: %v", jobID, err)
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("文件不存在")
+	}
+	if err := os.Remove(path); err != nil {
+		return "", fmt.Errorf("删除失败: %s", friendlyErrText(err))
+	}
+	_ = store.SetLocalFav(dir, name, false) // 顺带清掉本地收藏标记, 不留死条目
+	switch {
+	case jobID == "":
+		return "已删除本地 ✓ (旧时间戳文件无云端副本)", nil
+	case cloudErrText != "":
+		return "已删除本地 ✓" + cloudErrText, nil
+	default:
+		return "已删除 ✓ 云端副本同步清理", nil
+	}
 }
 
 // PreviewLocal 本地图预览(560×315 JPEG base64; 自动识别 PNG/JPEG 内容)。
@@ -318,4 +403,22 @@ func (b *Bridge) ToggleFav(jobID string, fav bool) (bool, error) {
 		return !fav, fmt.Errorf("收藏失败: %s", friendlyErrText(err))
 	}
 	return fav, nil
+}
+
+// GetFavs 收藏任务ID集合: 本地历史行星标显示与"只看收藏"筛选
+// (收藏态存服务端 archive 表, 文件名 {jobID}.png 反查关联; 旧时间戳文件无法关联)。
+func (b *Bridge) GetFavs() ([]string, error) {
+	b.mu.Lock()
+	cc := b.cc
+	b.mu.Unlock()
+	if cc == nil {
+		return nil, fmt.Errorf("当前为直连调试模式, 无云端收藏")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	ids, err := cc.GetFavJobIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("收藏列表获取失败: %s", friendlyErrText(err))
+	}
+	return ids, nil
 }

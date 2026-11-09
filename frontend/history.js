@@ -4,17 +4,23 @@
 // ③云端视觉区分: ☁ 前缀+状态条+按钮文案「召回到本地并应用」+切换后自动预览首张
 // ④全部召回: {jobID}.png 命名去重, 进度条, 服务端 offset 翻页
 // ⑤收藏常可用
+// ⑥本地行收藏星标+只看收藏筛选(与安卓画廊一致): {jobID}.png 反查 + 服务端收藏集合 GetFavs
 
 window.initHistory = function () {
   const $ = (id) => document.getElementById(id);
   let mode = "local";          // local | cloud
-  let items = [];              // 当前列表数据
+  let items = [];              // 当前列表数据(本地模式 = 视图, 见 localAll/favOnly)
   let selected = -1;
   // 云端列表会话缓存(stale-while-revalidate): 切回/刷新时先秒显上次结果再后台拉新。
   // 与 items 指向同一数组 → 收藏/召回的就地修改自动同步进缓存。
   let cloudCache = null;
   let previewSeq = 0;          // 防过期预览串号
   let recalling = false;
+  // 本地收藏: 收藏态存服务端 archive 表, {jobID}.png 反查关联(旧时间戳文件无法关联, 不入筛选);
+  // favOnly 只作用于本地列表(云端列表已有收藏置顶+♥按钮)。
+  let favSet = new Set();
+  let favOnly = false;
+  let localAll = null;         // 本地全量(未筛选), 切筛选时的数据源
 
   // ---------- 列表渲染 ----------
   function renderList() {
@@ -34,16 +40,61 @@ window.initHistory = function () {
         const label = it.jobId
           ? it.at + "  " + it.jobId.slice(0, 8)
           : it.name.replace(/^wallpaper_/, "").replace(/\.png$/, "") + "  (" + it.at + ")";
+        const fav = localFavOf(it);
         row.innerHTML =
+          '<span class="heart' + (fav ? " on" : "") + '">' + (fav ? "♥" : "♡") + "</span>" +
           '<span class="meta">' + label + "</span>" +
           (it.jobId ? '<span class="spec">云端可取</span>' : "");
+        const heart = row.querySelector(".heart");
+        heart.onclick = (ev) => { ev.stopPropagation(); toggleLocalFav(it); };
       }
       row.onclick = () => select(i);
       root.appendChild(row);
     });
     if (items.length === 0) {
-      root.innerHTML = '<div class="muted" style="padding:20px;text-align:center">暂无记录</div>';
+      const emptyMsg = favOnly && mode === "local"
+        ? "还没有收藏的图片 — 点行内 ♡ 收藏一张"
+        : "暂无记录";
+      root.innerHTML = '<div class="muted" style="padding:20px;text-align:center">' + emptyMsg + "</div>";
     }
+  }
+
+  // 本地图收藏判定: jobId 行看云端收藏集合(跨端同步), 旧时间戳行看本地清单(它.fav)。
+  const localFavOf = (x) => !!(x.fav || (x.jobId && favSet.has(x.jobId)));
+
+  // 本地行星标(全行可标, 与安卓画廊一致): jobId→云端, 旧时间戳文件→本地清单; 乐观翻心, 失败回滚。
+  async function toggleLocalFav(it) {
+    const next = !localFavOf(it);
+    const prevLocal = it.fav;
+    const prevCloud = it.jobId ? favSet.has(it.jobId) : false;
+    if (it.jobId) {
+      if (next) favSet.add(it.jobId); else favSet.delete(it.jobId);
+    } else {
+      it.fav = next;
+    }
+    renderList();
+    try {
+      if (it.jobId) await B.ToggleFav(it.jobId, next);
+      else await B.SetLocalFav(it.name, next);
+      setStatus($("hist-status"), next ? "已收藏 ♥" : "已取消收藏", "ok");
+      if (favOnly) rebuildLocalView(next ? it : null); // 筛选中: 收藏进入/取消移出即时生效
+    } catch (e) {
+      if (it.jobId) {
+        if (prevCloud) favSet.add(it.jobId); else favSet.delete(it.jobId);
+      } else {
+        it.fav = prevLocal;
+      }
+      renderList();
+      setStatus($("hist-status"), "" + e, "err");
+    }
+  }
+
+  // 本地视图重建(favOnly 筛选); keep = 尽量保留当前选中项。
+  function rebuildLocalView(keep) {
+    const all = localAll || [];
+    items = favOnly ? all.filter(localFavOf) : all;
+    selected = keep ? items.indexOf(keep) : -1;
+    renderList();
   }
 
   // ---------- 选中 + 预览 ----------
@@ -76,10 +127,24 @@ window.initHistory = function () {
 
   // ---------- 数据加载 ----------
   async function loadLocal() {
-    items = await B.GetLocalHistory();
+    localAll = await B.GetLocalHistory();
+    items = localAll;
     selected = -1;
     renderList();
     $("hist-empty").textContent = "选择左侧图片预览";
+    // 星标显示需要收藏集合(先显示列表, 收藏态返回后纠偏; 失败保留已有缓存)
+    try {
+      const ids = await B.GetFavs();
+      favSet = new Set(ids || []);
+      if (mode === "local") {
+        const keep = selected >= 0 && items[selected] ? items[selected] : null;
+        rebuildLocalView(keep);
+      }
+    } catch (e) {
+      if ((localAll || []).some((x) => x.jobId)) {
+        setStatus($("hist-status"), "收藏状态未同步: " + e, "hint");
+      }
+    }
   }
 
   async function loadCloud(autoPreview) {
@@ -142,7 +207,12 @@ window.initHistory = function () {
     // ③ 按钮文案切换
     $("hist-apply").textContent = cloud ? "召回到本地并应用" : "重新应用这张";
     $("hist-fav").style.display = cloud ? "" : "none";
+    $("hist-favonly").style.display = cloud ? "none" : "";
+    $("hist-del").style.display = cloud ? "none" : "";
     $("hist-recallall").style.display = cloud ? "" : "none";
+    // 切模式重置筛选, 避免"列表缺图"式困惑
+    favOnly = false;
+    $("hist-favonly").textContent = "♡ 只看收藏";
     setStatus($("hist-status"), "");
   }
 
@@ -207,15 +277,14 @@ window.initHistory = function () {
     btn.disabled = true;
     $("hist-progress").classList.remove("hidden");
     setStatus($("hist-status"), "召回中…", "hint");
-    // 进度事件
-    const onProg = (e) => {
-      const p = e.detail;
+    // 进度事件(Wails 事件经 runtime.EventsOn 投递, 详见 settings.js)
+    const onProg = (p) => {
       const pct = p.total > 0 ? Math.round(((p.done + p.skipped) * 100) / p.total) : 0;
       $("hist-progress-bar").style.width = Math.min(pct, 95) + "%";
       setStatus($("hist-status"),
         "召回中… 已下载 " + p.done + " · 跳过 " + p.skipped + " · 失败 " + p.failed, "hint");
     };
-    window.addEventListener("recall-progress", onProg);
+    const offProg = window.runtime.EventsOn("recall-progress", onProg);
     try {
       const r = await B.RecallAll();
       $("hist-progress-bar").style.width = "100%";
@@ -224,7 +293,7 @@ window.initHistory = function () {
     } catch (e) {
       setStatus($("hist-status"), "" + e, "err");
     } finally {
-      window.removeEventListener("recall-progress", onProg);
+      offProg();
       setTimeout(() => {
         $("hist-progress").classList.add("hidden");
         $("hist-progress-bar").style.width = "0%";
@@ -232,6 +301,46 @@ window.initHistory = function () {
       btn.disabled = false;
       recalling = false;
     }
+  };
+
+  // ⑦ 删除本地图(与安卓长按删除一致): 确认 → jobId 行同步清云端副本 → 删本地 → 两处缓存同步
+  $("hist-del").onclick = async () => {
+    if (mode !== "local") {
+      setStatus($("hist-status"), "云端图片请先召回到本地, 再在本地历史删除。", "hint");
+      return;
+    }
+    if (selected < 0 || !items[selected]) {
+      setStatus($("hist-status"), "请先选择一张图片。", "hint");
+      return;
+    }
+    const it = items[selected];
+    const ok = await confirmBox(
+      "删除这张图片？",
+      it.jobId
+        ? "将从「最近生成」中移除并清理云端副本, 删除后无法恢复。已设置的壁纸不受影响。"
+        : "将从「最近生成」中移除, 删除后无法恢复。已设置的壁纸不受影响。"
+    );
+    if (!ok) return;
+    try {
+      const msg = await B.DeleteLocal(it.name);
+      setStatus($("hist-status"), msg, "ok");
+      localAll = (localAll || []).filter((x) => x.name !== it.name);
+      if (cloudCache && it.jobId) cloudCache = cloudCache.filter((x) => x.jobId !== it.jobId);
+      rebuildLocalView();
+      if (items.length === 0) $("hist-empty").textContent = "暂无记录";
+    } catch (e) {
+      setStatus($("hist-status"), "" + e, "err");
+    }
+  };
+
+  // 只看收藏(本地模式, 与安卓画廊"收藏中"筛选一致)
+  $("hist-favonly").onclick = () => {
+    if (mode !== "local") return;
+    favOnly = !favOnly;
+    $("hist-favonly").textContent = favOnly ? "♥ 只看收藏中" : "♡ 只看收藏";
+    rebuildLocalView();
+    setStatus($("hist-status"), favOnly ? "只显示已收藏 ♥ 的图片" : "", favOnly ? "hint" : "");
+    if (favOnly && items.length > 0) select(0);
   };
 
   // ⑤ 收藏(常可用)

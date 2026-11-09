@@ -1,22 +1,16 @@
 package ui
 
 import (
-	"context"
 	"fmt"
 	"time"
 
 	"wallpaper/internal/config"
-	"wallpaper/internal/desktop"
-	"wallpaper/internal/install"
-	"wallpaper/internal/prompt"
-	"wallpaper/internal/scheduler"
 	"wallpaper/internal/signals"
 	"wallpaper/internal/survey"
 	"wallpaper/internal/taxonomy"
-	"wallpaper/internal/update"
 )
 
-// ---------- 向导: 连接步骤 ----------
+// ---------- 连接测试(设置页"测试连接"共用) ----------
 
 // ConnReq 连接步骤请求(云端唯一模式, 保留结构体便于后续扩展)。
 type ConnReq struct{}
@@ -30,6 +24,7 @@ type ConnResult struct {
 
 // TestConnection 测试连接(向导/设置页共用): 云端可达性+配额+出图链路。
 func (b *Bridge) TestConnection(req ConnReq) ConnResult {
+	b.ensureIdentity() // 首装离线时的注册自愈
 	cfg := b.snapshot()
 	_ = req
 	renderOK, err := testConnection(cfg)
@@ -44,27 +39,6 @@ func (b *Bridge) TestConnection(req ConnReq) ConnResult {
 	}
 }
 
-// SaveConn 保存连接配置并匿名注册(向导"下一步")。
-func (b *Bridge) SaveConn(req ConnReq) ConnResult {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	_ = req
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	if err := ensureRegistered(ctx, b.cfg); err != nil {
-		b.st.Log("SaveConn 注册失败: %v", err)
-		return ConnResult{Message: "暂时无法连接服务(" + friendlyErrText(err) + "), 请稍后重试。"}
-	}
-	if err := b.cfg.Save(b.dir); err != nil {
-		return ConnResult{Message: "配置保存失败: " + friendlyErrText(err)}
-	}
-	b.be, b.cc = makeBackend(b.cfg)
-	pctx, pcancel := context.WithTimeout(context.Background(), 3*time.Second)
-	b.renderOK = b.be.Reachable(pctx)
-	pcancel()
-	return ConnResult{OK: true, Render: b.renderOK}
-}
-
 // snapshot 读当前配置副本(不持锁时的安全读; 仅只读字段)。
 func (b *Bridge) snapshot() *config.Config {
 	b.mu.Lock()
@@ -73,7 +47,7 @@ func (b *Bridge) snapshot() *config.Config {
 	return &c
 }
 
-// ---------- 向导: 问卷步骤 ----------
+// ---------- 问卷/偏好(设置页"偏好"共用) ----------
 
 // SurveyVal 词条(前端筹码)。
 type SurveyVal struct {
@@ -238,126 +212,6 @@ func (b *Bridge) SetContextMode(enable bool) error {
 	defer b.mu.Unlock()
 	b.cfg.DisableContext = !enable
 	return b.cfg.Save(b.dir)
-}
-
-// ---------- 向导: 首张壁纸 ----------
-
-// FirstResult 首张壁纸生成结果。
-type FirstResult struct {
-	OK      bool   `json:"ok"`
-	Busy    bool   `json:"busy"` // 链路不可用/超时 → 前端显示"繁忙稍后补图"
-	Image   string `json:"image,omitempty"`
-	Message string `json:"message,omitempty"`
-}
-
-// GenFirstWallpaper 生成并应用首张壁纸(force=换一张, 排除最近主风格)。
-// 优先提服务端 ready 预生成(秒出), 无则现场出图(90s 上限)。阻塞至完成。
-func (b *Bridge) GenFirstWallpaper(force bool) FirstResult {
-	b.mu.Lock()
-	cfg := *b.cfg
-	profile, _ := config.LoadProfile(b.dir)
-	cc, be := b.cc, b.be
-	st := b.st
-	b.mu.Unlock()
-
-	// 1) ready 预生成秒提
-	if cc != nil && !force {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		info, err := cc.PregenFetch(ctx, cfg.ProfileVer, "")
-		if err == nil && info != nil && info.Ready && info.JobID != "" {
-			img, ierr := cc.PregenImage(ctx, info.JobID)
-			cancel()
-			if ierr == nil && len(img) > 0 {
-				return b.finishFirst(img, prompt.Spec{
-					Positive: info.Positive, Negative: info.Negative,
-					Combo: info.Combo, Seed: info.Seed,
-				}, "pregen")
-			}
-			return FirstResult{Busy: true, Message: msgRenderBusy}
-		}
-		cancel()
-	}
-	// 2) 现场出图(90s)
-	ctx, cancel := context.WithTimeout(context.Background(), firstWallpaperTimeout)
-	defer cancel()
-	history, _ := st.LoadHistory()
-	data, spec, src, err := generateWallpaper(ctx, &cfg, cc, be, profile, history, force)
-	if err != nil {
-		st.Log("向导: 生成失败: %v", err)
-		return FirstResult{Busy: true, Message: msgRenderBusy}
-	}
-	return b.finishFirst(data, spec, src)
-}
-
-// finishFirst 留档 + 设为壁纸 + 记历史 + 返回预览 base64。
-func (b *Bridge) finishFirst(data []byte, spec prompt.Spec, src string) FirstResult {
-	b.mu.Lock()
-	st, cfg := b.st, b.cfg
-	b.mu.Unlock()
-	path, err := st.SaveWallpaper(data, time.Now())
-	if err == nil {
-		err = desktop.SetWallpaper(path)
-		st.SetCurrent(path)
-	}
-	if err != nil {
-		st.Log("向导: 壁纸应用失败: %v", err)
-		return FirstResult{Busy: true, Message: msgRenderBusy}
-	}
-	_ = st.AppendHistory(prompt.HistoryEntry{
-		At: time.Now(), Combo: spec.Combo, Positive: spec.Positive,
-		Negative: spec.Negative, Seed: spec.Seed, Source: src,
-	})
-	_ = cfg // 首张完成不改配置
-	b64, _ := scaleToB64(data, 480, 270)
-	return FirstResult{OK: true, Image: b64, Message: "已应用为桌面壁纸 ✓"}
-}
-
-// ---------- 向导: 完成 ----------
-
-// FinishResult 完成步骤(静默安装)结果。
-type FinishResult struct {
-	RegOK   bool   `json:"regOk"`
-	Message string `json:"message"`
-	Recap   string `json:"recap"`
-}
-
-// FinishWizard 记喜欢信号(首张被接受时) + 静默安装(计划任务/快捷方式/卸载项)。
-func (b *Bridge) FinishWizard(accepted bool) FinishResult {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if accepted {
-		_ = signals.Append(b.dir, signals.Event{Type: signals.TypeStyleKeep, Detail: "初始化首张壁纸: 喜欢"})
-	}
-	exe, err := exePath()
-	if err != nil {
-		b.st.Log("向导: 定位程序路径失败: %v", err)
-		return FinishResult{RegOK: false, Message: "自动换图将由系统后台稍后完成注册; 不影响你正常使用"}
-	}
-	b.cfg.PhaseMinutes = phaseFromUser(b.cfg.UserID)
-	dst, err := install.Setup(b.st.BinDir(), exe, update.CurrentVersion, b.cfg.PhaseMinutes)
-	if err != nil {
-		b.st.Log("向导: 安装/注册失败: %v", err)
-		_ = b.cfg.Save(b.dir)
-		return FinishResult{RegOK: false, Message: "自动换图将由系统后台稍后完成注册; 不影响你正常使用"}
-	}
-	b.cfg.TaskTickHours = scheduler.TickHours
-	b.cfg.LastVersion = update.CurrentVersion
-	if b.cfg.LastUpdate == "" {
-		b.cfg.LastUpdate = time.Now().Format(time.RFC3339)
-	}
-	_ = b.cfg.Save(b.dir)
-	// 标记初始化完成
-	b.cfg.Initialized = true
-	_ = b.cfg.Save(b.dir)
-	profile, _ := config.LoadProfile(b.dir)
-	answers := answersFromProfile(profile)
-	packs := initSelectedPacks(profile)
-	b.st.Log("向导: 已安装并注册计划任务 → %s", dst)
-	return FinishResult{
-		RegOK:   true,
-		Message: fmt.Sprintf("已开启每小时自动换图 ✓ 桌面与开始菜单已添加\"%s\"快捷方式", config.AppNameCN),
-		Recap:   surveyRecapText(answers, packs),
-	}
 }
 
 func countLikes(a map[string]int) int {

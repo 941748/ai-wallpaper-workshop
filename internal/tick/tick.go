@@ -83,6 +83,39 @@ func ReadOutcome(dir string) (Outcome, error) {
 	return o, err
 }
 
+// ProgressPath 手动触发进度文件路径(阶段: plan/render/down/apply, 父进程轮询转事件推送)。
+func ProgressPath(dir string) string {
+	return filepath.Join(dir, "logs", "force_progress.json")
+}
+
+// WriteProgress 落盘当前出图阶段(仅手动触发写入, 见 RunOnce)。
+func WriteProgress(dir, stage string) {
+	path := ProgressPath(dir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	b, err := json.Marshal(map[string]string{"stage": stage})
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, b, 0o644)
+}
+
+// ReadProgress 读取进度阶段; 无文件或未写完整时返回错误。
+func ReadProgress(dir string) (string, error) {
+	var out struct {
+		Stage string `json:"stage"`
+	}
+	b, err := os.ReadFile(ProgressPath(dir))
+	if err != nil {
+		return "", err
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return "", err
+	}
+	return out.Stage, nil
+}
+
 // Env 运行环境(默认值见 withDefaults, 测试可注入)。
 type Env struct {
 	Dir        string
@@ -239,7 +272,12 @@ func RunOnce(ctx context.Context, env Env) error {
 		} else {
 			cloudOK = true
 			cc.FlushQueue(ctx, env.Dir) // 尽力补传历史离线记录
-			be = &cloud.Backend{C: cc}
+			cb := &cloud.Backend{C: cc}
+			if env.Force {
+				// 手动换图: 阶段落盘供设置页进度提示(render/down 由 Wait 回调)
+				cb.OnStage = func(s string) { WriteProgress(env.Dir, s) }
+			}
+			be = cb
 			// 双端同步(下行): 服务端画像更新(如安卓点选编辑) → 备份本地后拉取替换
 			if remote, err := cc.GetProfile(ctx); err == nil {
 				if np, ok := pullRemoteProfile(env.Dir, cfg, remote); ok {
@@ -289,14 +327,20 @@ func RunOnce(ctx context.Context, env Env) error {
 		spec     prompt.Spec
 		source   = "local"
 		wfID     string
+		jobID    string // 云端任务ID(留档 {jobID}.png 用; 备用池图为空回退时间戳命名)
 		genW     = sw
 		genH     = sh
 		duration int64
 	)
 	genW, genH = chooseGenSize(sw, sh)
+	if env.Force {
+		WriteProgress(env.Dir, "plan") // 手动换图第一阶段: 规划提示词
+	}
 
-	// 本地备用池优先(换风格轮除外): 已生成未使用, 断网可换
-	if changeOK && !forceShake {
+	// 本地备用池优先(换风格轮除外): 已生成未使用, 断网可换。
+	// 手动"立即换一张"(force)在云端可用时跳过备用池: 每次现场规划出图,
+	// 与安卓端换一张逻辑一致(进度提示才有意义); 云端不可达仍回退备用池。
+	if changeOK && !forceShake && !(env.Force && cloudOK) {
 		// 先清掉旧画像版本的池图: CleanVersion 原本在补池阶段(取图之后), 拦不住这条路;
 		// 不清则"保存偏好→立即换一张"会取到旧偏好时代的成品, 看起来像没生效。
 		if n := pool.CleanVersion(env.Dir, cfg.ProfileVer); n > 0 {
@@ -359,7 +403,7 @@ func RunOnce(ctx context.Context, env Env) error {
 			params.Priority = "normal"
 		}
 		start := env.Now()
-		img, err := generateWithRetry(ctx, be, params)
+		img, jid, err := generateWithRetry(ctx, be, params)
 		duration = env.Now().Sub(start).Milliseconds()
 		if err != nil {
 			out.Detail = fmt.Sprintf("出图失败: %v", err)
@@ -367,6 +411,7 @@ func RunOnce(ctx context.Context, env Env) error {
 			reportPrompt(env, cc, cfg, spec, genW, genH, wfID, source, duration, false)
 		} else {
 			imgData = img
+			jobID = jid
 		}
 	}
 	if changeOK && imgData == nil && out.Detail == "" {
@@ -376,10 +421,13 @@ func RunOnce(ctx context.Context, env Env) error {
 	// ---------- 适配 + 换壁纸 ----------
 	changed := false
 	if imgData != nil {
+		if env.Force {
+			WriteProgress(env.Dir, "apply")
+		}
 		if final, err := desktop.FitToScreen(imgData, sw, sh); err != nil {
 			out.Detail = "适配失败: " + err.Error()
 			st.Log("tick: 适配失败: %v, 保留当前壁纸", err)
-		} else if path, err := st.SaveWallpaper(final, now); err != nil {
+		} else if path, err := st.SaveWallpaper(jobID, final, now); err != nil {
 			out.Detail = "留档失败: " + err.Error()
 			st.Log("tick: 留档失败: %v", err)
 		} else if err := env.SetWP(path); err != nil {
@@ -400,15 +448,16 @@ func RunOnce(ctx context.Context, env Env) error {
 	// ---------- 补池 与 静默自更新: 并行执行(互不依赖, 谁也不拖住谁) ----------
 	// 二者资源不相交(补池写 wallpapers/pool, 更新写 bin 并启换装助手); 助手等待旧进程
 	// 退出的上限已放宽(见 update.ApplyUpdate), 因此补池拖长本轮也不会导致换装超时。
+	// 手动"立即换一张"不等后台维护: 设完即回传结果(对齐安卓), 补池/自更新由每小时 tick 承担。
 	var wg sync.WaitGroup
-	if cloudOK {
+	if cloudOK && !env.Force {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			replenishPool(ctx, env, st, cc, cfg, pol, profile, history, sw, sh)
 		}()
 	}
-	if cc != nil && env.SelfUpdate && env.ExePath != "" {
+	if cc != nil && env.SelfUpdate && env.ExePath != "" && !env.Force {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -496,8 +545,8 @@ func localSpec(profile *config.Profile, history []prompt.HistoryEntry, now time.
 	return spec
 }
 
-// generateWithRetry 出图 + 质量自检; 失败换种子重试一次。
-func generateWithRetry(ctx context.Context, be backend.ImageBackend, params backend.GenParams) ([]byte, error) {
+// generateWithRetry 出图 + 质量自检; 失败换种子重试一次。返回成品与成功任务的 jobId。
+func generateWithRetry(ctx context.Context, be backend.ImageBackend, params backend.GenParams) ([]byte, string, error) {
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		id, err := be.Submit(ctx, params)
@@ -506,7 +555,7 @@ func generateWithRetry(ctx context.Context, be backend.ImageBackend, params back
 			img, err = be.Wait(ctx, id)
 			if err == nil {
 				if qerr := desktop.Inspect(img); qerr == nil {
-					return img, nil
+					return img, string(id), nil
 				} else {
 					err = fmt.Errorf("质量自检未通过: %v", qerr)
 				}
@@ -515,7 +564,7 @@ func generateWithRetry(ctx context.Context, be backend.ImageBackend, params back
 		lastErr = err
 		params.Seed++ // 换种子重试
 	}
-	return nil, lastErr
+	return nil, "", lastErr
 }
 
 func reportPrompt(env Env, cc *cloud.Client, cfg *config.Config, spec prompt.Spec, genW, genH int, wfID, source string, durationMs int64, ok bool) {

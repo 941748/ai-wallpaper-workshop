@@ -96,12 +96,13 @@ type SwapResult struct {
 }
 
 // SwapNow 立即换一张: 拉起隐藏 --tick --force 并等结果(最长 15 分钟)。
-// 阻塞调用; 前端 Promise 天然异步。
+// 阻塞调用; 前端 Promise 天然异步。进度阶段经 swap-progress 事件推送(与安卓分段提示一致)。
 func (b *Bridge) SwapNow() SwapResult {
 	b.mu.Lock()
 	dir := b.dir
 	b.mu.Unlock()
 	_ = os.Remove(tick.OutcomePath(dir))
+	_ = os.Remove(tick.ProgressPath(dir))
 	exe, err := os.Executable()
 	if err != nil {
 		return SwapResult{Message: "触发失败: " + friendlyText(err.Error())}
@@ -114,18 +115,27 @@ func (b *Bridge) SwapNow() SwapResult {
 	go func() { _ = cmd.Wait(); close(waitCh) }()
 
 	var res *tick.Outcome
+	lastStage := ""
+	syncProgress := func() {
+		if s, err := tick.ReadProgress(dir); err == nil && s != "" && s != lastStage {
+			lastStage = s
+			b.emit("swap-progress", map[string]any{"stage": s})
+		}
+	}
 	timeout := time.After(15 * time.Minute)
 	poll := time.NewTicker(500 * time.Millisecond)
 	defer poll.Stop()
 	for res == nil {
 		select {
 		case <-waitCh:
+			syncProgress()
 			if o, err := tick.ReadOutcome(dir); err == nil {
 				res = &o
 			} else {
 				res = &tick.Outcome{Detail: "换图进程异常退出(未写结果)"}
 			}
 		case <-poll.C:
+			syncProgress()
 			if o, err := tick.ReadOutcome(dir); err == nil {
 				res = &o
 			}
@@ -133,6 +143,7 @@ func (b *Bridge) SwapNow() SwapResult {
 			res = &tick.Outcome{Detail: "仍在出图中(超过 15 分钟), 可稍后查看桌面"}
 		}
 	}
+	_ = os.Remove(tick.ProgressPath(dir))
 	if !res.Changed {
 		return SwapResult{Changed: false, Message: "未换图: " + friendlyText(res.Detail)}
 	}
@@ -402,6 +413,43 @@ func (b *Bridge) RedeemLink(code string) LinkResult {
 	_ = signals.Append(b.dir, signals.Event{Type: signals.TypeDeviceLinked, Detail: "设备配对成功(多设备同步)"})
 	b.be, b.cc = makeBackend(b.cfg)
 	return LinkResult{OK: true, UserID: resp.UserID, Message: "配对成功 ✓ 偏好与云端图片已同步"}
+}
+
+// PairedDevice 配对设备显示行(设置页设备同步区)。
+type PairedDevice struct {
+	Device   string `json:"device"`
+	Type     string `json:"type"`   // pc / android(旧空值按 pc)
+	Name     string `json:"name"`   // 显示名: 手机=型号(model), PC=机器名(device 列)
+	Current  bool   `json:"current"` // 本机
+	LastSeen string `json:"lastSeen"`
+}
+
+// GetPairedDevices 已配对设备列表: 配对几台返回几台, 手机显示型号、PC 显示机器名。
+func (b *Bridge) GetPairedDevices() ([]PairedDevice, error) {
+	b.mu.Lock()
+	cc := b.cc
+	b.mu.Unlock()
+	if cc == nil {
+		return nil, fmt.Errorf("当前为直连调试模式, 无云端同步能力")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	rows, err := cc.ListDevices(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("设备列表获取失败: %s", friendlyText(err.Error()))
+	}
+	out := make([]PairedDevice, 0, len(rows))
+	for _, r := range rows {
+		name := r.Device
+		if r.Type == "android" && r.Model != "" {
+			name = r.Model
+		}
+		out = append(out, PairedDevice{
+			Device: r.Device, Type: r.Type, Name: name,
+			Current: r.Device == cc.Device, LastSeen: r.LastSeen,
+		})
+	}
+	return out, nil
 }
 
 // ---------- 卸载 ----------

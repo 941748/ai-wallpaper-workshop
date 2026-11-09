@@ -301,6 +301,7 @@ func (c *Client) DownloadImage(ctx context.Context, jobID string) ([]byte, error
 type Backend struct {
 	C          *Client
 	PollPeriod time.Duration
+	OnStage    func(stage string) // 阶段回调: Wait 进入轮询="render", 开始下载="down"; nil 则不回调
 }
 
 // Submit 实现 backend.ImageBackend。
@@ -311,6 +312,9 @@ func (b *Backend) Submit(ctx context.Context, p backend.GenParams) (backend.JobI
 
 // Wait 实现 backend.ImageBackend: 3 秒轮询状态, 完成后下载成品图。
 func (b *Backend) Wait(ctx context.Context, id backend.JobID) ([]byte, error) {
+	if b.OnStage != nil {
+		b.OnStage("render")
+	}
 	period := b.PollPeriod
 	if period <= 0 {
 		period = 3 * time.Second
@@ -324,6 +328,9 @@ func (b *Backend) Wait(ctx context.Context, id backend.JobID) ([]byte, error) {
 		}
 		switch status {
 		case "done":
+			if b.OnStage != nil {
+				b.OnStage("down")
+			}
 			return b.C.DownloadImage(ctx, string(id))
 		case "failed":
 			return nil, fmt.Errorf("云端出图任务失败")
@@ -477,15 +484,40 @@ func (c *Client) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 
 // GetHistoryPage 分页拉取云端历史(offset 起, 全部召回翻页用)。
 func (c *Client) GetHistoryPage(ctx context.Context, offset, limit int) ([]HistoryItem, error) {
+	return c.historyPage(ctx, offset, limit, false)
+}
+
+// historyPage 分页拉取历史; fav=true 时仅返回收藏(服务端 ?fav=1)。
+func (c *Client) historyPage(ctx context.Context, offset, limit int, fav bool) ([]HistoryItem, error) {
 	var out struct {
 		Items []HistoryItem `json:"items"`
 	}
 	path := fmt.Sprintf("/history?limit=%d&offset=%d", limit, offset)
+	if fav {
+		path += "&fav=1"
+	}
 	// 历史响应可达几十KB(100条含提示词), meta 3s 在慢网络会超时 → 用 plan(60s)
 	if err := c.doJSON(ctx, c.plan, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Items, nil
+}
+
+// GetFavJobIDs 拉取全部收藏任务ID(本地历史星标反查/只看收藏筛选用)。
+func (c *Client) GetFavJobIDs(ctx context.Context) ([]string, error) {
+	var ids []string
+	for offset := 0; ; offset += 100 {
+		items, err := c.historyPage(ctx, offset, 100, true)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range items {
+			ids = append(ids, it.JobID)
+		}
+		if len(items) < 100 {
+			return ids, nil
+		}
+	}
 }
 
 // HistoryFav 收藏/取消收藏。
@@ -494,9 +526,34 @@ func (c *Client) HistoryFav(ctx context.Context, jobID string, fav bool) error {
 		map[string]any{"job_id": jobID, "fav": fav}, nil)
 }
 
+// DeviceRow 配对设备(设置页设备列表; 显示名由客户端决定: 手机=model, PC=device=机器名)。
+type DeviceRow struct {
+	Device   string `json:"device"`
+	Type     string `json:"type"` // pc / android(旧空值按 pc 展示)
+	Model    string `json:"model"`
+	LastSeen string `json:"last_seen"`
+}
+
+// ListDevices 拉取本身份已配对的全部设备(跨境慢网, 与 history 同用 plan 超时)。
+func (c *Client) ListDevices(ctx context.Context) ([]DeviceRow, error) {
+	var out struct {
+		Devices []DeviceRow `json:"devices"`
+	}
+	if err := c.doJSON(ctx, c.plan, http.MethodGet, "/devices", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Devices, nil
+}
+
 // HistoryImage 下载历史图(服务端双模: OSS 302 或本地文件, doRaw 跟随重定向)。
 func (c *Client) HistoryImage(ctx context.Context, jobID string) ([]byte, error) {
 	return c.doRaw(ctx, c.long, http.MethodGet, "/history/"+url.PathEscape(jobID)+"/image")
+}
+
+// DeleteImage 删除云端图片副本(OSS 对象+服务端归档行); 失败由调用方降级只删本地(安卓同款)。
+func (c *Client) DeleteImage(ctx context.Context, jobID string) error {
+	return c.doJSON(ctx, c.plan, http.MethodPost, "/images/delete",
+		map[string]any{"job_id": jobID}, nil)
 }
 
 // HistoryImageThumb 下载历史图缩略图(560宽 q80; 预览专用, 体积约为全图 1/25)。

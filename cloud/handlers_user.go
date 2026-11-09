@@ -140,6 +140,24 @@ func (a *API) handleLink(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleDevices GET /api/v1/devices 已配对设备列表(双端设置页展示)。
+// 显示名由客户端按规格决定: 手机=型号(model), PC=机器名(device 列); 配对几个返回几个。
+func (a *API) handleDevices(w http.ResponseWriter, r *http.Request) {
+	u, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	rows, err := a.st.ListDevices(u.UserID)
+	if err != nil {
+		writeFail(w, http.StatusInternalServerError, "设备列表读取失败")
+		return
+	}
+	if rows == nil {
+		rows = []store.DeviceRow{}
+	}
+	writeOK(w, map[string]any{"devices": rows})
+}
+
 func hostOf(r *http.Request) string {
 	if h := r.Header.Get("X-Forwarded-Host"); h != "" {
 		return h

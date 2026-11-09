@@ -7,19 +7,12 @@ package ui
 import (
 	"hash/fnv"
 	"strings"
-	"time"
 
 	"wallpaper/internal/config"
 	"wallpaper/internal/prompt"
 	"wallpaper/internal/survey"
 	"wallpaper/internal/taxonomy"
 )
-
-// firstWallpaperTimeout 首张壁纸现场出图上限: 单张典型 30-45s, 留排队/慢卡余量到 90s; 超时即跳过稍后补。
-const firstWallpaperTimeout = 90 * time.Second
-
-// msgRenderBusy 出图链路不可用(出图机离线/繁忙/超时)时对用户的统一文案; 不暴露技术原因。
-const msgRenderBusy = "系统繁忙, 初始化完成后会自动无感补图"
 
 // attitudeOfWeight 按画像权重反推问卷三态(与落盘阈值一致: ≥0.6 喜欢 / ≤0.25 讨厌)。
 func attitudeOfWeight(wgt float64) survey.Attitude {

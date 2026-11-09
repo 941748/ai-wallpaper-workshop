@@ -69,6 +69,7 @@ func (a *API) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/policy", a.handlePolicy)
 	mux.HandleFunc("GET /api/v1/client/latest", a.handleClientLatest)
 	mux.HandleFunc("POST /api/v1/devices/link", a.handleLink)
+	mux.HandleFunc("GET /api/v1/devices", a.handleDevices)
 	mux.HandleFunc("GET /api/v1/profile/drift", a.handleDrift)
 	mux.HandleFunc("GET /api/v1/profile", a.handleProfile)
 	mux.HandleFunc("POST /api/v1/profile", a.handleProfileSave)

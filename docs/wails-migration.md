@@ -26,7 +26,7 @@ frontend/                    ← 新增, 根目录
   index.html  app.css  app.js (+ 各页面模块 js)
 internal/ui/                 ← 原地重写
   app.go       wails.Run 封装 + App service 定义
-  bridge.go    Go↔JS 绑定方法(向导/设置/历史/出图/配对)
+  bridge.go    Go↔JS 绑定方法(首装静默初始化/设置/历史/出图/配对)
   (删除) wizard.go settings.go widgets.go theme.go sidebar.go frameless.go …
   (保留) wizard_logic.go 等无 walk 依赖的纯逻辑
 ```
@@ -56,6 +56,7 @@ internal/ui/                 ← 原地重写
 
 - **P2-a** 设计(本文件) ✅
 - **P2-b** 骨架: wails 工程跑通, 主窗口 + 空页面 + Bind 通道
-- **P2-c** 页面迁移: 向导 → 设置各 Tab → 对话框, walk 文件删除
+- **P2-c** 页面迁移: 设置各 Tab → 对话框, walk 文件删除
+- **向导移除(负责人 2026-11-09)**: 初始化无用户决策点 → 直接进设置页; 首装注册/默认治愈日常包/计划任务由 `FirstRunSetup` 后台静默完成(发行文件名守卫防劫持计划任务, 安装失败下次启动自愈); 云端方法带 `ensureIdentity` 注册自愈; 设置页"重新初始化向导"按钮同步删除
 - **P2-d** 云端历史 5 点 + 服务端 offset 分页
 - **P2-e** 测试全绿 + build.ps1 改造 + 双端发版(等负责人指令)

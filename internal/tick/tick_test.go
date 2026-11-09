@@ -507,6 +507,44 @@ func TestRunOnceForceBypassesGates(t *testing.T) {
 	}
 }
 
+// TestRunOnceForceSkipsPool 手动换图(立即换一张): 云端可用时跳过备用池现场出图
+// (与安卓端一致, 进度提示才有意义), 不等补池等后台维护, 进度阶段落盘到 apply。
+func TestRunOnceForceSkipsPool(t *testing.T) {
+	m := &mockCloud{pngData: gradientPNG(t, 1344, 768)}
+	m.srv = httptest.NewServer(m.handler())
+	defer m.srv.Close()
+
+	te := &testEnv{dir: t.TempDir(), now: time.Date(2026, 9, 15, 13, 30, 0, 0, time.Local)}
+	setupClient(t, m.srv.URL, te)
+	if err := pool.Add(te.dir, pool.Entry{ProfileVersion: 1, Positive: "p", Seed: 1, CreatedAt: te.now.Format(time.RFC3339)}, gradientPNG(t, 1344, 768)); err != nil {
+		t.Fatal(err)
+	}
+
+	env := te.env(m.srv.URL, m)
+	env.Force = true
+	env.Quiet = func() bool { return true }
+	var got Outcome
+	env.Report = func(o Outcome) { got = o }
+	if err := RunOnce(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Changed || te.wpPath == "" {
+		t.Fatalf("force should change wallpaper: wp=%q got=%+v", te.wpPath, got)
+	}
+	if n := pool.Count(te.dir); n != 1 {
+		t.Fatalf("force with cloud should skip pool, count=%d", n)
+	}
+	if m.nextCalls == 0 {
+		t.Fatal("force should generate live via cloud")
+	}
+	if m.pregenSubmits != 0 || m.proactiveFetches != 0 {
+		t.Fatalf("force should not wait background maintenance: pregen=%d proactive=%d", m.pregenSubmits, m.proactiveFetches)
+	}
+	if stg, err := ReadProgress(te.dir); err != nil || stg != "apply" {
+		t.Fatalf("progress stage=%q err=%v, want apply", stg, err)
+	}
+}
+
 // TestChangeWindow 换图窗口判定: 开关/暂停/时段/锁屏/频率节流。
 func TestChangeWindow(t *testing.T) {
 	cfg := config.Default()

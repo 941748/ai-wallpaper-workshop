@@ -383,6 +383,34 @@ type DeviceAttr struct {
 	ScreenW, ScreenH                   int
 }
 
+// DeviceRow 配对设备列表行(双端设置页展示: 手机显示 model, PC 显示 device=机器名)。
+type DeviceRow struct {
+	Device    string `json:"device"`
+	Type      string `json:"type"` // pc / android(旧空值按 pc 展示)
+	Model     string `json:"model"`
+	LastSeen  string `json:"last_seen"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ListDevices 用户全部设备(最后活跃在前)。
+func (s *Store) ListDevices(userID string) ([]DeviceRow, error) {
+	rows, err := s.db.Query(`SELECT device, device_type, model, last_seen, created_at
+FROM devices WHERE user_id=? ORDER BY COALESCE(NULLIF(last_seen,''), created_at) DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DeviceRow
+	for rows.Next() {
+		var d DeviceRow
+		if err := rows.Scan(&d.Device, &d.Type, &d.Model, &d.LastSeen, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // AddDevice 登记设备(兼容旧调用): 按 (device,user_id) 幂等插入, 仅刷新活跃时间; 存量流量全为 PC。
 func (s *Store) AddDevice(device, userID string) error {
 	now := time.Now().Format(timeFmt)
