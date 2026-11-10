@@ -38,8 +38,8 @@ type Spec struct {
 	Combo     map[string]string
 	Positive  string
 	Negative  string
-	Seed      int64
-	ShakeTurn bool // 是否"换个风格"轮
+	Seed      int64 // 每轮随机(2026-11-10 起; 之前为组合哈希), 复现单张看 prompt_records 留存
+	ShakeTurn bool  // 是否"换个风格"轮
 }
 
 // Options 组合选项。
@@ -84,7 +84,7 @@ func pickCustomKeyword(rng *rand.Rand, kws []string) string {
 // sampledCombo 采样结果。
 type sampledCombo struct {
 	Values map[string]string
-	Seed   int64
+	Seed   int64 // 每轮随机(见 Compose 内说明); 组合仅决定画什么
 }
 
 // InferPacks 按画像权重反推最匹配的风格包(旧档 packs 字段缺失时的迁移路径, 运行时推断不落盘)。
@@ -272,7 +272,10 @@ func sampleCombo(profile *config.Profile, rng *rand.Rand, opt Options) sampledCo
 			break
 		}
 	}
-	return sampledCombo{values, seedOf(values)}
+	// seed 每轮随机(取自调用方 rng): 2026-11-10 前为组合哈希(seedOf), 会因
+	// "同组合跨端撞 seed" 导致默认包用户共用构图先验(撞脸) —— 改随机后组合只决定
+	// "画什么", "怎么画"每次掷骰子; 单张复现靠 prompt_records 里逐轮留存的 prompt+seed。
+	return sampledCombo{values, rng.Int63()}
 }
 
 // sampleDim 单维采样: 明确偏好值优先(集合内按权重); 无明确偏好时在活跃值间加权轮换;
@@ -360,18 +363,6 @@ func comboKey(values map[string]string) string {
 		s += d.ID + "=" + values[d.ID] + ";"
 	}
 	return s
-}
-
-func seedOf(values map[string]string) int64 {
-	// 确定性种子(fnv64a): 同一组合在任何端出图一致
-	h := uint64(14695981039346656037)
-	for _, d := range taxonomy.Dimensions {
-		for _, b := range []byte(d.ID + "=" + values[d.ID] + ";") {
-			h ^= uint64(b)
-			h *= 1099511628211
-		}
-	}
-	return int64(h & 0x7fffffff)
 }
 
 func indexOfStr(list []string, val string) int {
