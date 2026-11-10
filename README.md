@@ -5,8 +5,8 @@
 > 每小时,桌面自己变好看。AI 为你一个人出图、自动换壁纸的 Windows 工具。
 
 <p align="center">
-  <img src="docs/screenshots/sample-grassland.jpg" width="49%" />
-  <img src="docs/screenshots/sample-ink.jpg" width="49%" />
+  <img src="site/assets/demo-roadtrip.jpg" width="49%" />
+  <img src="site/assets/demo-xianxia.jpg" width="49%" />
 </p>
 <p align="center"><sub>以上均为项目实际出图: 提示词由云端 LLM 结合用户画像与历史自动规划</sub></p>
 
@@ -54,7 +54,7 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 设置面板: 当前壁纸(反馈/立即换一张) → 偏好(五维三态筹码 + 风格包一键勾选) → 历史(本地/云端收藏与召回) → 设置(换图频率/更新/设备同步)。
 
 <p align="center">
-  <img src="docs/screenshots/sample-lake.jpg" width="66%" />
+  <img src="site/assets/demo-aurora.jpg" width="66%" />
 </p>
 
 ## 工作原理

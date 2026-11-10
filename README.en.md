@@ -5,8 +5,8 @@
 > Every hour, your desktop makes itself beautiful. A Windows tool that generates images with AI — for you alone — and changes your wallpaper automatically.
 
 <p align="center">
-  <img src="docs/screenshots/sample-grassland.jpg" width="49%" />
-  <img src="docs/screenshots/sample-ink.jpg" width="49%" />
+  <img src="site/assets/demo-roadtrip.jpg" width="49%" />
+  <img src="site/assets/demo-xianxia.jpg" width="49%" />
 </p>
 <p align="center"><sub>All images above are real outputs of this project: prompts are planned by a cloud LLM from your preference profile and history</sub></p>
 
@@ -54,7 +54,7 @@ No sign-up, no login, no tray icon, no resident process — close the window and
 Settings panel: current wallpaper (feedback / swap now) → preferences (five-dimension tri-state chips + one-click style packs) → history (local/cloud favorites & recall) → settings (interval / update / device sync).
 
 <p align="center">
-  <img src="docs/screenshots/sample-lake.jpg" width="66%" />
+  <img src="site/assets/demo-aurora.jpg" width="66%" />
 </p>
 
 ## How it works
