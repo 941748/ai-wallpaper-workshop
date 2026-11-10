@@ -156,7 +156,8 @@ func assertIn(t *testing.T, dim, val string, allowed []string, ctx string) {
 
 // TestComposePackCoherence 任一采样组合的五维必须整体出自同一个包, 绝不跨包拆混。
 func TestComposePackCoherence(t *testing.T) {
-	for _, name := range []string{"国风仙侠", "自然山河", "写实美女", "国漫3D", "潮酷未来", "治愈日常", "极简留白"} {
+	for _, pk := range taxonomy.PresetPacks {
+		name := pk.Name
 		p := packProfile(name)
 		pack := taxonomy.PackByName(name)
 		rng := rand.New(rand.NewSource(1))
@@ -197,8 +198,8 @@ func TestComposePackManualStyleUnion(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {
 		s := Compose(p, rng, Options{})
-		assertIn(t, taxonomy.DimStyle, s.Combo[taxonomy.DimStyle], []string{"cyberpunk", "neonart", "ink"}, "union")
-		assertIn(t, taxonomy.DimSubject, s.Combo[taxonomy.DimSubject], []string{"citynight", "space"}, "union")
+		assertIn(t, taxonomy.DimStyle, s.Combo[taxonomy.DimStyle], []string{"cyberpunk", "ink"}, "union")
+		assertIn(t, taxonomy.DimSubject, s.Combo[taxonomy.DimSubject], []string{"citynight", "moto", "street", "fashionwoman", "sunshineboy"}, "union")
 		assertIn(t, taxonomy.DimPalette, s.Combo[taxonomy.DimPalette], []string{"neon"}, "union")
 		seen[s.Combo[taxonomy.DimStyle]] = true
 	}
@@ -217,13 +218,13 @@ func TestComposePackDislikeExcluded(t *testing.T) {
 		if s.Combo[taxonomy.DimSubject] == "cat" {
 			t.Fatal("点踩值 cat 不应被采出")
 		}
-		assertIn(t, taxonomy.DimSubject, s.Combo[taxonomy.DimSubject], []string{"dog", "child", "plants", "food"}, "dislike")
+		assertIn(t, taxonomy.DimSubject, s.Combo[taxonomy.DimSubject], []string{"dog", "nextdoorgirl", "homelife", "sunshineboy"}, "dislike")
 	}
 }
 
 // TestComposeShakeExcludesLastStyleInPack 包模式下"换个风格"仍在包内排除轮换。
 func TestComposeShakeExcludesLastStyleInPack(t *testing.T) {
-	p := packProfile("自然山河")
+	p := packProfile("自然风光")
 	hist := []HistoryEntry{{At: time.Now(), Combo: map[string]string{taxonomy.DimStyle: "ink"}}}
 	for i := 0; i < 30; i++ {
 		s := Compose(p, rand.New(rand.NewSource(int64(i))), Options{ForceShake: true, History: hist})

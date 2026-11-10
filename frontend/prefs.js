@@ -165,7 +165,9 @@ window.initPrefs = function () {
   let survey = null;
   let base = { answers: {}, selectedPacks: [] };
   let keywords = [];
-  let dislikesReset = false;
+  // 重置=暂存语义(与安卓一致): 只清表单, 点「保存偏好」才落盘; 不保存离开则原偏好保留
+  let resetPending = false;
+  let surveyData = null; // 最近一次 GetSurvey(暂存清空时保留 dims/packs 渲染数据)
 
   survey = mountSurvey({
     packsRoot: $("pf-packs"), tabsRoot: $("pf-dimtabs"),
@@ -233,10 +235,11 @@ window.initPrefs = function () {
     try {
       await B.SaveSurvey({
         answers: dump.answers, selectedPacks: dump.selectedPacks,
-        reason: "设置页调整偏好",
+        reason: resetPending ? "重置后重新选择" : "设置页调整偏好",
+        reset: resetPending,
       });
       base = dump;
-      dislikesReset = false;
+      resetPending = false;
       setStatus($("pf-status"), "偏好已保存。出图将按你选的风格包轮换, 并严格遵从你勾选的画风与题材。", "ok");
     } catch (e) {
       setStatus($("pf-status"), "" + e, "err");
@@ -246,16 +249,20 @@ window.initPrefs = function () {
   $("pf-reset").onclick = async () => {
     const ok = await confirmBox("重置所有偏好",
       "将清空风格包与五维偏好(喜欢/不喜欢全部回到未选), 自定义关键词保留。\n" +
-      "在本页重新选择后点\"保存偏好\"即可生效, 无需重跑向导。\n\n确定重置吗?");
+      "重置只清空本页表单 — 重新选择后点\"保存偏好\"才生效; 不保存直接离开, 当前偏好保留。\n\n确定重置吗?");
     if (!ok) return;
-    try {
-      await B.ResetPrefs();
-      dislikesReset = true;
-      await window.loadPrefs();
-      setStatus($("pf-status"), "已重置为未选 — 重新选择后点\"保存偏好\"生效", "hint");
-    } catch (e) {
-      setStatus($("pf-status"), "" + e, "err");
+    if (!surveyData) {
+      try {
+        surveyData = await B.GetSurvey();
+      } catch (e) {
+        setStatus($("pf-status"), "" + e, "err");
+        return;
+      }
     }
+    resetPending = true;
+    // 暂存: 只清表单(保留 dims/packs 渲染数据), 不调后端
+    survey.load(Object.assign({}, surveyData, { answers: {}, selectedPacks: [] }));
+    setStatus($("pf-status"), "已清空表单(未保存) — 重新选择后点\"保存偏好\"才生效; 不保存离开则原偏好保留", "hint");
   };
 
   $("pf-opendir").onclick = () => B.OpenFolder("");
@@ -263,6 +270,7 @@ window.initPrefs = function () {
   window.loadPrefs = async () => {
     try {
       const data = await B.GetSurvey();
+      surveyData = data;
       survey.load(data);
       base = survey.dump();
       keywords = data.keywords || [];

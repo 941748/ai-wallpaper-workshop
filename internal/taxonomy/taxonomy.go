@@ -171,13 +171,14 @@ var Dimensions = []Dimension{
 
 // Pack 预设风格包: 每包覆盖五维且组内互相协调(风格同族 × 题材同族的任意组合均成立),
 // 出图按包整体采样(一图一包), 绝不跨包拆混关键词。
+// 负责人 2026-11-10 定稿原则: **包是骨架, 越简化越好** —— 细节维度由用户在 5 维问卷里自己微调。
 type Pack struct {
 	Name        string   // 界面按钮文案
-	Style       []string // 风格值 ID(2~4, 须同族兼容)
-	Subject     []string // 题材值 ID(2~3, 同族)
-	Palette     []string // 色调值 ID(1)
-	Mood        []string // 情绪值 ID(1)
-	Composition []string // 构图值 ID(1~2, 由题材反推镜头/场景)
+	Style       []string // 风格值 ID(1~4, 须同族兼容)
+	Subject     []string // 题材值 ID(2~5, 同族)
+	Palette     []string // 色调值 ID(1~2)
+	Mood        []string // 情绪值 ID(1~3)
+	Composition []string // 构图值 ID(1~3, 由题材反推镜头/场景)
 }
 
 // Values 返回该包在指定维度的值 ID 列表; 未知维度返回 nil。
@@ -197,14 +198,14 @@ func (p Pack) Values(dimID string) []string {
 	return nil
 }
 
-// PresetPacks 七风格包定稿(结构模板: 风格2~4 · 题材2~3 · 色调1 · 情绪1 · 构图1~2)。
+// PresetPacks 九风格包定稿(2026-11-10 v2 简化版; 结构模板: 风格1~4 · 题材2~5 · 色调1~2 · 情绪1~3 · 构图1~3)。
 var PresetPacks = []Pack{
 	{Name: "潮酷未来",
-		Style:       []string{"cyberpunk", "neonart"},
-		Subject:     []string{"citynight", "space"},
+		Style:       []string{"cyberpunk"},
+		Subject:     []string{"citynight", "moto", "street", "fashionwoman", "sunshineboy"},
 		Palette:     []string{"neon"},
 		Mood:        []string{"vibrant"},
-		Composition: []string{"wide"}},
+		Composition: []string{"thirds"}},
 	{Name: "国风仙侠",
 		Style:       []string{"ink", "neochinese"},
 		Subject:     []string{"xianxia", "oldstreet", "cloudsea"},
@@ -212,35 +213,47 @@ var PresetPacks = []Pack{
 		Mood:        []string{"serene"},
 		Composition: []string{"wide", "closeup"}},
 	{Name: "国漫3D",
-		Style:       []string{"donghua3d", "anime3d"},
-		Subject:     []string{"mecha", "xianxia"},
+		Style:       []string{"donghua3d"},
+		Subject:     []string{"xianxia", "nextdoorgirl"},
 		Palette:     []string{"cinematic"},
 		Mood:        []string{"story"},
-		Composition: []string{"closeup", "wide"}},
+		Composition: []string{"closeup", "thirds"}},
 	{Name: "写实美女",
-		Style:       []string{"realism", "film", "jpstyle"},
-		Subject:     []string{"fashionwoman", "nextdoorgirl", "guzhuang", "homelife", "campus"},
+		Style:       []string{"realism"},
+		Subject:     []string{"fashionwoman", "nextdoorgirl", "homelife", "campus"},
 		Palette:     []string{"cinematic", "softwhite"},
 		Mood:        []string{"serene", "story", "healing"},
 		Composition: []string{"closeup", "thirds", "topdown"}},
 	{Name: "治愈日常",
-		Style:       []string{"realism", "film", "watercolor"},
-		Subject:     []string{"cat", "dog", "child", "plants", "food"},
-		Palette:     []string{"warm"},
-		Mood:        []string{"cozy"},
-		Composition: []string{"macro", "closeup"}},
-	{Name: "极简留白",
+		Style:       []string{"realism", "jpstyle"},
+		Subject:     []string{"cat", "dog", "nextdoorgirl", "homelife", "sunshineboy"},
+		Palette:     []string{"cinematic"},
+		Mood:        []string{"story"},
+		Composition: []string{"closeup", "thirds"}},
+	{Name: "心如止水",
 		Style:       []string{"minimal", "neochinese"},
 		Subject:     []string{"abstract", "lake"},
 		Palette:     []string{"morandi"},
 		Mood:        []string{"serene"},
 		Composition: []string{"centered", "wide"}},
-	{Name: "自然山河",
+	{Name: "自然风光",
 		Style:       []string{"realism", "ink", "watercolor", "impressionist"},
-		Subject:     []string{"nature", "snowmountain", "ocean", "stream"},
+		Subject:     []string{"snowmountain", "ocean", "stream", "seasons"},
 		Palette:     []string{"cinematic"},
 		Mood:        []string{"dreamy"},
 		Composition: []string{"wide", "aerial"}},
+	{Name: "阳光运动",
+		Style:       []string{"realism", "jpstyle"},
+		Subject:     []string{"male", "sunshineboy", "sport", "campus"},
+		Palette:     []string{"warm"},
+		Mood:        []string{"vibrant"},
+		Composition: []string{"thirds"}},
+	{Name: "插画小品",
+		Style:       []string{"flat", "papercut", "clay"},
+		Subject:     []string{"plants", "child", "music"},
+		Palette:     []string{"pastel"},
+		Mood:        []string{"healing"},
+		Composition: []string{"centered"}},
 }
 
 // PackByName 按名称取风格包; 不存在返回 nil(兼容旧档里的失效包名)。

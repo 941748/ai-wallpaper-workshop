@@ -139,12 +139,29 @@ func packCovered(sel map[string]bool, key string) bool {
 }
 
 // packSummary 汇总条/回显用的选中包摘要。
+// packSummary 选中包摘要文案(按本地词典顺序; 含本地词典没有的包名请用 packSummaryNames)。
 func packSummary(sel map[string]bool) string {
-	names := selectedPackNames(sel)
+	return packSummaryNames(selectedPackNames(sel))
+}
+
+// packSummaryNames 按给定顺序拼包摘要(名字列表可含本地词典没有的包名)。
+func packSummaryNames(names []string) string {
 	if len(names) == 0 {
 		return "风格包: 未选(按喜好自由组合)"
 	}
 	return "风格包: " + strings.Join(names, " + ")
+}
+
+// profilePackNames 画像选中包的原名列表(nil 画像=默认包; Packs=nil 按喜好推断)。
+// 不按本地词典过滤 —— 包名以服务端字典为准, 未知包名要原样往返展示与落盘。
+func profilePackNames(profile *config.Profile) []string {
+	if profile == nil {
+		return []string{defaultPackName}
+	}
+	if profile.Packs != nil {
+		return append([]string{}, profile.Packs...)
+	}
+	return prompt.InferPacks(profile)
 }
 
 // surveyLikesIn 统计勾选为"喜欢"的项数。
@@ -195,6 +212,11 @@ func focusSummary(answers map[string]survey.Attitude) string {
 
 // surveyRecapText 完成页回显所选风格包与偏好(按维度分组); 无包且无喜欢项则只回包状态。
 func surveyRecapText(answers map[string]survey.Attitude, packs map[string]bool) string {
+	return surveyRecapNames(answers, selectedPackNames(packs))
+}
+
+// surveyRecapNames 同 surveyRecapText, 但包行按 names 原样回显(可含本地词典没有的包名)。
+func surveyRecapNames(answers map[string]survey.Attitude, selNames []string) string {
 	var groups []string
 	for _, d := range taxonomy.Dimensions {
 		var names []string
@@ -207,7 +229,7 @@ func surveyRecapText(answers map[string]survey.Attitude, packs map[string]bool) 
 			groups = append(groups, d.NameCN+": "+strings.Join(names, " · "))
 		}
 	}
-	lines := []string{packSummary(packs)}
+	lines := []string{packSummaryNames(selNames)}
 	if len(groups) > 0 {
 		lines = append(lines, "额外微调", strings.Join(groups, "\n"))
 	}

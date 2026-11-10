@@ -444,6 +444,31 @@ func (c *Client) ClientLatest(ctx context.Context, currentVersion string) (*Late
 	return &out, nil
 }
 
+// Dict 服务端词典下行(GET /profile 的 dict 字段; 安卓与 PC 偏好页同源数据源)。
+type Dict struct {
+	Dimensions []DictDim  `json:"dimensions"`
+	Packs      []DictPack `json:"packs"`
+}
+
+// DictDim 一个维度(id/中文名/词条)。
+type DictDim struct {
+	ID     string    `json:"id"`
+	Name   string    `json:"name"`
+	Values []DictVal `json:"values"`
+}
+
+// DictVal 一个词条(英文键 + 中文名)。
+type DictVal struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// DictPack 一个风格包(名称 + 覆盖词条 "dim/val")。
+type DictPack struct {
+	Name   string   `json:"name"`
+	Covers []string `json:"covers"`
+}
+
 // RemoteProfile 服务端画像快照(双端同步下行; packs 三态: nil=推断/[]=清空/列表=选中)。
 type RemoteProfile struct {
 	ProfileVersion int                `json:"profile_version"`
@@ -451,6 +476,7 @@ type RemoteProfile struct {
 	Disliked       []string           `json:"disliked"`
 	Custom         []string           `json:"custom"`
 	Packs          []string           `json:"packs"`
+	Dict           *Dict              `json:"dict"` // 词典下行(PC 偏好页数据源, 与安卓同源)
 }
 
 // GetProfile 拉取服务端画像快照(GET /api/v1/profile)。

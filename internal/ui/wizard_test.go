@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
 	"wallpaper/internal/survey"
 	"wallpaper/internal/taxonomy"
@@ -56,8 +57,8 @@ func TestSurveyEqual(t *testing.T) {
 }
 
 func TestPresetPacksTemplate(t *testing.T) {
-	if len(taxonomy.PresetPacks) != 7 {
-		t.Fatalf("风格包数量 %d, 应为 7(定稿)", len(taxonomy.PresetPacks))
+	if len(taxonomy.PresetPacks) != 9 {
+		t.Fatalf("风格包数量 %d, 应为 9(2026-11-10 定稿)", len(taxonomy.PresetPacks))
 	}
 	seen := map[string]bool{}
 	for _, pack := range taxonomy.PresetPacks {
@@ -74,7 +75,7 @@ func TestPresetPacksTemplate(t *testing.T) {
 			minN int
 			maxN int
 		}{
-			{taxonomy.DimStyle, pack.Style, 2, 4},
+			{taxonomy.DimStyle, pack.Style, 1, 4},
 			{taxonomy.DimSubject, pack.Subject, 2, 5},
 			{taxonomy.DimPalette, pack.Palette, 1, 2},
 			{taxonomy.DimMood, pack.Mood, 1, 3},
@@ -112,6 +113,62 @@ func TestPackValuesAccessor(t *testing.T) {
 	}
 	if taxonomy.PackByName("不存在的包") != nil {
 		t.Error("未知包名应返回 nil")
+	}
+}
+
+// TestDictToSurvey 服务端词典转换: covers 拆维、坏格式忽略、中文名与顺序保持。
+func TestDictToSurvey(t *testing.T) {
+	d := &cloud.Dict{
+		Dimensions: []cloud.DictDim{
+			{ID: "style", Name: "风格", Values: []cloud.DictVal{{ID: "ink", Name: "水墨国风"}}},
+			{ID: "mood", Name: "情绪", Values: []cloud.DictVal{{ID: "serene", Name: "宁静"}}},
+		},
+		Packs: []cloud.DictPack{{Name: "心如止水", Covers: []string{"style/ink", "mood/serene", "bad-no-slash"}}},
+	}
+	dims, packs := dictToSurvey(d)
+	if len(dims) != 2 || dims[0].NameCN != "风格" || dims[0].Values[0].NameCN != "水墨国风" {
+		t.Fatalf("维度转换错误: %+v", dims)
+	}
+	if len(packs) != 1 || packs[0].Name != "心如止水" {
+		t.Fatalf("包转换错误: %+v", packs)
+	}
+	if got := packs[0].Vals["style"]; len(got) != 1 || got[0] != "ink" {
+		t.Fatalf("covers 拆分错误: %v", packs[0].Vals)
+	}
+	if _, bad := packs[0].Vals["bad-no-slash"]; bad {
+		t.Fatal("无斜杠的坏 covers 应被忽略")
+	}
+}
+
+// TestSurveyDictLocalFallback 无云端客户端(断网兜底)时回退本地词典。
+func TestSurveyDictLocalFallback(t *testing.T) {
+	dims, packs := surveyDict(nil)
+	if len(dims) != len(taxonomy.Dimensions) {
+		t.Fatalf("本地回退维度数 %d, want %d", len(dims), len(taxonomy.Dimensions))
+	}
+	if len(packs) != len(taxonomy.PresetPacks) {
+		t.Fatalf("本地回退包数 %d, want %d", len(packs), len(taxonomy.PresetPacks))
+	}
+}
+
+// TestGetSurveyPackNameRoundTrip 选中包原名往返: 本地词典没有的包名不被过滤、摘要与回显保留。
+func TestGetSurveyPackNameRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	p := config.NewProfile()
+	p.Packs = []string{"心如止水", "本地不存在的包"}
+	if err := p.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bridge{dir: dir, cfg: &config.Config{}}
+	got := b.GetSurvey()
+	if len(got.SelectedPacks) != 2 || got.SelectedPacks[0] != "心如止水" || got.SelectedPacks[1] != "本地不存在的包" {
+		t.Fatalf("SelectedPacks 应原样往返, got %v", got.SelectedPacks)
+	}
+	if !strings.Contains(got.Summary, "本地不存在的包") {
+		t.Fatalf("摘要应含未知包名: %q", got.Summary)
+	}
+	if !strings.Contains(got.Recap, "本地不存在的包") {
+		t.Fatalf("回显应含未知包名: %q", got.Recap)
 	}
 }
 
@@ -184,7 +241,7 @@ func TestPackCovered(t *testing.T) {
 	if !packCovered(sel, "style/cyberpunk") {
 		t.Error("包内词条应判覆盖")
 	}
-	if !packCovered(sel, "composition/wide") {
+	if !packCovered(sel, "composition/thirds") {
 		t.Error("包内构图词条应判覆盖")
 	}
 	if packCovered(sel, "style/ink") {
