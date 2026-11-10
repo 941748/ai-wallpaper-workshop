@@ -16,7 +16,7 @@ ComfyUI (Z-Image Turbo) renders the image → it is fitted to your screen's phys
 
 No sign-up, no login, no tray icon, no resident process — close the window and there is no process left in the system.
 
-**Current version: v1.2.1** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~14 MB single file.
+**Current version: v1.2.2** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~14 MB single file.
 
 ## Download
 
@@ -46,6 +46,7 @@ No sign-up, no login, no tray icon, no resident process — close the window and
 - **Favorites & delete sync to the cloud**: every local image can be hearted or deleted (timestamp-named archives included), cloud copies are cleaned up alongside, and phone and PC see the same favorites.
 - **All paired devices at a glance**: the Settings page lists every paired device — phones show their model, PCs show their machine name.
 - **Staged swap progress**: "Swap Now" renders on demand with four playful progress stages — planning → cloud rendering (with seconds) → download → apply.
+- **9 preset style packs, updated live from the cloud**: a pack is just a skeleton (a few tags per dimension) — fine-tune the rest in the questionnaire; the dictionary is served from the cloud, so updates take effect instantly with no client upgrade.
 - **Lightweight**: the client is a ~14 MB single file (compiled Go, no runtime dependencies).
 
 ## Screenshots
@@ -315,11 +316,11 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
    ```json
    {
-     "version": "1.2.1",
-     "file": "AIWallpaper-1.2.1.exe",
+     "version": "1.2.2",
+     "file": "AIWallpaper-1.2.2.exe",
      "sha256": "<64-hex>",
-     "size": 14075392,
-     "notes": "v1.2.1: cloud-synced favorites & delete, paired-device list, staged swap progress",
+     "size": 14081536,
+     "notes": "9 style packs, cloud-served dictionary, safe reset",
      "url": "https://www.cybermesh.space/go/dl"
    }
    ```
