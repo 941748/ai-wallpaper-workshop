@@ -5,7 +5,7 @@ package ui
 //   · 左侧产品名 / 右侧副标题
 //   · 右上角扁平 ✕(常态低调灰白, 悬停变深)
 //   · 标题栏本体作为拖动热区(按住左键拖动整窗)
-// 三个顶层窗口(向导 / 设置 / 回访小窗)共用本文件的 titleBar + enableCustomFrame。
+// 顶层窗口(设置 / 回访小窗)共用本文件的 titleBar + enableCustomFrame。
 
 import (
 	"unsafe"
@@ -130,7 +130,7 @@ func newTitleBar(parent walk.Container, form walk.Form, title, subtitle string, 
 	return tb, nil
 }
 
-// setSubtitle 更新副标题(向导按步骤变化时可用)。
+// setSubtitle 更新副标题(回访小窗等场景)。
 func (tb *titleBar) setSubtitle(s string) {
 	if tb.subtitle != s {
 		tb.subtitle = s

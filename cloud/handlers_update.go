@@ -16,7 +16,7 @@ import (
 
 // handlePolicy 下发运营策略(活跃时段/备用池目标/暂停选项)。
 // 数据源 AW_DATA/policy.json 改文件即生效; 缺失或非法时返回内置默认。
-// 策略不含隐私且向导阶段即可拉取, 故不要求鉴权; 客户端失败时回退本地缓存。
+// 策略不含隐私且客户端首装/检查更新即会拉取, 故不要求鉴权; 客户端失败时回退本地缓存。
 func (a *API) handlePolicy(w http.ResponseWriter, r *http.Request) {
 	pol := policy.Default()
 	raw, err := os.ReadFile(filepath.Join(a.dataDir, "policy.json"))

@@ -1,19 +1,12 @@
-// Package ui 主题基建: 向导/设置面板共用的青绿色板、字体层级与主题化控件。
+// Package ui 主题基建: walk 对话框(满意度回访/卸载确认)用的青绿色板、字体层级与主题化控件。
 // 能力边界: walk 原生控件不支持圆角/渐变/阴影, 主题仅用纯色块 + 字体层级 + 文字颜色。
 package ui
 
 import (
-	"image/color"
 	"sync"
 
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
-)
-
-// 预览卡片底色/边框(位图绘制用, image/color 类型)。
-var (
-	cardFill = color.RGBA{249, 250, 249, 255} // 卡片底
-	cardLine = color.RGBA{214, 220, 218, 255} // 卡片边框
 )
 
 // 色板(青绿强调色主题)。

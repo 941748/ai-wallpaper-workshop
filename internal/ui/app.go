@@ -1,4 +1,4 @@
-// Package ui 入口: 手动运行 exe = Wails GUI(向导/设置面板, 前端路由); 关窗即进程退出。
+// Package ui 入口: 手动运行 exe = Wails GUI(设置面板, 前端路由); 关窗即进程退出。
 // walk 版页面在 P2-c 迁移完成前暂时保留编译, 最终整体删除(见 docs/wails-migration.md)。
 package ui
 

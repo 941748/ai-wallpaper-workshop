@@ -31,7 +31,7 @@ func (a *API) proactivePregen() {
 		}
 		snap, err := a.st.LoadProfileSnapshot(uid)
 		if err != nil || snap == nil || snap.ProfileVersion <= 0 {
-			continue // 尚无画像(如刚注册未走完向导), 不代下单
+			continue // 尚无画像(如刚注册还未选择), 不代下单
 		}
 		ready, _ := a.st.CountPregenReady(uid, snap.ProfileVersion)
 		pending, _ := a.st.CountPregenPending(uid)

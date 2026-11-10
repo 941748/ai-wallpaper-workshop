@@ -1,5 +1,5 @@
 // Package signals 漂移事件采集(本地待上报队列)。
-// 漂移依据全部来自用户自然操作: 重跑向导/重新点选、历史重应用、调权重、
+// 漂移依据全部来自用户自然操作: 问卷重选/重置、历史重应用、调权重、
 // 满意度回访选择(style_keep/style_reject)。事件先本地落盘, 随下一轮上报云端。
 package signals
 
@@ -14,7 +14,6 @@ import (
 
 // 事件类型。
 const (
-	TypeReconfigure    = "reconfigure"     // 重跑向导/重选问卷(最强信号)
 	TypeReapply        = "reapply"         // 历史页重新应用某张壁纸
 	TypeWeightAdjust   = "weight_adjust"   // 设置页手工微调权重
 	TypeKeywordsAdjust = "keywords_adjust" // 设置页自定义关键词增删(强偏好方向信号)

@@ -1,11 +1,11 @@
-// Package ui walk 原生界面: 初始化向导 / 设置面板 / 满意度回访小窗。
+// Package ui 共享工具: 错误文案脱敏、图片缩放、系统调用
+// (满意度回访/卸载确认等 walk 对话框与前端桥方法共用)。
 // 设计约束: 关闭窗口 = 进程立即退出; 无托盘、无后台服务、无 Web 界面。
 package ui
 
 import (
 	"bytes"
 	"image"
-	"image/color"
 	"image/draw"
 	"image/png"
 	"os/exec"
@@ -98,91 +98,6 @@ func scalePlain(data []byte, maxW, maxH int) (*walk.Bitmap, error) {
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	imgdraw.CatmullRom.Scale(dst, dst.Bounds(), src, sb, draw.Over, nil)
 	return walk.NewBitmapFromImage(dst)
-}
-
-// scaleCard 等比缩放图片到指定画布并加卡片式细边框(向导预览用)。
-func scaleCard(data []byte, maxW, maxH int) (*walk.Bitmap, error) {
-	src, err := decodePNG(data)
-	if err != nil {
-		return nil, err
-	}
-	sb := src.Bounds()
-	// 等比缩放到画布内(留 10px 内边距)
-	const pad = 10
-	w, h := maxW-2*pad, maxH-2*pad
-	if sb.Dx() > 0 && sb.Dy() > 0 {
-		scale := float64(w) / float64(sb.Dx())
-		if s := float64(h) / float64(sb.Dy()); s < scale {
-			scale = s
-		}
-		w = int(float64(sb.Dx()) * scale)
-		h = int(float64(sb.Dy()) * scale)
-	}
-	dst := image.NewRGBA(image.Rect(0, 0, maxW, maxH))
-	draw.Draw(dst, dst.Bounds(), &image.Uniform{C: cardFill}, image.Point{}, draw.Src)
-	ox := (maxW - w) / 2
-	oy := (maxH - h) / 2
-	imgdraw.CatmullRom.Scale(dst, image.Rect(ox, oy, ox+w, oy+h), src, sb, draw.Over, nil)
-	drawBorder(dst, cardLine, 1)
-	return walk.NewBitmapFromImage(dst)
-}
-
-func drawBorder(img *image.RGBA, c color.Color, thickness int) {
-	b := img.Bounds()
-	for t := 0; t < thickness; t++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			img.Set(x, b.Min.Y+t, c)
-			img.Set(x, b.Max.Y-1-t, c)
-		}
-		for y := b.Min.Y; y < b.Max.Y; y++ {
-			img.Set(b.Min.X+t, y, c)
-			img.Set(b.Max.X-1-t, y, c)
-		}
-	}
-}
-
-// addLineRow 在容器内新增一行: 标签 + 单行输入框, 返回输入框。
-func addLineRow(parent walk.Container, label, initial string, width int) (*walk.LineEdit, error) {
-	row, err := walk.NewComposite(parent)
-	if err != nil {
-		return nil, err
-	}
-	if err := row.SetLayout(walk.NewHBoxLayout()); err != nil {
-		return nil, err
-	}
-	lbl, err := walk.NewLabel(row)
-	if err != nil {
-		return nil, err
-	}
-	lbl.SetText(label)
-	le, err := walk.NewLineEdit(row)
-	if err != nil {
-		return nil, err
-	}
-	le.SetText(initial)
-	if width > 0 {
-		_ = le.SetMinMaxSize(walk.Size{Width: width}, walk.Size{Width: width})
-	}
-	return le, nil
-}
-
-// clearChildren 清空并销毁容器内所有子控件(用于分步重建向导内容)。
-// 注意: 必须用 Dispose 真正销毁子窗。若用 SetParent(nil), walk 会把子窗样式改为
-// WS_POPUP 并 win.SetParent(hWnd,0), 子窗被孤儿化成桌面顶层窗浮在屏幕上形成杂窗。
-func clearChildren(c walk.Container) {
-	if c == nil {
-		return
-	}
-	children := c.Children()
-	for children.Len() > 0 {
-		child := children.At(children.Len() - 1)
-		child.Dispose() // 销毁子窗; Container 会连带释放其后代
-	}
-}
-
-// openFolder 打开资源管理器定位到目录。
-func openFolder(dir string) {
-	_ = exec.Command("explorer", dir).Start()
 }
 
 // openURL 用系统默认浏览器打开链接(无控制台窗口)。

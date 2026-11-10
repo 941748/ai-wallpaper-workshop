@@ -42,10 +42,9 @@ type Bridge struct {
 
 // BootInfo 前启时拉取的引导信息。
 type BootInfo struct {
-	Version     string `json:"version"`
-	Initialized bool   `json:"initialized"`
-	Dir         string `json:"dir"`
-	UserID      string `json:"userId"`
+	Version string `json:"version"`
+	Dir     string `json:"dir"`
+	UserID  string `json:"userId"`
 }
 
 func (b *Bridge) startup(ctx context.Context) {
@@ -57,15 +56,14 @@ func (b *Bridge) startup(ctx context.Context) {
 	go b.FirstRunSetup()
 }
 
-// Boot 返回引导信息(验证 Go↔JS 通道 + 前端决定首屏路由)。
+// Boot 返回引导信息(验证 Go↔JS 通道; 前端读版本/数据目录)。
 func (b *Bridge) Boot() BootInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return BootInfo{
-		Version:     b.version(),
-		Initialized: b.cfg.Initialized,
-		Dir:         b.dir,
-		UserID:      b.cfg.UserID,
+		Version: b.version(),
+		Dir:     b.dir,
+		UserID:  b.cfg.UserID,
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 	"wallpaper/internal/taxonomy"
 )
 
-// 向导纯逻辑单测(不依赖 walk 窗口)。
+// 问卷/风格包纯逻辑单测(不依赖 walk 窗口)。
 func TestAttitudeOfWeight(t *testing.T) {
 	cases := []struct {
 		wgt  float64
@@ -212,13 +212,13 @@ func TestFocusSummary(t *testing.T) {
 
 // TestSurveyRecapText 校验完成页回显: 恒含包摘要; 有喜欢项按维度分组。
 func TestSurveyRecapText(t *testing.T) {
-	got := surveyRecapText(map[string]survey.Attitude{}, map[string]bool{})
+	got := surveyRecapNames(map[string]survey.Attitude{}, nil)
 	if !strings.Contains(got, "未选") {
 		t.Errorf("无包无喜欢应回显未选状态, got %q", got)
 	}
 	d0 := taxonomy.Dimensions[0]
 	answers := map[string]survey.Attitude{config.Key(d0.ID, d0.Values[0].ID): survey.Like}
-	got = surveyRecapText(answers, map[string]bool{defaultPackName: true})
+	got = surveyRecapNames(answers, []string{defaultPackName})
 	if !strings.Contains(got, defaultPackName) || !strings.Contains(got, "额外微调") || !strings.Contains(got, d0.NameCN) {
 		t.Errorf("回显应含包名/微调分组/维度名, got %q", got)
 	}
@@ -226,35 +226,12 @@ func TestSurveyRecapText(t *testing.T) {
 
 // TestPackSummary 校验选中包摘要文案。
 func TestPackSummary(t *testing.T) {
-	if got := packSummary(map[string]bool{}); !strings.Contains(got, "未选") {
+	if got := packSummaryNames(nil); !strings.Contains(got, "未选") {
 		t.Errorf("空选中应提示未选, got %q", got)
 	}
-	got := packSummary(map[string]bool{"潮酷未来": true, defaultPackName: true})
+	got := packSummaryNames([]string{"潮酷未来", defaultPackName})
 	if !strings.Contains(got, "潮酷未来") || !strings.Contains(got, defaultPackName) {
 		t.Errorf("摘要应含全部选中包名, got %q", got)
-	}
-}
-
-// TestPackCovered 校验"词条被选中包覆盖"判定(筹码同步变色依据)。
-func TestPackCovered(t *testing.T) {
-	sel := map[string]bool{"潮酷未来": true}
-	if !packCovered(sel, "style/cyberpunk") {
-		t.Error("包内词条应判覆盖")
-	}
-	if !packCovered(sel, "composition/thirds") {
-		t.Error("包内构图词条应判覆盖")
-	}
-	if packCovered(sel, "style/ink") {
-		t.Error("包外词条不应判覆盖")
-	}
-	if packCovered(map[string]bool{}, "style/cyberpunk") {
-		t.Error("无选中包时不应覆盖")
-	}
-	if packCovered(sel, "bad-key-no-slash") {
-		t.Error("非法键不应判覆盖")
-	}
-	if packCovered(map[string]bool{"不存在的包": true}, "style/ink") {
-		t.Error("失效包名应被跳过, 不应误判覆盖")
 	}
 }
 

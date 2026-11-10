@@ -25,7 +25,7 @@ type ConnResult struct {
 	Message string `json:"message"`
 }
 
-// TestConnection 测试连接(向导/设置页共用): 云端可达性+配额+出图链路。
+// TestConnection 测试连接(设置页): 云端可达性+配额+出图链路。
 func (b *Bridge) TestConnection(req ConnReq) ConnResult {
 	b.ensureIdentity() // 首装离线时的注册自愈
 	cfg := b.snapshot()
@@ -185,7 +185,7 @@ func dictToSurvey(d *cloud.Dict) ([]SurveyDim, []PackInfo) {
 func (b *Bridge) SaveSurvey(req struct {
 	Answers       map[string]int `json:"answers"`
 	SelectedPacks []string       `json:"selectedPacks"`
-	Reason        string         `json:"reason"` // 信号明细(向导/设置页区分)
+	Reason        string         `json:"reason"` // 信号明细(来源区分: 设置页调整/重置后重新选择)
 	Reset         bool           `json:"reset"`
 }) error {
 	b.mu.Lock()

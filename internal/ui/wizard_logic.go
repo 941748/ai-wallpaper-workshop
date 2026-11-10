@@ -1,8 +1,7 @@
 package ui
 
-// 向导的纯决策逻辑(不依赖 walk 窗口): 问卷三态换算、风格包预设、勾选统计与摘要、
-// 完成页回显、相位分配等。抽离至此便于单元测试(见 wizard_test.go), 并让 wizard.go
-// 专注于 UI 构建与流程编排。
+// 设置页问卷/风格包的纯决策逻辑(不依赖 walk 窗口): 问卷三态换算、风格包预设、
+// 勾选统计与摘要、回显文案、相位分配等。抽离便于单元测试(见 wizard_test.go)。
 
 import (
 	"hash/fnv"
@@ -40,7 +39,7 @@ func answersFromProfile(profile *config.Profile) map[string]survey.Attitude {
 // defaultPackName 全新用户默认选中的风格包(避免空白起步, 可再自行调整或清空)。
 const defaultPackName = "治愈日常"
 
-// packRowLabel 风格包行的标签文案(向导与设置页共用, 宽度按此文测量锁定;
+// packRowLabel 风格包行的标签文案(设置页共用, 宽度按此文测量锁定;
 // 文案刻意短——长文案会在窄窗口折行, 语义已由汇总条/提示行承载)。
 const packRowLabel = "风格包:"
 
@@ -118,32 +117,6 @@ func copyPackSel(sel map[string]bool) map[string]bool {
 	return out
 }
 
-// packCovered 该词条(dim/val 键)是否被任一选中风格包覆盖(筹码同步变色用)。
-func packCovered(sel map[string]bool, key string) bool {
-	dim, val, ok := strings.Cut(key, "/")
-	if !ok {
-		return false
-	}
-	for name := range sel {
-		p := taxonomy.PackByName(name)
-		if p == nil {
-			continue
-		}
-		for _, pv := range p.Values(dim) {
-			if pv == val {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// packSummary 汇总条/回显用的选中包摘要。
-// packSummary 选中包摘要文案(按本地词典顺序; 含本地词典没有的包名请用 packSummaryNames)。
-func packSummary(sel map[string]bool) string {
-	return packSummaryNames(selectedPackNames(sel))
-}
-
 // packSummaryNames 按给定顺序拼包摘要(名字列表可含本地词典没有的包名)。
 func packSummaryNames(names []string) string {
 	if len(names) == 0 {
@@ -210,12 +183,8 @@ func focusSummary(answers map[string]survey.Attitude) string {
 	return "  将重点出图: " + strings.Join(parts, " · ")
 }
 
-// surveyRecapText 完成页回显所选风格包与偏好(按维度分组); 无包且无喜欢项则只回包状态。
-func surveyRecapText(answers map[string]survey.Attitude, packs map[string]bool) string {
-	return surveyRecapNames(answers, selectedPackNames(packs))
-}
-
-// surveyRecapNames 同 surveyRecapText, 但包行按 names 原样回显(可含本地词典没有的包名)。
+// surveyRecapNames 完成页回显所选风格包与偏好(按维度分组); 无包且无喜欢项则只回包状态。
+// 包行按 selNames 原样回显(可含本地词典没有的包名)。
 func surveyRecapNames(answers map[string]survey.Attitude, selNames []string) string {
 	var groups []string
 	for _, d := range taxonomy.Dimensions {

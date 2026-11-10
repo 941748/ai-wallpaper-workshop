@@ -17,7 +17,7 @@ const askTimeout = 120 * time.Second
 // ShowAskDialog 满意度回访小窗(tick 到期时调用), 返回用户选择。
 // 四个选项: 满意(曲线拉长) / 换个风格(立即换+强漂移) / 调整一下(打开设置) / 以后再说(顺延3天)。
 func ShowAskDialog(req tick.AskRequest) tick.AskChoice {
-	// tick 子进程(--tick [--force])从不构建设置/向导窗口, initTheme() 无人调用,
+	// tick 子进程(--tick [--force])从不构建设置窗口, initTheme() 无人调用,
 	// 自绘标题栏用到的 themeFont*/brushCloseHover 等全为 nil → 绘制时 handleForDPI(nil) panic。
 	// 这里补调一次(sync.Once 幂等); GUI 主进程早已初始化过, 无副作用。
 	initTheme()
@@ -36,7 +36,7 @@ func ShowAskDialog(req tick.AskRequest) tick.AskChoice {
 	dlg.SetMinMaxSize(walk.Size{Width: 440, Height: 440}, walk.Size{Width: 440, Height: 440}) // 固定尺寸: 不允许拉伸
 	_ = dlg.SetLayout(walk.NewVBoxLayout())
 	if bl, ok := dlg.Layout().(*walk.BoxLayout); ok {
-		// 去默认边距: 无边框窗贴边渲染(与设置/向导同修)
+		// 去默认边距: 无边框窗贴边渲染(与设置窗同修)
 		_ = bl.SetMargins(walk.Margins{})
 	}
 

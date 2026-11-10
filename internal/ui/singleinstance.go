@@ -1,4 +1,4 @@
-// 单实例保护: 手动运行 exe 时, 已有 GUI 实例则将其窗口带到前台并退出, 避免多开多个向导/设置窗口。
+// 单实例保护: 手动运行 exe 时, 已有 GUI 实例则将其窗口带到前台并退出, 避免多开多个设置窗口。
 // 注意: 仅约束 GUI 模式; --tick(计划任务静默)与 --apply-update(换装助手)不走此逻辑。
 package ui
 
@@ -35,10 +35,10 @@ func acquireSingleInstance() bool {
 	return true
 }
 
-// activateExistingWindow 将已有实例的向导/设置窗口带到前台。
+// activateExistingWindow 将已有实例的设置窗口带到前台。
 func activateExistingWindow() {
 	for _, title := range []string{
-		config.AppNameCN + " — 初始化向导",
+		config.AppNameCN,
 		config.AppNameCN + " — 设置",
 	} {
 		p, err := syscall.UTF16PtrFromString(title)
