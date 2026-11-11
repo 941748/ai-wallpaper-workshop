@@ -16,7 +16,7 @@ ComfyUI (Z-Image Turbo) renders the image → it is fitted to your screen's phys
 
 No sign-up, no login, no tray icon, no resident process — close the window and there is no process left in the system.
 
-**Current version: v1.2.3** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~14 MB single file.
+**Current version: v1.2.4** · Website [cybermesh.space](https://www.cybermesh.space) · Client is a ~14 MB single file.
 
 ## Download
 
@@ -176,7 +176,7 @@ wallpaper/
 | `AIWallpaper.exe --apply-update ...` | Internal swap helper (used by silent self-update; ordinary users need not care) |
 
 Settings panel tabs: Current Wallpaper (feedback / Swap Now) | Preferences (weights / reset) | History (local & cloud favorites, delete, favorites-only) | Settings (interval / task repair / updates / device sync) |
-History (thumbnails / re-apply / open folder) | Sync (anonymous user_id / QR pairing for a new device) | Update & Check-in (version / check for updates / check-in cycle).
+History (thumbnails / re-apply / open local gallery) | Sync (anonymous user_id / QR pairing for a new device) | Update & Check-in (version / check for updates / check-in cycle).
 
 All the manual actions above (resetting preferences, re-applying from History, adjusting weights) are recorded locally as drift events and reported to the cloud,
 serving as the basis for the LLM to plan the next prompt.
@@ -316,8 +316,8 @@ see all users (today's LLM/render usage, disabled state), recent render records,
 
    ```json
    {
-     "version": "1.2.3",
-     "file": "AIWallpaper-1.2.3.exe",
+     "version": "1.2.4",
+     "file": "AIWallpaper-1.2.4.exe",
      "sha256": "<64-hex>",
      "size": 14081024,
      "notes": "random per-render seed, fixed second-instance activation",
