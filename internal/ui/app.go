@@ -51,7 +51,7 @@ func Run(assets embed.FS) int {
 	bridge.be, bridge.cc = makeBackend(cfg) // 出图链路与云客户端(历史/出图/配对均依赖, 忘初始化会全报直连模式)
 	err = wails.Run(&options.App{
 		Title:     config.AppNameCN,
-		Width:     1180,
+		Width:     1400, // v1.2.5 攒批: 1180→1400, 历史列表行(完整文件名+时间+规格)一行放下
 		Height:    760,
 		MinWidth:  960,
 		MinHeight: 600,

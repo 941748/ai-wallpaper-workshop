@@ -125,10 +125,11 @@ private fun poolForStage(stage: String): List<String> = when (stage) {
     else -> listOf(stageText(RenderState.Idle))
 }
 
-/** wp-{jobID}.jpg 新命名 → 反查任务ID; 旧时间戳名返回 null(无法关联云端副本)。 */
+/** wp-{jobID}.jpg 新命名 → 反查任务ID; 旧时间戳名返回 null(无法关联云端副本)。
+ *  P6 起新任务 16 位(8字节), 存量 24 位并存, 两种都认。 */
 private fun jobIdOf(f: File): String? {
     val mid = f.name.removePrefix("wp-").removeSuffix(".jpg")
-    return mid.takeIf { s -> s.length == 24 && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } }
+    return mid.takeIf { s -> (s.length == 16 || s.length == 24) && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } }
 }
 
 /** 画廊: 当前壁纸 + 换一张(完整出图链路) + 最近生成点按即设、长按删除、心形收藏。 */

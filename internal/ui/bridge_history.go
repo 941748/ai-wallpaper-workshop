@@ -25,9 +25,10 @@ type HistItem struct {
 	Fav   bool   `json:"fav"`   // 本地收藏清单(favs.json); jobId 行另与云端收藏合并(前端)
 }
 
-// isJobIDFile 判定文件名(去扩展)是否为 24 位十六进制任务ID(与安卓端 jobIdOf 同规则)。
+// isJobIDFile 判定文件名(去扩展)是否为十六进制任务ID(与安卓端 jobIdOf 同规则)。
+// P6 起新任务为 16 位(8字节), 存量 24 位并存, 两种都认。
 func isJobIDFile(s string) bool {
-	if len(s) != 24 {
+	if len(s) != 16 && len(s) != 24 {
 		return false
 	}
 	for _, c := range s {

@@ -185,7 +185,7 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
   color: #9ec1ff; font-size: 12px; padding: 5px 12px; border-radius: 14px;
 }
 .hist-layout { display: flex; gap: 16px; }
-.hist-list { width: 320px; flex-shrink: 0; height: 420px; overflow-y: auto; padding: 8px; }
+.hist-list { width: 440px; flex-shrink: 0; height: 420px; overflow-y: auto; padding: 8px; }
 .hist-row {
   display: flex; gap: 8px; align-items: center; padding: 9px 10px; border-radius: 8px;
   cursor: pointer; font-size: 13px; color: var(--muted); border: 1px solid transparent;

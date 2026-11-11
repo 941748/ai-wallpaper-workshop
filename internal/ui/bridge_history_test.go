@@ -34,3 +34,24 @@ func TestGetCloudHistoryCCReady(t *testing.T) {
 	}
 	t.Logf("msg=%q ok=%v items=%d", r.Message, r.OK, len(r.Items))
 }
+
+// TestIsJobIDFile P6: 16hex(新)与24hex(存量)都认, 其余长度/非hex拒绝(与安卓 jobIdOf 同规则)。
+func TestIsJobIDFile(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"0123456789abcdef", true},               // 16hex = P6 新任务ID
+		{"0123456789abcdef01234567", true},       // 24hex = 存量
+		{"0123456789abcdef0", false},             // 17hex
+		{"0123456789abcde", false},               // 15hex
+		{"0123456789abcdeg", false},              // 非hex
+		{"20261111143406", false},                // 14位(旧时间戳主体, 真实旧名还带 wallpaper_ 前缀)
+		{"wallpaper_20261111", false},            // 旧命名
+	}
+	for _, c := range cases {
+		if got := isJobIDFile(c.in); got != c.want {
+			t.Errorf("isJobIDFile(%q)=%v want %v", c.in, got, c.want)
+		}
+	}
+}

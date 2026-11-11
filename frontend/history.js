@@ -32,21 +32,23 @@ window.initHistory = function () {
       row.className = "hist-row" + (i === selected ? " active" : "");
       if (mode === "cloud") {
         const heart = it.fav ? "♥" : "♡";
+        // 显示名=存储文件名主体: 云端 jobID(OSS {jobID}.jpg) 与本地 {jobID}.png 同名
         row.innerHTML =
           '<span class="heart' + (it.fav ? " on" : "") + '">' + heart + "</span>" +
-          '<span class="meta">☁ ' + it.createdAt + "</span>" +
+          '<span class="meta" title="' + it.jobId + '">☁ ' + it.jobId + "</span>" +
+          '<span class="spec">' + it.createdAt + "</span>" +
           '<span class="spec">' + it.width + "×" + it.height + "</span>" +
           (it.hasLocal ? '<span class="spec" title="本地已有">✓</span>' : "");
         const heartEl = row.querySelector(".heart");
         heartEl.onclick = (ev) => { ev.stopPropagation(); toggleCloudFav(it); };
       } else {
-        const label = it.jobId
-          ? it.at + "  " + it.jobId.slice(0, 8)
-          : it.name.replace(/^wallpaper_/, "").replace(/\.png$/, "") + "  (" + it.at + ")";
+        // 显示名=磁盘实际文件名(去扩展): 新图 {jobID}.png / 旧图 wallpaper_*.png, 与云端同名对照
+        const fname = (it.jobId || it.name).replace(/\.(png|jpe?g)$/i, "");
         const fav = localFavOf(it);
         row.innerHTML =
           '<span class="heart' + (fav ? " on" : "") + '">' + (fav ? "♥" : "♡") + "</span>" +
-          '<span class="meta">' + label + "</span>" +
+          '<span class="meta" title="' + fname + '">' + fname + "</span>" +
+          '<span class="spec">' + it.at + "</span>" +
           (it.jobId ? '<span class="spec">云端可取</span>' : "");
         const heart = row.querySelector(".heart");
         heart.onclick = (ev) => { ev.stopPropagation(); toggleLocalFav(it); };

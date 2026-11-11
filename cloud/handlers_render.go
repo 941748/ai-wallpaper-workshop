@@ -42,7 +42,7 @@ func (a *API) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if p.Priority == "idle" {
 		priority = "idle"
 	}
-	jobID := randomHex(12)
+	jobID := randomHex(8) // P6: 8字节=16hex(存量24hex共存, 消费方均为不透明字符串)
 	err := a.st.CreateJob(store.Job{
 		JobID: jobID, UserID: u.UserID, Kind: "gen", Priority: priority,
 		Positive: p.Positive, Negative: p.Negative,
@@ -380,7 +380,7 @@ func (a *API) submitPregenOrder(u *store.User, req nextReq) string {
 			comboJSON = string(b)
 		}
 	}
-	jobID := "pg-" + randomHex(10)
+	jobID := "pg-" + randomHex(8)
 	if err := a.st.CreateJob(store.Job{
 		JobID: jobID, UserID: u.UserID, Kind: "pregen", Priority: "idle",
 		Positive: dec.Positive, Negative: dec.Negative, Combo: comboJSON,

@@ -260,6 +260,10 @@ func TestFullClientLifecycle(t *testing.T) {
 		JobID string `json:"job_id"`
 	}
 	decodeData(t, raw, &genResp)
+	// P6: 新任务ID=16hex(8字节); 存量24hex并存, 双端 isJobIDFile/jobIdOf 已放宽 16|24
+	if len(genResp.JobID) != 16 {
+		t.Fatalf("P6: jobID 应为 16hex, got %q", genResp.JobID)
+	}
 	// S3: 云端不再直连渲染, 测试内联"代理完成"(领任务→本地落盘 JPEG→置 done)
 	completeClaimed := func() {
 		t.Helper()
