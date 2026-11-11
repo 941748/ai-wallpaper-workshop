@@ -275,6 +275,22 @@ type RecallResult struct {
 	Path    string `json:"path,omitempty"`
 }
 
+// DeleteCloud 删除云端图(归档行 + OSS 副本; 服务端幂等)。本地图库副本不受影响。
+func (b *Bridge) DeleteCloud(jobID string) (string, error) {
+	b.mu.Lock()
+	cc := b.cc
+	b.mu.Unlock()
+	if cc == nil || jobID == "" {
+		return "", fmt.Errorf("云端历史不可用")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := cc.DeleteImage(ctx, jobID); err != nil {
+		return "", fmt.Errorf("删除失败: %s", friendlyErrText(err))
+	}
+	return "已从云端历史删除 ✓", nil
+}
+
 // RecallCloud 召回单张云端图: 下载 → 留档 {jobID}.png → 设为壁纸。
 func (b *Bridge) RecallCloud(jobID string) RecallResult {
 	b.mu.Lock()

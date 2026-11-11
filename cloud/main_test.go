@@ -842,6 +842,45 @@ func TestDevicesList(t *testing.T) {
 	}
 }
 
+// TestRegisterDefaultPack 注册即写默认风格包快照(安卓首装无本地画像靠它下发; 存量快照不覆盖)。
+func TestRegisterDefaultPack(t *testing.T) {
+	ts := newTestServer(t, "", false)
+	uid, token := ts.register(t)
+
+	resp, raw := ts.do(t, "GET", "/api/v1/profile", token, nil)
+	_ = resp.Body.Close()
+	var env struct {
+		Data struct {
+			ProfileVersion int      `json:"profile_version"`
+			Packs          []string `json:"packs"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("parse profile: %s", raw)
+	}
+	if len(env.Data.Packs) != 1 || env.Data.Packs[0] != taxonomy.DefaultPackName {
+		t.Fatalf("新用户默认包 = %v, want [%s]", env.Data.Packs, taxonomy.DefaultPackName)
+	}
+	if env.Data.ProfileVersion != 1 {
+		t.Fatalf("默认快照 pv = %d, want 1", env.Data.ProfileVersion)
+	}
+
+	// 存量快照(已编辑过)不被默认覆盖
+	if err := ts.st.SaveProfileSnapshot(store.ProfileSnapshot{
+		UserID: uid, ProfileVersion: 7, Packs: `["写实美女"]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ts.api.ensureDefaultSnapshot(uid)
+	snap, err := ts.st.LoadProfileSnapshot(uid)
+	if err != nil || snap == nil {
+		t.Fatalf("snap=%v err=%v", snap, err)
+	}
+	if snap.ProfileVersion != 7 || snap.Packs != `["写实美女"]` {
+		t.Fatalf("存量快照被覆盖: pv=%d packs=%s", snap.ProfileVersion, snap.Packs)
+	}
+}
+
 // TestAndroidSnapshotGuard 安卓渲染带 device_id: 屏幕进 devices, 不回写共享快照 screen(方案A)。
 func TestAndroidSnapshotGuard(t *testing.T) {
 	ts := newTestServer(t, "", false)
@@ -1071,8 +1110,9 @@ func TestProfilePushAndGuard(t *testing.T) {
 	if err := json.Unmarshal(raw, &env); err != nil || !env.Success {
 		t.Fatalf("推送失败: %s", raw)
 	}
-	if int(env.Data["profile_version"].(float64)) != 1 {
-		t.Fatalf("首推 pv 应为1: %v", env.Data)
+	// 注册时已落默认快照 v1(ensureDefaultSnapshot), 首推在其基础上 +1
+	if int(env.Data["profile_version"].(float64)) != 2 {
+		t.Fatalf("首推 pv 应为2: %v", env.Data)
 	}
 
 	// 3) GET 应回带 labels/dict/packs
@@ -1081,7 +1121,7 @@ func TestProfilePushAndGuard(t *testing.T) {
 	if err := json.Unmarshal(raw, &env); err != nil {
 		t.Fatal(err)
 	}
-	if env.Data["profile_version"].(float64) != 1 {
+	if env.Data["profile_version"].(float64) != 2 {
 		t.Fatalf("GET pv: %v", env.Data["profile_version"])
 	}
 	labels := env.Data["labels"].(map[string]any)
@@ -1104,7 +1144,7 @@ func TestProfilePushAndGuard(t *testing.T) {
 
 	// 4) 落后版本的出图上传(如 PC 旧本地画像) → 守卫: 画像保持推送值
 	ts.api.saveProfileSnapshot(uid, nextReq{
-		ProfileVersion: 0, // 落后于 pv=1
+		ProfileVersion: 0, // 落后于 pv=2
 		Profile:        map[string]float64{"subject/weapons": 0.9},
 		ScreenW:        2240, ScreenH: 1400,
 	})
@@ -1112,8 +1152,8 @@ func TestProfilePushAndGuard(t *testing.T) {
 	if err != nil || snap == nil {
 		t.Fatal("快照缺失")
 	}
-	if snap.ProfileVersion != 1 {
-		t.Fatalf("守卫应保持 pv=1, got %d", snap.ProfileVersion)
+	if snap.ProfileVersion != 2 {
+		t.Fatalf("守卫应保持 pv=2, got %d", snap.ProfileVersion)
 	}
 	var pm map[string]float64
 	_ = json.Unmarshal([]byte(snap.Profile), &pm)
@@ -1136,8 +1176,8 @@ func TestProfilePushAndGuard(t *testing.T) {
 	_ = resp.Body.Close()
 	env.Data = nil
 	_ = json.Unmarshal(raw, &env)
-	if int(env.Data["profile_version"].(float64)) != 2 {
-		t.Fatalf("二推 pv 应为2: %v", env.Data)
+	if int(env.Data["profile_version"].(float64)) != 3 {
+		t.Fatalf("二推 pv 应为3: %v", env.Data)
 	}
 }
 

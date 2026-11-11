@@ -56,8 +56,24 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.registerDevice(body.Device, userID, body.DeviceInfo)
+	a.ensureDefaultSnapshot(userID)
 	a.logf("注册新用户 %s (device=%s)", userID, body.Device)
 	writeOK(w, map[string]string{"user_id": userID, "token": token})
+}
+
+// ensureDefaultSnapshot 全新用户画像快照默认落风格包(与 PC FirstRunSetup 同语义)。
+// 安卓无本地画像, 首装全靠本快照下发; 仅快照不存在时写入, 存量用户不受影响。
+func (a *API) ensureDefaultSnapshot(userID string) {
+	if snap, err := a.st.LoadProfileSnapshot(userID); err != nil || snap != nil {
+		return
+	}
+	packs, err := json.Marshal([]string{taxonomy.DefaultPackName})
+	if err != nil {
+		return
+	}
+	_ = a.st.SaveProfileSnapshot(store.ProfileSnapshot{
+		UserID: userID, ProfileVersion: 1, Packs: string(packs),
+	})
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {

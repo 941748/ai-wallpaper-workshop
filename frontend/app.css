@@ -178,6 +178,8 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
 
 /* ================= 历史 ================= */
 .hist-head { display: flex; align-items: center; gap: 16px; }
+/* 模式切换按钮放页头右侧(明显位置, 负责人 2026-11-11 要求) */
+#hist-toggle { margin-left: auto; }
 .mode-bar {
   background: rgba(79,140,255,.12); border: 1px solid var(--accent);
   color: #9ec1ff; font-size: 12px; padding: 5px 12px; border-radius: 14px;

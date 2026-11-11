@@ -390,7 +390,7 @@ func TestHistoryFav(t *testing.T) {
 		return env.Data.Items
 	}
 
-	// 初始 jf2(后建)在前; jf1 收藏后置顶, 且 items 带提示词
+	// 初始 jf2(后建)在前; items 带提示词
 	if got := list(""); len(got) != 2 || got[0].JobID != "jf2" {
 		t.Fatalf("初始顺序: %+v", got)
 	}
@@ -398,9 +398,10 @@ func TestHistoryFav(t *testing.T) {
 	if r.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"fav":true`) {
 		t.Fatalf("收藏应200: %d %s", r.StatusCode, raw)
 	}
+	// 负责人 2026-11-11: 收藏不置顶, 列表恒时间倒序(与本地历史一致), 只看收藏靠 ?fav=1 筛选
 	got := list("")
-	if len(got) != 2 || got[0].JobID != "jf1" || !got[0].Fav {
-		t.Fatalf("收藏应置顶: %+v", got)
+	if len(got) != 2 || got[0].JobID != "jf2" || got[1].JobID != "jf1" || !got[1].Fav {
+		t.Fatalf("收藏不改排序, 仅落 fav 标志: %+v", got)
 	}
 
 	// ?fav=1 仅看收藏
@@ -409,7 +410,7 @@ func TestHistoryFav(t *testing.T) {
 		t.Fatalf("fav=1 筛选: %+v", got)
 	}
 
-	// 取消收藏 → 回到原顺序, 筛选为空
+	// 取消收藏 → 筛选为空
 	r, raw = ts.do(t, "POST", "/api/v1/history/fav", tok, map[string]any{"job_id": "jf1", "fav": false})
 	if r.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"fav":false`) {
 		t.Fatalf("取消收藏应200: %d %s", r.StatusCode, raw)

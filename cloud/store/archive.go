@@ -67,7 +67,8 @@ func (s *Store) Archive(jobID string) (*ArchiveRow, error) {
 	return scanArchive(s.db.QueryRow(`SELECT `+archiveCols+` FROM archive WHERE job_id=?`, jobID))
 }
 
-// ListArchive 用户历史: 收藏置顶, 组内新→旧; onlyFav 时仅收藏;
+// ListArchive 用户历史: 纯时间倒序(新→旧; 负责人 2026-11-11 撤掉收藏置顶——
+// 有 ?fav=1 只看收藏筛选即可, 收藏置顶会把最新图挤到列表深处); onlyFav 时仅收藏;
 // w/h 均 >0 时按出图规格过滤(按设备取回: 客户端上报自己屏幕, 只看本规格);
 // offset>0 跳过前 N 条(全部召回翻页用)。
 func (s *Store) ListArchive(userID string, onlyFav bool, w, h, offset, limit int) ([]ArchiveRow, error) {
@@ -80,7 +81,7 @@ func (s *Store) ListArchive(userID string, onlyFav bool, w, h, offset, limit int
 		q += ` AND width=? AND height=?`
 		args = append(args, w, h)
 	}
-	q += ` ORDER BY fav DESC, created_at DESC, rowid DESC LIMIT ? OFFSET ?`
+	q += ` ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(q, args...)
 	if err != nil {

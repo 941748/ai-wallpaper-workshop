@@ -132,7 +132,8 @@ function mountSurvey(o) {
         (covered(key) ? " covered" : "");
       el.textContent = v.nameCn + (a === 1 ? " ✓" : a === 2 ? " ✕" : "");
       el.onclick = () => {
-        st.answers[key] = (st.answers[key] + 1) % 3; // 0→1→2→0
+        // ||0: 重置清表单后 answers 为空对象, undefined+1 会算出 NaN 导致点击永不生效
+        st.answers[key] = ((st.answers[key] || 0) + 1) % 3; // 0→1→2→0
         renderChips(); stats();
         if (o.onChanged) o.onChanged();
       };

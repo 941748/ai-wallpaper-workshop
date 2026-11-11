@@ -36,8 +36,8 @@ func answersFromProfile(profile *config.Profile) map[string]survey.Attitude {
 	return answers
 }
 
-// defaultPackName 全新用户默认选中的风格包(避免空白起步, 可再自行调整或清空)。
-const defaultPackName = "治愈日常"
+// defaultPackName 全新用户默认选中的风格包(单值来源: taxonomy.DefaultPackName)。
+const defaultPackName = taxonomy.DefaultPackName
 
 // packRowLabel 风格包行的标签文案(设置页共用, 宽度按此文测量锁定;
 // 文案刻意短——长文案会在窄窗口折行, 语义已由汇总条/提示行承载)。

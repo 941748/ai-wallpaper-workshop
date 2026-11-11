@@ -78,6 +78,7 @@
       <div class="hist-head">
         <h1>历史</h1>
         <div class="mode-bar hidden" id="hist-modebar">☁ 云端历史 · 点按预览,「召回」存入本机</div>
+        <button class="btn primary" id="hist-toggle" title="切换 本地历史 / 云端历史">云端历史</button>
       </div>
       <div class="hist-layout">
         <div class="hist-list card" id="hist-list"></div>
@@ -90,11 +91,9 @@
         <button class="btn" id="hist-refresh">刷新</button>
         <button class="btn" id="hist-favonly" title="列表只显示已收藏(红心)的图片">♡ 只看收藏</button>
         <button class="btn primary" id="hist-apply">重新应用这张</button>
-        <button class="btn" id="hist-del" title="删除选中的本地图(有云端副本时同步清理)">删除</button>
+        <button class="btn" id="hist-del" title="删除选中的图(云端副本/OSS 一并清理)">删除</button>
         <button class="btn" id="hist-recallall" title="把云端全部本地图拉回本地(已有跳过)">全部召回</button>
-        <button class="btn" id="hist-fav" title="收藏/取消">♥ 收藏</button>
-        <button class="btn" id="hist-toggle">云端历史</button>
-        <button class="btn" id="hist-open">打开目录</button>
+        <button class="btn" id="hist-open">打开本地图库</button>
       </div>
       <div class="progress hidden" id="hist-progress"><div class="bar" id="hist-progress-bar"></div></div>
     </section>
