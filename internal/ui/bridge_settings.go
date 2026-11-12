@@ -2,14 +2,12 @@ package ui
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/skip2/go-qrcode"
 
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
@@ -364,7 +362,6 @@ type LinkResult struct {
 	OK      bool   `json:"ok"`
 	Code    string `json:"code,omitempty"`
 	URL     string `json:"url,omitempty"`
-	QR      string `json:"qr,omitempty"` // 二维码 PNG base64
 	UserID  string `json:"userId,omitempty"`
 	Message string `json:"message"`
 }
@@ -385,9 +382,6 @@ func (b *Bridge) CreateLink() LinkResult {
 	}
 	out := LinkResult{OK: true, Code: resp.Code, URL: resp.URL,
 		Message: fmt.Sprintf("配对码 %s 已生成(5 分钟内有效)", resp.Code)}
-	if png, err := qrcode.Encode(resp.URL, qrcode.Medium, 256); err == nil {
-		out.QR = base64.StdEncoding.EncodeToString(png)
-	}
 	return out
 }
 
@@ -435,6 +429,7 @@ func (b *Bridge) GetPairedDevices() ([]PairedDevice, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	cc.RefreshDevice(ctx, pcDeviceInfo()) // 存量行补报厂商/型号(失败静默, 不阻塞列表)
 	rows, err := cc.ListDevices(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("设备列表获取失败: %s", friendlyText(err.Error()))
@@ -472,6 +467,20 @@ func joinNonEmpty(parts ...string) string {
 		}
 	}
 	return strings.Join(out, " ")
+}
+
+// HasPairData 本机是否已有本地数据(壁纸留档或画像文件)——「加入对方」前的数据迁移警示用。
+func (b *Bridge) HasPairData() bool {
+	b.mu.Lock()
+	dir := b.dir
+	b.mu.Unlock()
+	if ws, err := filepath.Glob(filepath.Join(dir, "wallpapers", "*")); err == nil && len(ws) > 0 {
+		return true
+	}
+	if fi, err := os.Stat(filepath.Join(dir, "profile.json")); err == nil && fi.Size() > 100 {
+		return true
+	}
+	return false
 }
 
 // DeletePairedDevice 删除配对设备行(PC 端清理卸载重装产生的重复条目; 负责人定: 安卓不提供删除)。

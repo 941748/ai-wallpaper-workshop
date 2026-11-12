@@ -278,6 +278,73 @@ ORDER BY last_at DESC, u.created_at DESC`)
 	return out, rows.Err()
 }
 
+// AdminDeleteUser 管理员删除身份(面板清理配对残留的孤儿身份用; 负责人 2026-11-12 定):
+// 空壳(无出图且无画像)直接删; 有数据须 force=前端二次确认后级联全清。
+// 级联=遍历全部含 user_id 列的表(免维护表清单); usage_counters 的 scope 是 "uid" 或 "uid@android" 形式, 单独处理。
+func (s *Store) AdminDeleteUser(userID string, force bool) (deleted, needForce bool, err error) {
+	var prompts int
+	var packs string
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM prompt_records WHERE user_id=?`, userID).Scan(&prompts)
+	_ = s.db.QueryRow(`SELECT COALESCE(packs,'') FROM user_profiles WHERE user_id=?`, userID).Scan(&packs)
+	if prompts == 0 && packs == "" {
+		force = true // 空壳: 无需二次确认
+	} else if !force {
+		return false, true, nil
+	}
+	trows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table'`)
+	if err != nil {
+		return false, false, err
+	}
+	var tables []string
+	for trows.Next() {
+		var name string
+		if err := trows.Scan(&name); err != nil {
+			trows.Close()
+			return false, false, err
+		}
+		crows, err := s.db.Query(`PRAGMA table_info(` + name + `)`)
+		if err != nil {
+			trows.Close()
+			return false, false, err
+		}
+		has := false
+		for crows.Next() {
+			var cid, notnull, pk int
+			var cname, ctype string
+			var dflt any
+			if err := crows.Scan(&cid, &cname, &ctype, &notnull, &pk, &dflt); err != nil {
+				break
+			}
+			if cname == "user_id" {
+				has = true
+			}
+		}
+		crows.Close()
+		if has {
+			tables = append(tables, name)
+		}
+	}
+	trows.Close()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, false, err
+	}
+	for _, t := range tables {
+		if _, err := tx.Exec(`DELETE FROM `+t+` WHERE user_id=?`, userID); err != nil {
+			tx.Rollback()
+			return false, false, err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM usage_counters WHERE scope=? OR scope LIKE ?`, userID, userID+"@%"); err != nil {
+		tx.Rollback()
+		return false, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, false, err
+	}
+	return true, false, nil
+}
+
 // ClientVerRow 客户端版本分布行。
 type ClientVerRow struct {
 	Ver    string

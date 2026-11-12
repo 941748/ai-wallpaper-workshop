@@ -703,6 +703,16 @@ func (c *Client) LinkRedeem(ctx context.Context, code string, info *DeviceInfoPc
 	return &out, nil
 }
 
+// RefreshDevice 刷新本机设备属性(看设备列表前调, 存量行补报厂商/型号); 失败静默返回。
+func (c *Client) RefreshDevice(ctx context.Context, info *DeviceInfoPc) {
+	if info == nil {
+		return
+	}
+	var out any
+	_ = c.doJSON(ctx, c.meta, http.MethodPost, "/devices/refresh",
+		map[string]any{"device": c.Device, "device_info": info}, &out)
+}
+
 // DeleteDevice 删除配对设备行(PC 端清理卸载重装产生的重复条目)。
 func (c *Client) DeleteDevice(ctx context.Context, device string) error {
 	var out any

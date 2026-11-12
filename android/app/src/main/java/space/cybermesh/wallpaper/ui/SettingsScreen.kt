@@ -49,6 +49,23 @@ fun SettingsScreen(session: Session) {
     var createdCode by remember { mutableStateOf<Pair<String, String>?>(null) } // code, url
     // 已配对(服务端有 PC 设备即 true): 隐藏配对框, 防重复配对
     var paired by remember { mutableStateOf<Boolean?>(null) }
+        var migrateWarn by remember { mutableStateOf(false) } // 「加入对方」数据迁移警示(负责人方案1)
+        val doRedeem: () -> Unit = {
+            scope.launch {
+                busy = true
+                msg = null
+                try {
+                    val r = Api.linkRedeem(codeInput, sessionData.deviceId, session.deviceInfo())
+                    session.save(r.userId, r.token)
+                    codeInput = ""
+                    paired = true
+                    msg = "已连接对方身份，偏好与云图库将自动共享"
+                } catch (e: Exception) {
+                    msg = friendlyError(e)
+                }
+                busy = false
+            }
+        }
     LaunchedEffect(sessionData.token, sessionData.userId) {
         if (sessionData.token.isNotEmpty()) {
             paired = try {
@@ -94,7 +111,7 @@ fun SettingsScreen(session: Session) {
             OutlinedButton(
                 enabled = !busy && sessionData.loggedIn,
                 onClick = generateCode,
-            ) { Text("生成配对码") }
+            ) { Text("邀请加入") }
         }
         if (paired == true) {
             Text(
@@ -127,7 +144,7 @@ fun SettingsScreen(session: Session) {
                 OutlinedTextField(
                     value = codeInput,
                     onValueChange = { codeInput = it },
-                    label = { Text("输入电脑端配对码") },
+                    label = { Text("输入对方的 6 位码") },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
@@ -136,23 +153,8 @@ fun SettingsScreen(session: Session) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     enabled = !busy && codeInput.isNotBlank(),
-                    onClick = {
-                        scope.launch {
-                            busy = true
-                            msg = null
-                            try {
-                                val r = Api.linkRedeem(codeInput, sessionData.deviceId, session.deviceInfo())
-                                session.save(r.userId, r.token)
-                                codeInput = ""
-                                paired = true
-                                msg = "已连接电脑端身份，偏好将自动共享"
-                            } catch (e: Exception) {
-                                msg = friendlyError(e)
-                            }
-                            busy = false
-                        }
-                    },
-                ) { Text("输入配对码") }
+                    onClick = { migrateWarn = true }, // 先确认(数据迁移警示), 确认后 doRedeem
+                ) { Text("加入对方") }
                 genButton()
             }
         }
@@ -162,6 +164,9 @@ fun SettingsScreen(session: Session) {
         Text("已配对设备", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
         var devices by remember { mutableStateOf<List<DeviceRow>?>(null) }
         LaunchedEffect(sessionData.token, sessionData.userId) {
+            if (sessionData.token.isNotEmpty()) {
+                Api.refreshDevice(sessionData.token, sessionData.deviceId, session.deviceInfo()) // 存量行补报厂商
+            }
             devices = if (sessionData.token.isNotEmpty()) {
                 try {
                     Api.devices(sessionData.token)
@@ -234,10 +239,24 @@ fun SettingsScreen(session: Session) {
         )
     }
 
+    if (migrateWarn) {
+        AlertDialog(
+            onDismissRequest = { migrateWarn = false },
+            title = { Text("加入对方身份") },
+            text = { Text("本机已有壁纸数据。加入后本设备将改用对方的身份，本机已有数据将不再同步。\n\n确定加入吗？") },
+            confirmButton = {
+                TextButton(onClick = { migrateWarn = false; doRedeem() }) { Text("仍要加入") }
+            },
+            dismissButton = {
+                TextButton(onClick = { migrateWarn = false }) { Text("取消") }
+            },
+        )
+    }
+
     createdCode?.let { (code, url) ->
         AlertDialog(
             onDismissRequest = { createdCode = null },
-            title = { Text("配对码") },
+            title = { Text("邀请加入") },
             text = {
                 Column {
                     Text(code, style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)

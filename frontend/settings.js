@@ -258,10 +258,9 @@ window.initSettings = function () {
       }
       setStatus($("st-sync-status"), r.message, "ok");
       const html =
-        (r.qr ? '<div class="modal-img"><img src="data:image/png;base64,' + r.qr + '"></div>' : "") +
         '<div class="modal-code">' + r.code + "</div>" +
-        '<div class="muted" style="text-align:center">5 分钟内有效 · 扫码或在另一台设备输入此码</div>';
-      await modal({ title: "配对码", html, buttons: [{ text: "关闭", primary: true }] });
+        '<div class="muted" style="text-align:center">5 分钟内有效 · 在另一台设备输入此码</div>';
+      await modal({ title: "邀请加入", html, buttons: [{ text: "关闭", primary: true }] });
     } catch (e) {
       setStatus($("st-sync-status"), "" + e, "err");
     }
@@ -269,12 +268,23 @@ window.initSettings = function () {
 
   $("st-redeem").onclick = async () => {
     const code = await modal({
-      title: "输入配对码",
-      body: "请输入另一台设备上显示的 6 位配对码:",
+      title: "加入对方",
+      body: "请输入对方「邀请加入」显示的 6 位码, 本设备将加入对方的身份:",
       input: true,
       buttons: [{ text: "取消", value: null }, { text: "确定", primary: true }],
     });
     if (!code) return;
+    // 数据迁移警示: 本机已有画像/图库时, 明示加入=改用对方身份(负责人定的方案1)
+    if (await B.HasPairData()) {
+      const go = await modal({
+        title: "加入对方身份",
+        body: "本机已有偏好画像或壁纸数据。
+加入后本设备将改用对方的身份, 本机已有数据将不再同步——
+确定加入吗?",
+        buttons: [{ text: "取消", value: null }, { text: "仍要加入", primary: true }],
+      });
+      if (!go) return;
+    }
     setStatus($("st-sync-status"), "正在配对...", "hint");
     try {
       const r = await B.RedeemLink(code);

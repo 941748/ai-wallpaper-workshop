@@ -148,6 +148,11 @@ func (a *API) handleLink(w http.ResponseWriter, r *http.Request) {
 			writeFail(w, http.StatusNotFound, "用户不存在")
 			return
 		}
+		// 真"更换": 请求方(带旧身份token)在旧身份下的设备行迁走——否则旧身份残留孤儿行
+		// (负责人 2026-11-12: "把B的userid更换成所加入的A的userid")。
+		if old := a.authUser(r); old != nil && old.UserID != u.UserID && body.Device != "" {
+			_, _ = a.st.DeleteDevice(old.UserID, body.Device)
+		}
 		if body.Device != "" {
 			a.registerDevice(body.Device, u.UserID, body.DeviceInfo)
 		}
@@ -156,6 +161,27 @@ func (a *API) handleLink(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeFail(w, http.StatusBadRequest, "未知 action")
 	}
+}
+
+// handleDeviceRefresh POST /api/v1/devices/refresh 刷新本机设备属性(厂商/型号/屏幕)。
+// 存量设备行只在注册/配对时报过 device_info, 覆盖安装/老客户端不再重报——
+// 双端看设备列表前调一次, 保证厂商型号立即可见(负责人的 PC/P30 存量行不显示问题)。
+func (a *API) handleDeviceRefresh(w http.ResponseWriter, r *http.Request) {
+	u, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Device     string             `json:"device"`
+		DeviceInfo *deviceInfoPayload `json:"device_info"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+	if body.Device == "" || body.DeviceInfo == nil {
+		writeOK(w, map[string]bool{"ok": false}) // 无信息静默成功, 不阻塞列表
+		return
+	}
+	a.registerDevice(body.Device, u.UserID, body.DeviceInfo)
+	writeOK(w, map[string]bool{"ok": true})
 }
 
 // handleDeviceDelete DELETE /api/v1/devices/{device} 删除配对设备行(仅本人身份下)。

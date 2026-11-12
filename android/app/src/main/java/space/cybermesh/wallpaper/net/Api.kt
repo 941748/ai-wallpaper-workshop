@@ -260,6 +260,15 @@ object Api {
         call<DevicesResp>("GET", "/api/v1/devices", token).devices
     }
 
+    /** 刷新本机设备属性(存量行补报厂商/型号; 看列表前调, 失败静默不阻塞)。 */
+    suspend fun refreshDevice(token: String, device: String, info: DeviceInfo) = withIO {
+        try {
+            call("POST", "/api/v1/devices/refresh", token,
+                json.encodeToString(mapOf("device" to device, "device_info" to info)))
+        } catch (_: Exception) {
+        }
+    }
+
     /** 下载字节(url 为 /api/v1 相对路径或完整 URL; token 非空时带 Bearer)。 */
     suspend fun download(token: String, path: String): ByteArray = withIO {
         val url = if (path.startsWith("http")) path else BASE + path

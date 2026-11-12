@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -91,7 +92,7 @@ code{color:var(--acc)}
 <h2>用户偏好画像({{len .UserRows}})</h2>
 <p class="note">风格包=画像 packs 字段(空=旧档未设置按权重推断); 五维 Top=画像中未点踩的最高权重标签(并列全显, 最多 5 个); 点踩数=避让清单词条数。按最近出图倒序。</p>
 <div class="scroll"><table>
-<tr><th>user_id</th><th>版本</th><th>注册</th><th>最近出图</th><th>出图数</th><th>风格包</th><th>风格 Top</th><th>题材 Top</th><th>色调 Top</th><th>情绪 Top</th><th>构图 Top</th><th>点踩</th></tr>
+<tr><th>user_id</th><th>版本</th><th>注册</th><th>最近出图</th><th>出图数</th><th>风格包</th><th>风格 Top</th><th>题材 Top</th><th>色调 Top</th><th>情绪 Top</th><th>构图 Top</th><th>点踩</th><th>操作</th></tr>
 {{range .UserRows}}<tr>
 <td><code>{{.UserID}}</code>{{if .Disabled}} <span class="bad">禁用</span>{{end}}</td>
 <td>{{if .Ver}}{{.Ver}}{{else}}<span class="mut">—</span>{{end}}</td>
@@ -99,6 +100,7 @@ code{color:var(--acc)}
 <td>{{.PromptCount}}</td><td>{{.PackCN}}</td>
 <td class="top">{{.Style}}</td><td class="top">{{.Subject}}</td><td class="top">{{.Palette}}</td><td class="top">{{.Mood}}</td><td class="top">{{.Comp}}</td>
 <td>{{if .DislikeN}}<span class="bad">{{.DislikeN}}</span>{{else}}0{{end}}</td>
+<td><a href="javascript:void 0" class="bad" style="cursor:pointer" data-uid="{{.UserID}}" onclick="delUser(this.dataset.uid, this)">删除</a></td>
 </tr>{{end}}
 </table></div>
 </section>
@@ -222,6 +224,32 @@ function drawOv() {
   let acc = 0;
   const cum = gr.map(r=>(acc += r[1]));
   lineChart('cGrow', gr.map(r=>r[0]), [{name:'累计用户', data:cum, area:true}]);
+
+// delUser 删除身份: 第一次确认 → 有数据时服务端回 need_force → 第二次强文案确认 → force 重发
+async function delUser(uid, el) {
+  if (!confirm('删除身份 ' + uid + ' ?')) return;
+  let r = await postDelUser(uid, false);
+  if (r && r.need_force) {
+    if (!confirm('该身份有出图/画像数据 —— 删除将级联清空其全部云端数据(出图记录/画像/图片/设备/配额)!
+
+确定删除吗?')) return;
+    r = await postDelUser(uid, true);
+  }
+  if (r && r.ok) {
+    if (el && el.closest) { const tr = el.closest('tr'); if (tr) tr.remove(); }
+  } else {
+    alert('删除失败: ' + (r && r.message ? r.message : '网络错误'));
+  }
+}
+async function postDelUser(uid, force) {
+  try {
+    const resp = await fetch('/api/v1/admin/users/delete' + location.search, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: uid, force: force }),
+    });
+    return await resp.json();
+  } catch (e) { return null; }
+}
   const st = D.site_daily || [];
   lineChart('cSite', st.map(r=>r[0]), [
     {name:'PV', data:st.map(r=>r[1])},
@@ -540,6 +568,38 @@ func (a *API) handleEcharts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	_, _ = w.Write(echartsJS)
+}
+
+// handleAdminDeleteUser POST /api/v1/admin/users/delete {user_id, force} 管理员删除身份。
+// 空壳(无出图无画像)直接删; 有数据先返回 need_force=true, 前端二次确认后带 force 重发。
+func (a *API) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	if a.adminToken == "" || r.URL.Query().Get("token") != a.adminToken {
+		http.NotFound(w, r)
+		return
+	}
+	var body struct {
+		UserID string `json:"user_id"`
+		Force  bool   `json:"force"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil || body.UserID == "" {
+		writeFail(w, http.StatusBadRequest, "bad request")
+		return
+	}
+	deleted, needForce, err := a.st.AdminDeleteUser(body.UserID, body.Force)
+	if err != nil {
+		writeFail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if needForce {
+		writeOK(w, map[string]bool{"need_force": true})
+		return
+	}
+	if !deleted {
+		writeFail(w, http.StatusNotFound, "身份不存在")
+		return
+	}
+	a.logf("管理面板删除身份 %s (force=%v)", body.UserID, body.Force)
+	writeOK(w, map[string]bool{"ok": true})
 }
 
 func (a *API) handleAdmin(w http.ResponseWriter, r *http.Request) {
