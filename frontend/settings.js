@@ -28,12 +28,38 @@ window.initSettings = function () {
         .map((d) => {
           const icon = d.type === "android" ? "📱" : "💻";
           return (
-            "<div>" + icon + " " + escDev(d.name) +
+            '<div class="dev-row" style="display:flex;align-items:center;gap:8px">' +
+            '<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+            icon + " " + escDev(d.name) +
             (d.current ? ' <span class="muted">(本机)</span>' : "") +
+            "</div>" +
+            '<button class="btn sm" data-dev="' + escDev(d.device) + '">删除</button>' +
             "</div>"
           );
         })
         .join("");
+      // 删除配对设备(清理卸载重装产生的重复条目; 只删列表行, 不影响画像与云端图片)
+      el.querySelectorAll("button[data-dev]").forEach((btn) => {
+        btn.onclick = async () => {
+          const dev = btn.getAttribute("data-dev");
+          const ok = await confirmBox(
+            "删除设备",
+            "从配对列表移除「" + dev + "」？\n只删列表条目，不影响偏好画像与云端图片。"
+          );
+          if (!ok) return;
+          btn.disabled = true;
+          try {
+            await B.DeletePairedDevice(dev);
+            await loadDevices();
+          } catch (e) {
+            btn.disabled = false;
+            el.insertAdjacentHTML(
+              "afterbegin",
+              '<div class="muted" style="color:var(--red)">删除失败: ' + escDev(e) + "</div>"
+            );
+          }
+        };
+      });
     } catch (e) {
       title.textContent = "已配对设备";
       el.innerHTML = '<div class="muted">设备列表获取失败: ' + escDev(e) + "</div>";

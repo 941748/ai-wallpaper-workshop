@@ -13,6 +13,7 @@ import (
 	"wallpaper/internal/cloud"
 	"wallpaper/internal/config"
 	"wallpaper/internal/desktop"
+	"wallpaper/internal/version"
 	"wallpaper/internal/prompt"
 )
 
@@ -23,6 +24,12 @@ func makeBackend(cfg *config.Config) (backend.ImageBackend, *cloud.Client) {
 }
 
 // hostName 设备名(注册/统计用)。
+// pcDeviceInfo 读本机 OEM 厂商/型号组装设备属性(注册/配对随行上报, 配对列表显示用)。
+func pcDeviceInfo() *cloud.DeviceInfoPc {
+	man, model := desktop.SystemManufacturerModel()
+	return cloud.NewPCDeviceInfo(man, model, version.Version)
+}
+
 func hostName() string {
 	h, err := os.Hostname()
 	if err != nil || h == "" {
@@ -37,7 +44,7 @@ func ensureRegistered(ctx context.Context, cfg *config.Config) error {
 		return nil
 	}
 	c := cloud.New(cfg.CloudURL, "", "", hostName())
-	resp, err := c.Register(ctx, hostName())
+	resp, err := c.Register(ctx, hostName(), pcDeviceInfo())
 	if err != nil {
 		return fmt.Errorf("匿名注册失败: %w", err)
 	}

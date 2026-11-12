@@ -85,6 +85,7 @@ var migrations = []migration{
 	{11, m011Archive},
 	{12, m012ArchiveRecipe},
 	{13, m013FailedPregen},
+	{14, m014DeviceManufacturer},
 }
 
 // m001BaselineSchema 基线表结构(全部 IF NOT EXISTS, 对新库建表/对旧库无操作)。
@@ -380,21 +381,23 @@ func (s *Store) ClearJobImage(id string) error {
 type DeviceAttr struct {
 	Device, UserID                     string
 	Type, Model, OS, OSVersion, AppVer string
+	Manufacturer                       string
 	ScreenW, ScreenH                   int
 }
 
 // DeviceRow 配对设备列表行(双端设置页展示: 手机显示 model, PC 显示 device=机器名)。
 type DeviceRow struct {
-	Device    string `json:"device"`
-	Type      string `json:"type"` // pc / android(旧空值按 pc 展示)
-	Model     string `json:"model"`
-	LastSeen  string `json:"last_seen"`
-	CreatedAt string `json:"created_at"`
+	Device       string `json:"device"`
+	Type         string `json:"type"` // pc / android(旧空值按 pc 展示)
+	Model        string `json:"model"`
+	Manufacturer string `json:"manufacturer"`
+	LastSeen     string `json:"last_seen"`
+	CreatedAt    string `json:"created_at"`
 }
 
 // ListDevices 用户全部设备(最后活跃在前)。
 func (s *Store) ListDevices(userID string) ([]DeviceRow, error) {
-	rows, err := s.db.Query(`SELECT device, device_type, model, last_seen, created_at
+	rows, err := s.db.Query(`SELECT device, device_type, model, manufacturer, last_seen, created_at
 FROM devices WHERE user_id=? ORDER BY COALESCE(NULLIF(last_seen,''), created_at) DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -403,7 +406,7 @@ FROM devices WHERE user_id=? ORDER BY COALESCE(NULLIF(last_seen,''), created_at)
 	var out []DeviceRow
 	for rows.Next() {
 		var d DeviceRow
-		if err := rows.Scan(&d.Device, &d.Type, &d.Model, &d.LastSeen, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.Device, &d.Type, &d.Model, &d.Manufacturer, &d.LastSeen, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -425,19 +428,30 @@ ON CONFLICT(device, user_id) DO UPDATE SET last_seen=excluded.last_seen`,
 func (s *Store) UpsertDeviceAttrs(d DeviceAttr) error {
 	now := time.Now().Format(timeFmt)
 	_, err := s.db.Exec(`INSERT INTO devices
-(device, user_id, created_at, last_seen, device_type, model, os, os_version, app_version, screen_w, screen_h)
-VALUES(?,?,?,?,?,?,?,?,?,?,?)
+(device, user_id, created_at, last_seen, device_type, model, manufacturer, os, os_version, app_version, screen_w, screen_h)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(device, user_id) DO UPDATE SET
   device_type=CASE WHEN excluded.device_type<>'' THEN excluded.device_type ELSE devices.device_type END,
   model=CASE WHEN excluded.model<>'' THEN excluded.model ELSE devices.model END,
+  manufacturer=CASE WHEN excluded.manufacturer<>'' THEN excluded.manufacturer ELSE devices.manufacturer END,
   os=CASE WHEN excluded.os<>'' THEN excluded.os ELSE devices.os END,
   os_version=CASE WHEN excluded.os_version<>'' THEN excluded.os_version ELSE devices.os_version END,
   app_version=CASE WHEN excluded.app_version<>'' THEN excluded.app_version ELSE devices.app_version END,
   screen_w=CASE WHEN excluded.screen_w>0 THEN excluded.screen_w ELSE devices.screen_w END,
   screen_h=CASE WHEN excluded.screen_h>0 THEN excluded.screen_h ELSE devices.screen_h END,
   last_seen=excluded.last_seen`,
-		d.Device, d.UserID, now, now, d.Type, d.Model, d.OS, d.OSVersion, d.AppVer, d.ScreenW, d.ScreenH)
+		d.Device, d.UserID, now, now, d.Type, d.Model, d.Manufacturer, d.OS, d.OSVersion, d.AppVer, d.ScreenW, d.ScreenH)
 	return err
+}
+
+// DeleteDevice 删除配对设备行(仅本人身份下; PC 端清理重装产生的重复设备用)。返回是否删到。
+func (s *Store) DeleteDevice(userID, device string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM devices WHERE user_id=? AND device=?`, userID, device)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // TouchDeviceScreen 出图请求随行 device_id: 刷新屏幕(仅正值)与活跃时间; 只更新已登记行。
@@ -1176,6 +1190,20 @@ func m012ArchiveRecipe(db *sql.DB) error {
 negative=(SELECT COALESCE(negative,'') FROM jobs j WHERE j.job_id=archive.job_id),
     combo=(SELECT COALESCE(combo,'') FROM jobs j WHERE j.job_id=archive.job_id)
 WHERE (negative='' OR combo='') AND EXISTS(SELECT 1 FROM jobs j WHERE j.job_id=archive.job_id)`)
+	return err
+}
+
+// m014DeviceManufacturer devices 加厂商列(需求: 配对列表显示厂商+型号, 双端共用)。
+// 幂等(同 m008 风格): 列已存在跳过——迁移重放测试会清版本号全量重跑。
+func m014DeviceManufacturer(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('devices') WHERE name='manufacturer'`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := db.Exec(`ALTER TABLE devices ADD COLUMN manufacturer TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 

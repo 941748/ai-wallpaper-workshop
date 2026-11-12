@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/skip2/go-qrcode"
@@ -378,7 +379,7 @@ func (b *Bridge) CreateLink() LinkResult {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	resp, err := cc.LinkCreate(ctx)
+	resp, err := cc.LinkCreate(ctx, pcDeviceInfo())
 	if err != nil {
 		return LinkResult{Message: "生成失败: " + friendlyText(err.Error())}
 	}
@@ -403,7 +404,7 @@ func (b *Bridge) RedeemLink(code string) LinkResult {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	resp, err := b.cc.LinkRedeem(ctx, code)
+	resp, err := b.cc.LinkRedeem(ctx, code, pcDeviceInfo())
 	if err != nil {
 		return LinkResult{Message: "配对失败: " + friendlyText(err.Error())}
 	}
@@ -440,9 +441,19 @@ func (b *Bridge) GetPairedDevices() ([]PairedDevice, error) {
 	}
 	out := make([]PairedDevice, 0, len(rows))
 	for _, r := range rows {
-		name := r.Device
-		if r.Type == "android" && r.Model != "" {
-			name = r.Model
+		hw := joinNonEmpty(r.Manufacturer, r.Model)
+		var name string
+		if r.Type == "android" {
+			// 安卓: 厂商+型号(如 华为 VOG-AL10); 旧数据无属性则退回 device
+			name = hw
+			if name == "" {
+				name = r.Device
+			}
+		} else if hw == "" {
+			name = r.Device
+		} else {
+			// PC(负责人定方案A): 厂商+型号（机器名）
+			name = hw + "（" + r.Device + "）"
 		}
 		out = append(out, PairedDevice{
 			Device: r.Device, Type: r.Type, Name: name,
@@ -450,6 +461,36 @@ func (b *Bridge) GetPairedDevices() ([]PairedDevice, error) {
 		})
 	}
 	return out, nil
+}
+
+// joinNonEmpty 拼接非空片段(空格分隔)。
+func joinNonEmpty(parts ...string) string {
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// DeletePairedDevice 删除配对设备行(PC 端清理卸载重装产生的重复条目; 负责人定: 安卓不提供删除)。
+func (b *Bridge) DeletePairedDevice(device string) error {
+	b.mu.Lock()
+	cc := b.cc
+	b.mu.Unlock()
+	if cc == nil {
+		return fmt.Errorf("当前为直连调试模式, 无云端同步能力")
+	}
+	if device == "" {
+		return fmt.Errorf("缺少设备标识")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := cc.DeleteDevice(ctx, device); err != nil {
+		return fmt.Errorf("删除失败: %s", friendlyText(err.Error()))
+	}
+	return nil
 }
 
 // ---------- 卸载 ----------

@@ -186,7 +186,13 @@ fun SettingsScreen(session: Session) {
             )
             else -> devList.forEach { d ->
                 val icon = if (d.type == "android") "📱" else "💻"
-                val name = if (d.type == "android" && d.model.isNotEmpty()) d.model else d.device
+                val name = when {
+                    d.type == "android" -> listOf(d.manufacturer, d.model)
+                        .filter { it.isNotBlank() }.joinToString(" ").ifEmpty { d.device }
+                    else -> listOf(d.manufacturer, d.model)
+                        .filter { it.isNotBlank() }.joinToString(" ")
+                        .let { if (it.isEmpty()) d.device else "$it（${d.device}）" }
+                }
                 val cur = if (d.device == sessionData.deviceId) "  (本机)" else ""
                 Text(
                     "$icon  $name$cur",

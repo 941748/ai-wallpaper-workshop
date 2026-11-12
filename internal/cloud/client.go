@@ -159,10 +159,30 @@ type RegisterResp struct {
 }
 
 // Register 匿名注册(零注册零登录)。
-func (c *Client) Register(ctx context.Context, device string) (*RegisterResp, error) {
+// DeviceInfoPc PC 上报的设备属性(注册/配对随行; 服务端落 devices 表, 配对列表显示厂商+型号)。
+type DeviceInfoPc struct {
+	Type         string `json:"type"`
+	Model        string `json:"model"`
+	Manufacturer string `json:"manufacturer"`
+	OS           string `json:"os"`
+	AppVersion   string `json:"app_version"`
+}
+
+// NewPCDeviceInfo 组装 PC 设备属性(厂商/型号由调用方从系统读取, desktop.SystemManufacturerModel)。
+func NewPCDeviceInfo(manufacturer, model, appVersion string) *DeviceInfoPc {
+	return &DeviceInfoPc{
+		Type: "pc", Model: model, Manufacturer: manufacturer,
+		OS: "Windows", AppVersion: appVersion,
+	}
+}
+
+func (c *Client) Register(ctx context.Context, device string, info *DeviceInfoPc) (*RegisterResp, error) {
 	var out RegisterResp
-	err := c.doJSON(ctx, c.meta, http.MethodPost, "/users/register",
-		map[string]string{"device": device}, &out)
+	payload := map[string]any{"device": device}
+	if info != nil {
+		payload["device_info"] = info
+	}
+	err := c.doJSON(ctx, c.meta, http.MethodPost, "/users/register", payload, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -554,10 +574,11 @@ func (c *Client) HistoryFav(ctx context.Context, jobID string, fav bool) error {
 
 // DeviceRow 配对设备(设置页设备列表; 显示名由客户端决定: 手机=model, PC=device=机器名)。
 type DeviceRow struct {
-	Device   string `json:"device"`
-	Type     string `json:"type"` // pc / android(旧空值按 pc 展示)
-	Model    string `json:"model"`
-	LastSeen string `json:"last_seen"`
+	Device       string `json:"device"`
+	Type         string `json:"type"` // pc / android(旧空值按 pc 展示)
+	Model        string `json:"model"`
+	Manufacturer string `json:"manufacturer"`
+	LastSeen     string `json:"last_seen"`
 }
 
 // ListDevices 拉取本身份已配对的全部设备(跨境慢网, 与 history 同用 plan 超时)。
@@ -656,24 +677,36 @@ type LinkCreateResp struct {
 	ExpiresAt string `json:"expires_at"`
 }
 
-// LinkCreate 旧设备创建配对票据。
-func (c *Client) LinkCreate(ctx context.Context) (*LinkCreateResp, error) {
+// LinkCreate 旧设备创建配对票据(info 非空时顺带刷新本机设备属性)。
+func (c *Client) LinkCreate(ctx context.Context, info *DeviceInfoPc) (*LinkCreateResp, error) {
 	var out LinkCreateResp
-	if err := c.doJSON(ctx, c.meta, http.MethodPost, "/devices/link",
-		map[string]string{"action": "create", "device": c.Device}, &out); err != nil {
+	payload := map[string]any{"action": "create", "device": c.Device}
+	if info != nil {
+		payload["device_info"] = info
+	}
+	if err := c.doJSON(ctx, c.meta, http.MethodPost, "/devices/link", payload, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// LinkRedeem 新设备输入配对码领回身份。
-func (c *Client) LinkRedeem(ctx context.Context, code string) (*RegisterResp, error) {
+// LinkRedeem 新设备输入配对码领回身份(info 非空时登记本机厂商/型号)。
+func (c *Client) LinkRedeem(ctx context.Context, code string, info *DeviceInfoPc) (*RegisterResp, error) {
 	var out RegisterResp
-	if err := c.doJSON(ctx, c.meta, http.MethodPost, "/devices/link",
-		map[string]string{"action": "redeem", "code": code, "device": c.Device}, &out); err != nil {
+	payload := map[string]any{"action": "redeem", "code": code, "device": c.Device}
+	if info != nil {
+		payload["device_info"] = info
+	}
+	if err := c.doJSON(ctx, c.meta, http.MethodPost, "/devices/link", payload, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// DeleteDevice 删除配对设备行(PC 端清理卸载重装产生的重复条目)。
+func (c *Client) DeleteDevice(ctx context.Context, device string) error {
+	var out any
+	return c.doJSON(ctx, c.meta, http.MethodDelete, "/devices/"+url.PathEscape(device), nil, &out)
 }
 
 // ---------- 离线补传队列 ----------

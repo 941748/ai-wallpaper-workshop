@@ -2,7 +2,16 @@ package space.cybermesh.wallpaper.net
 
 import android.app.WallpaperManager
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Point
+import android.graphics.Rect
+import android.graphics.RectF
+import android.os.Build
+import android.view.WindowManager
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -98,8 +107,7 @@ object RenderEngine {
         onState(RenderState.Applying)
         val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             ?: throw ApiException("图片解码失败")
-        val wm = WallpaperManager.getInstance(ctx)
-        wm.setBitmap(bmp, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
+        setWallpaper(ctx, bmp)
         bmp.recycle()
 
         onState(RenderState.Done(file))
@@ -136,8 +144,7 @@ object RenderEngine {
         onState(RenderState.Applying)
         val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             ?: throw ApiException("图片解码失败")
-        val wm = WallpaperManager.getInstance(ctx)
-        wm.setBitmap(bmp, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
+        setWallpaper(ctx, bmp)
         bmp.recycle()
         onState(RenderState.Done(file))
         return file
@@ -147,9 +154,37 @@ object RenderEngine {
     fun setFile(ctx: Context, file: File) {
         val bmp = BitmapFactory.decodeFile(file.absolutePath)
             ?: throw ApiException("图片解码失败")
-        val wm = WallpaperManager.getInstance(ctx)
-        wm.setBitmap(bmp, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
+        setWallpaper(ctx, bmp)
         bmp.recycle()
+    }
+
+    /**
+     * 设置壁纸统一入口(出图/历史重设/本地文件三处共用)。
+     * 华为系(EMUI/鸿蒙): 先把图 fit 居中画进正方形缓冲(边=屏长边, 两侧黑边)再入库,
+     * 与系统相册路径同形态——否则 EMUI 按错误映射把图放大 2.167 倍裁切(P30 实测,
+     * hint=null 与整图 hint 均无效); 其他机型原图直设(整图 hint), 维持既有正常行为。
+     */
+    private fun setWallpaper(ctx: Context, bmp: Bitmap) {
+        val wm = WallpaperManager.getInstance(ctx)
+        val flags = WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK
+        if (Build.MANUFACTURER.equals("HUAWEI", true) || Build.MANUFACTURER.equals("HONOR", true)) {
+            val real = Point()
+            (ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealSize(real)
+            val side = maxOf(real.x, real.y)
+            val out = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(out)
+            canvas.drawColor(Color.BLACK)
+            val scale = minOf(side.toFloat() / bmp.width, side.toFloat() / bmp.height)
+            val w = bmp.width * scale
+            val h = bmp.height * scale
+            val left = (side - w) / 2f
+            val top = (side - h) / 2f
+            canvas.drawBitmap(bmp, null, RectF(left, top, left + w, top + h), Paint(Paint.FILTER_BITMAP_FLAG))
+            wm.setBitmap(out, Rect(0, 0, side, side), true, flags)
+            out.recycle()
+        } else {
+            wm.setBitmap(bmp, Rect(0, 0, bmp.width, bmp.height), true, flags)
+        }
     }
 
     /** 最近生成的壁纸(新→旧; 新命名携带 jobId 无时间序, 统一按修改时间排)。全量返回, 不设上限。 */

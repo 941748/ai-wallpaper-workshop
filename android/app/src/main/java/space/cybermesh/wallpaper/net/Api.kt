@@ -21,6 +21,7 @@ data class Envelope<T>(val success: Boolean, val data: T? = null, val error: Str
 data class DeviceInfo(
     val type: String = "",
     val model: String = "",
+    val manufacturer: String = "",
     val os: String = "",
     @SerialName("os_version") val osVersion: String = "",
     @SerialName("app_version") val appVersion: String = "",
@@ -155,6 +156,7 @@ data class DeviceRow(
     val device: String = "",
     val type: String = "",
     val model: String = "",
+    val manufacturer: String = "",
     @SerialName("last_seen") val lastSeen: String = "",
 )
 

@@ -18,8 +18,9 @@ import (
 
 // deviceInfoPayload register/link 可选携带的设备信息(安卓首启上报; 旧客户端不带则仅登记设备名)。
 type deviceInfoPayload struct {
-	Type       string `json:"type"` // pc / android
-	Model      string `json:"model"`
+	Type         string `json:"type"` // pc / android
+	Model        string `json:"model"`
+	Manufacturer string `json:"manufacturer"`
 	OS         string `json:"os"`
 	OSVersion  string `json:"os_version"`
 	AppVersion string `json:"app_version"`
@@ -39,6 +40,7 @@ func (a *API) registerDevice(device, userID string, info *deviceInfoPayload) {
 	_ = a.st.UpsertDeviceAttrs(store.DeviceAttr{
 		Device: device, UserID: userID,
 		Type: info.Type, Model: info.Model, OS: info.OS, OSVersion: info.OSVersion,
+		Manufacturer: info.Manufacturer,
 		AppVer: info.AppVersion, ScreenW: info.ScreenW, ScreenH: info.ScreenH,
 	})
 }
@@ -154,6 +156,31 @@ func (a *API) handleLink(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeFail(w, http.StatusBadRequest, "未知 action")
 	}
+}
+
+// handleDeviceDelete DELETE /api/v1/devices/{device} 删除配对设备行(仅本人身份下)。
+// 用途: PC 端清理卸载重装后产生的重复设备条目(安卓端不提供删除入口, 负责人 2026-11-12 定)。
+func (a *API) handleDeviceDelete(w http.ResponseWriter, r *http.Request) {
+	u, ok := a.requireUser(w, r)
+	if !ok {
+		return
+	}
+	device := r.PathValue("device")
+	if device == "" {
+		writeFail(w, http.StatusBadRequest, "缺少设备标识")
+		return
+	}
+	found, err := a.st.DeleteDevice(u.UserID, device)
+	if err != nil {
+		writeFail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		writeFail(w, http.StatusNotFound, "设备不存在")
+		return
+	}
+	a.logf("删除配对设备 user=%s device=%s", u.UserID, device)
+	writeOK(w, map[string]bool{"ok": true})
 }
 
 // handleDevices GET /api/v1/devices 已配对设备列表(双端设置页展示)。

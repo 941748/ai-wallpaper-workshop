@@ -1,6 +1,7 @@
 package space.cybermesh.wallpaper.net
 
 import android.content.Context
+import android.provider.Settings
 import android.os.Build
 import android.util.DisplayMetrics
 import androidx.datastore.preferences.core.edit
@@ -37,7 +38,12 @@ class Session(private val ctx: Context) {
         val prefs = ctx.dataStore.data.first()
         var device = prefs[KEY_DEVICE] ?: ""
         if (device.isEmpty()) {
-            device = "android-" + UUID.randomUUID().toString().substring(0, 8)
+            // P-设备: 稳定 ID(ANDROID_ID 同设备+同签名卸载重装不变)——根治重装重新配对后
+            // devices 表多出重复设备行的问题(旧随机ID随 DataStore 消失, 新随机ID又插一行)。
+            // 取不到时退回随机(个别 ROM 异常)。
+            device = "android-" + (Settings.Secure.getString(
+                ctx.contentResolver, Settings.Secure.ANDROID_ID
+            )?.takeIf { it.length >= 8 } ?: UUID.randomUUID().toString().substring(0, 8))
             ctx.dataStore.edit { it[KEY_DEVICE] = device }
         }
         _state.value = SessionData(
@@ -72,6 +78,7 @@ class Session(private val ctx: Context) {
         return DeviceInfo(
             type = "android",
             model = Build.MODEL ?: "unknown",
+            manufacturer = Build.MANUFACTURER ?: "",
             os = "Android",
             osVersion = Build.VERSION.RELEASE ?: "",
             appVersion = version,
