@@ -28,22 +28,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import kotlinx.coroutines.launch
 import space.cybermesh.wallpaper.net.Session
-import space.cybermesh.wallpaper.worker.DailySwapWorker
+import space.cybermesh.wallpaper.worker.AutoSchedule
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
-private const val DAILY_WORK = "aw-daily-swap"
-
-/** 每日自动换: WorkManager 唯一周期任务(每天一轮, 系统调度, 不常驻不轮询)。 */
+/** 定点自动换: 每天 08:30 / 14:00 各一轮(AutoSchedule OneTime 自链, 系统调度, 不常驻不轮询)。 */
 @Composable
 fun AutoScreen(session: Session) {
     val ctx = LocalContext.current
@@ -60,7 +52,7 @@ fun AutoScreen(session: Session) {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("每日自动换", style = MaterialTheme.typography.headlineSmall)
+        Text("定点自动换", style = MaterialTheme.typography.headlineSmall)
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -72,7 +64,7 @@ fun AutoScreen(session: Session) {
             Column(Modifier.weight(1f)) {
                 Text("自动换图", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "每天生成并设置一张新壁纸（桌面+锁屏）",
+                    "每天 8:30、14:00 各生成并设置一张新壁纸（桌面+锁屏）",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -84,19 +76,7 @@ fun AutoScreen(session: Session) {
                     scope.launch {
                         session.setAutoEnabled(on)
                         enabled = on
-                        val wm = WorkManager.getInstance(ctx)
-                        if (on) {
-                            val req = PeriodicWorkRequestBuilder<DailySwapWorker>(1, TimeUnit.DAYS)
-                                .setConstraints(
-                                    Constraints.Builder()
-                                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                                        .build(),
-                                )
-                                .build()
-                            wm.enqueueUniquePeriodicWork(DAILY_WORK, ExistingPeriodicWorkPolicy.KEEP, req)
-                        } else {
-                            wm.cancelUniqueWork(DAILY_WORK)
-                        }
+                        if (on) AutoSchedule.start(ctx) else AutoSchedule.stop(ctx)
                         last = session.autoLast()
                     }
                 },

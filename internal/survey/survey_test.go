@@ -12,7 +12,7 @@ func TestApplyMapsThreeStates(t *testing.T) {
 	answers := map[string]Attitude{
 		config.Key(taxonomy.DimStyle, "ink"):      Like,
 		config.Key(taxonomy.DimStyle, "cyberpunk"): Dislike,
-		config.Key(taxonomy.DimSubject, "nature"):  Neutral,
+		config.Key(taxonomy.DimSubject, "aurora"):  Neutral,
 	}
 	Apply(p, answers)
 	if got := p.Get(taxonomy.DimStyle, "ink"); got != LikeWeight {
@@ -21,7 +21,7 @@ func TestApplyMapsThreeStates(t *testing.T) {
 	if got := p.Get(taxonomy.DimStyle, "cyberpunk"); got != DislikeWeight {
 		t.Fatalf("dislike weight = %v, want %v", got, DislikeWeight)
 	}
-	if got := p.Get(taxonomy.DimSubject, "nature"); got != NeutralWeight {
+	if got := p.Get(taxonomy.DimSubject, "aurora"); got != NeutralWeight {
 		t.Fatalf("neutral weight = %v, want %v", got, NeutralWeight)
 	}
 }

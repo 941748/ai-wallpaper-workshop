@@ -71,7 +71,6 @@ var Dimensions = []Dimension{
 	{
 		ID: DimSubject, NameCN: "题材",
 		Values: []Value{
-			{ID: "nature", NameCN: "自然风光", Prompt: "breathtaking natural landscape, mountains and valleys, turquoise alpine lakes, scenic vista"},
 			{ID: "citynight", NameCN: "城市夜景", Prompt: "city skyline at night, glowing windows, urban nightscape"},
 			{ID: "space", NameCN: "星空宇宙", Prompt: "deep space, starfield, nebula clouds, distant galaxy, cosmic vista"},
 			{ID: "abstract", NameCN: "抽象几何", Prompt: "abstract geometric forms, flowing shapes, modern art"},
@@ -102,7 +101,11 @@ var Dimensions = []Dimension{
 			{ID: "street", NameCN: "街景", Prompt: "lively city street scene, modern urban street photography, candid daily life"},
 			{ID: "cafe", NameCN: "咖啡厅", Prompt: "cozy cafe interior, coffee shop ambience, warm inviting light"},
 			{ID: "undersea", NameCN: "海底世界", Prompt: "deep underwater world, coral reef, exotic fish, blue ambient light"},
-			{ID: "lake", NameCN: "湖泊", Prompt: "serene lake landscape, turquoise mineral pools, mirror-like water reflections, tranquil shoreline"},
+			{ID: "lake", NameCN: "湖泊", Prompt: "serene lake landscape, turquoise mineral pools, water as clear and luminous as agate or gemstone, mirror-like water reflections, tranquil shoreline"},
+			{ID: "grassland", NameCN: "草原", Prompt: "vast grassland prairie, rolling green hills, herds grazing under big open sky"},
+			{ID: "desert", NameCN: "沙漠戈壁", Prompt: "desert gobi landscape, golden sand dunes, arid canyon and rock formations"},
+			{ID: "mistforest", NameCN: "晨雾森林", Prompt: "misty forest at dawn, fog drifting through tall trees, ethereal morning light"},
+			{ID: "sunsetcloud", NameCN: "晚霞火烧云", Prompt: "burning sunset clouds, dramatic fiery sky at dusk, crimson and gold cloud formations"},
 			{ID: "snowmountain", NameCN: "雪山", Prompt: "snow-capped mountain peak, alpine winter scenery, majestic glacier view"},
 			{ID: "stream", NameCN: "溪谷瀑布", Prompt: "lush jungle stream, mossy rainforest, cascading waterfall, misty green wilderness"},
 			{ID: "guzhuang", NameCN: "唐装美人", Prompt: "portrait of a stunning chinese woman in exquisite tang dynasty hanfu, ornate embroidered silk robes, elaborate jeweled hair ornaments, luxurious period drama aesthetic, regal graceful elegance, opulent golden details"},
@@ -112,7 +115,6 @@ var Dimensions = []Dimension{
 			{ID: "campus", NameCN: "校园清纯", Prompt: "young adult woman on a sunny college campus, fresh youthful vibe"},
 			{ID: "cat", NameCN: "猫", Prompt: "cute domestic cat, soft fur, bright curious eyes"},
 			{ID: "dog", NameCN: "狗", Prompt: "lovable pet dog, warm friendly expression"},
-			{ID: "desert", NameCN: "沙漠戈壁", Prompt: "desert sand dunes, red rock canyon"},
 			{ID: "forest", NameCN: "晨雾森林", Prompt: "misty forest, morning sunbeams through trees"},
 			{ID: "sunset", NameCN: "晚霞火烧云", Prompt: "dramatic sunset sky, fiery glowing clouds"},
 			{ID: "highway", NameCN: "公路旅行", Prompt: "open highway to the horizon, road trip scenery"},
@@ -179,7 +181,7 @@ const DefaultPackName = "治愈日常"
 type Pack struct {
 	Name        string   // 界面按钮文案
 	Style       []string // 风格值 ID(1~4, 须同族兼容)
-	Subject     []string // 题材值 ID(2~5, 同族)
+	Subject     []string // 题材值 ID(同族; 数量随包内容而定, 如自然风光 11 个)
 	Palette     []string // 色调值 ID(1~2)
 	Mood        []string // 情绪值 ID(1~3)
 	Composition []string // 构图值 ID(1~3, 由题材反推镜头/场景)
@@ -202,7 +204,7 @@ func (p Pack) Values(dimID string) []string {
 	return nil
 }
 
-// PresetPacks 九风格包定稿(2026-11-10 v2 简化版; 结构模板: 风格1~4 · 题材2~5 · 色调1~2 · 情绪1~3 · 构图1~3)。
+// PresetPacks 九风格包定稿(2026-11-10 v2 简化版; 结构模板: 风格1~4 · 题材2~11 · 色调1~2 · 情绪1~3 · 构图1~3)。
 var PresetPacks = []Pack{
 	{Name: "潮酷未来",
 		Style:       []string{"cyberpunk"},
@@ -242,7 +244,7 @@ var PresetPacks = []Pack{
 		Composition: []string{"centered", "wide"}},
 	{Name: "自然风光",
 		Style:       []string{"realism", "ink", "watercolor", "impressionist"},
-		Subject:     []string{"snowmountain", "ocean", "stream", "seasons"},
+		Subject:     []string{"snowmountain", "ocean", "stream", "seasons", "aurora", "cloudsea", "lake", "grassland", "desert", "mistforest", "sunsetcloud"},
 		Palette:     []string{"cinematic"},
 		Mood:        []string{"dreamy"},
 		Composition: []string{"wide", "aerial"}},

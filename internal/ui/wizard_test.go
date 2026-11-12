@@ -76,7 +76,7 @@ func TestPresetPacksTemplate(t *testing.T) {
 			maxN int
 		}{
 			{taxonomy.DimStyle, pack.Style, 1, 4},
-			{taxonomy.DimSubject, pack.Subject, 2, 5},
+			{taxonomy.DimSubject, pack.Subject, 2, 11}, // 自然风光 11 个(2026-11-12 负责人扩容)
 			{taxonomy.DimPalette, pack.Palette, 1, 2},
 			{taxonomy.DimMood, pack.Mood, 1, 3},
 			{taxonomy.DimComposition, pack.Composition, 1, 3},
@@ -96,8 +96,8 @@ func TestPresetPacksTemplate(t *testing.T) {
 				}
 			}
 		}
-		if total < 7 || total > 16 {
-			t.Errorf("风格包 %s 词条总数 %d 不符合预期(7~16)", pack.Name, total)
+		if total < 7 || total > 22 {
+			t.Errorf("风格包 %s 词条总数 %d 不符合预期(7~22)", pack.Name, total)
 		}
 	}
 	if !seen[defaultPackName] {

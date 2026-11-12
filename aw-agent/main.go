@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/draw"
 	"image/jpeg"
 	_ "image/png" // ComfyUI 出图为 PNG
 	"io"
@@ -38,10 +39,13 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	imgdraw "golang.org/x/image/draw"
 )
 
 // Version 当前代理版本(S3 版本管理: 发版时改这里, 与 Gitee tag agent-vX 对应)。
-const Version = "1.0.0"
+// v1.1.0: P5——按物理尺寸自算渲染尺寸(max_side 限宽)并放大回物理再上传。
+const Version = "1.1.0"
 
 type ossConf struct {
 	AkID     string `json:"ak_id"`
@@ -58,6 +62,7 @@ type config struct {
 	PollSeconds int      `json:"poll_seconds"`
 	ComfyuiCmd  string   `json:"comfyui_cmd"`  // ComfyUI 启动命令(看门狗拉起用; 空=只探测报警)
 	WorkflowDir string   `json:"workflow_dir"` // 工作流模板目录(空=exe 同目录 workflows)
+	MaxSide     int      `json:"max_side"`     // 渲染限宽(长边, 等比): 8GB 显存=2048; 显存更大可放开(如 4096+)直出物理
 }
 
 // renderTask 云端下发的渲染任务(字段与 /api/v1/agent/claim 一致)。
@@ -105,6 +110,9 @@ func main() {
 	}
 	if cfg.PollSeconds <= 0 {
 		cfg.PollSeconds = 5
+	}
+	if cfg.MaxSide <= 0 {
+		cfg.MaxSide = 2048 // P5 主闸默认: 8GB 显存(4060)防爆显存+提速; 大显存卡在 aw-agent.json 配 max_side 放开
 	}
 	wfDir = cfg.WorkflowDir
 	if wfDir == "" {
@@ -311,12 +319,12 @@ func loadTemplate(workflowID string) ([]byte, error) {
 
 // injectWorkflow 占位符注入(与原服务端 buildWorkflow 同口径; {{NEGATIVE}} 为 S3 新增,
 // 现网 Z-Image 模板无此占位符则原样保留, 未来 cfg>1 的工作流放上即生效)。
-func injectWorkflow(tmpl []byte, t *renderTask) ([]byte, error) {
+func injectWorkflow(tmpl []byte, t *renderTask, rw, rh int) ([]byte, error) {
 	repl := strings.NewReplacer(
 		"{{POSITIVE}}", jsonEscape(t.Positive),
 		"{{NEGATIVE}}", jsonEscape(t.Negative),
-		"{{WIDTH}}", fmt.Sprintf("%d", t.Width),
-		"{{HEIGHT}}", fmt.Sprintf("%d", t.Height),
+		"{{WIDTH}}", fmt.Sprintf("%d", rw),
+		"{{HEIGHT}}", fmt.Sprintf("%d", rh),
 		"{{SEED}}", fmt.Sprintf("%d", t.Seed),
 	)
 	out := repl.Replace(string(tmpl))
@@ -338,13 +346,19 @@ func jsonEscape(s string) string {
 
 // ---------- ComfyUI 执行 ----------
 
-// renderAndUpload 模板注入 → 提交 → 等完成 → 取图 → JPEG 转码 → PUT OSS。
+// renderAndUpload 模板注入 → 提交 → 等完成 → 取图 → 放大回物理 → JPEG 转码 → PUT OSS。
+// P5: claim 下发 width/height=物理交付尺寸; 本机按 max_side 等比自算渲染尺寸(8倍数),
+// 渲染后放大回物理再上传——限宽职责在出图机(显存是它自己的资源), 服务端只管要什么尺寸。
 func renderAndUpload(t *renderTask) error {
 	tmpl, err := loadTemplate(t.WorkflowID)
 	if err != nil {
 		return err
 	}
-	graph, err := injectWorkflow(tmpl, t)
+	rw, rh := renderSize(t.Width, t.Height, cfg.MaxSide)
+	if rw != t.Width || rh != t.Height {
+		log.Printf("job=%s 物理%dx%d → 渲染%dx%d(max_side=%d)", t.JobID, t.Width, t.Height, rw, rh, cfg.MaxSide)
+	}
+	graph, err := injectWorkflow(tmpl, t, rw, rh)
 	if err != nil {
 		return err
 	}
@@ -361,10 +375,35 @@ func renderAndUpload(t *renderTask) error {
 		return err
 	}
 	data := raw
-	if jpg, ok := toJPEG(raw); ok {
+	if jpg, ok := toJPEG(raw, t.Width, t.Height); ok {
 		data = jpg
 	}
 	return putOSS(t.OssKey, data)
+}
+
+// renderSize 物理尺寸 → 渲染尺寸: 长边等比限宽到 max_side, 8 倍数(ComfyUI latent 要求);
+// 不超限则 round8(物理)。放大回物理由 toJPEG 负责。
+func renderSize(physW, physH, maxSide int) (int, int) {
+	if physW < 320 || physH < 320 { // 防脏值(渲染兜底 16:9)
+		physW, physH = 1920, 1080
+	}
+	w, h := physW, physH
+	if m := maxSide; m >= 320 && (w > m || h > m) {
+		r := float64(m) / float64(w)
+		if r2 := float64(m) / float64(h); r2 < r {
+			r = r2
+		}
+		w, h = int(float64(w)*r+0.5), int(float64(h)*r+0.5)
+	}
+	return round8(w), round8(h)
+}
+
+func round8(v int) int {
+	n := (v + 4) / 8 * 8
+	if n < 8 {
+		n = 8
+	}
+	return n
 }
 
 func submitPrompt(graph []byte) (string, error) {
@@ -490,10 +529,16 @@ func putOSS(key string, data []byte) error {
 }
 
 // toJPEG 转码压缩(q90, 与原服务端/现网口径一致)。
-func toJPEG(src []byte) ([]byte, bool) {
+func toJPEG(src []byte, dstW, dstH int) ([]byte, bool) {
 	img, _, err := image.Decode(bytes.NewReader(src))
 	if err != nil {
 		return nil, false
+	}
+	// P5: 渲染尺寸(≤max_side)放大回物理交付尺寸; 尺寸一致(含 round8 后相同)则直转不缩放
+	if dstW >= 320 && dstH >= 320 && (img.Bounds().Dx() != dstW || img.Bounds().Dy() != dstH) {
+		dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+		imgdraw.CatmullRom.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Src, nil)
+		img = dst
 	}
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {

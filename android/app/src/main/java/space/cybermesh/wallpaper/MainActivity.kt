@@ -37,6 +37,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.launch
 import space.cybermesh.wallpaper.net.Session
 import space.cybermesh.wallpaper.ui.AutoScreen
 import space.cybermesh.wallpaper.ui.GalleryScreen
@@ -60,7 +61,27 @@ class MainActivity : ComponentActivity() {
                     try {
                         session.load()
                         session.ensureRegistered()
+                        // 定点自动换迁移: 升级后取消旧周期任务(防双跑), 确保 08:30/14:00 自链在排(幂等)
+                        if (session.autoEnabled()) {
+                            space.cybermesh.wallpaper.worker.AutoSchedule.migrate(applicationContext)
+                        }
                         ready = true
+                        // 打开即查更新: 静默下载后直接拉起系统安装器(本次会话仅一次; 失败静默)
+                        // 系统安装器仍需用户点一次"安装"(Android 安全模型不允许第三方静默安装)
+                        if (!space.cybermesh.wallpaper.net.Update.autoPrompted) {
+                            launch {
+                                try {
+                                    val upd = space.cybermesh.wallpaper.net.Update
+                                        .fetchIfUpdate(applicationContext, session.currentVersion())
+                                    if (upd != null) {
+                                        space.cybermesh.wallpaper.net.Update.autoPrompted = true
+                                        space.cybermesh.wallpaper.net.Update.install(applicationContext, upd.second)
+                                    }
+                                } catch (_: Exception) {
+                                    // 更新检查失败静默, 不影响正常使用
+                                }
+                            }
+                        }
                     } catch (e: Exception) {
                         bootError = e.message ?: "初始化失败"
                     }

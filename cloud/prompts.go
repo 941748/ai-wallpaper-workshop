@@ -62,10 +62,11 @@ type nextResp struct {
 func (a *API) decidePrompt(ctx context.Context, userID string, req nextReq) nextResp {
 	wf := a.reg.Resolve("")
 	spec := localCompose(req)
-	width, height := BucketSize(req.ScreenW, req.ScreenH, wf)
+	// P5: 下单尺寸=设备物理屏(全链路物理口径); 渲染限宽由出图机按自身 max_side 自算
+	// (8GB 显存=2048, 更大显存放开直出物理)并放大回物理再交付。屏缺失(0)时回 0, 客户端回退本地兜底尺寸。
 	resp := nextResp{
 		Positive: spec.Positive, Negative: spec.Negative,
-		Width: width, Height: height, WorkflowID: wf.ID,
+		Width: req.ScreenW, Height: req.ScreenH, WorkflowID: wf.ID,
 		Combo: spec.Combo, Seed: spec.Seed,
 		Reason: "本地引擎(画像加权采样)", Source: "local",
 	}
@@ -215,7 +216,9 @@ func (a *API) systemPrompt() string {
 		"你的唯一任务: 为给定组合撰写英文自然语言画面描述(供 Z-Image Turbo 出图)。\n" +
 		"硬性要求:\n" +
 		"1. 画面必须忠实呈现组合中的每一个维度; 风格维度严禁偏离或混入其他风格" +
-		"(例: 组合为写实(realism)时, 不得出现 watercolor/oil painting/anime/illustration 等词); 画面唯美、干净、不杂乱，适合作为壁纸使用。\n" +
+		"(例: 组合为写实(realism)时, 不得出现 watercolor/oil painting/anime/illustration 等词); " +
+		"每个维度每张图只选一个, 不要混搭(例: 题材为极光时, 画面主体应该是极光, 非必要不应加入其他题材); " +
+		"画面唯美、干净、不杂乱，适合作为壁纸使用。\n" +
 		"2. 画面并非必须有人物: 风景、建筑、动物、静物等场景严禁强行加入人物; 仅当组合维度或语境自然包含人物时才画人物。" +
 		"出现女性人物时按\"精致美女\"标准塑造: 加入 beautiful young woman, exquisite detailed facial features, " +
 		"beautiful detailed eyes, light natural makeup, soft flawless skin, sharp focus on face 等描述; " +
@@ -223,8 +226,7 @@ func (a *API) systemPrompt() string {
 		"性感走含蓄路线: 用姿态与光影传递张力——慵懒倚靠或侧卧、微微回眸、锁骨与肩线的自然展现、贴身衣物的柔和轮廓、" +
 		"湿润慵懒的眼神(alluring gaze, subtle sensuality, intimate cozy mood), 画面留有想象空间; " +
 		"感官刺激止于衣着之内, 任何情况下不得裸体、露点、真正透视装。\n" +
-		"3. 对于矛盾、违和、不合理的提示词, 在不严重偏离用户偏好的情况下, 自行进行筛选组合、补充" +
-		"(例: 星空宇宙+宠物, 可以只选星空宇宙, 不一定必须要画星空下的猫), 要在 5 个维度下充分发挥想象。\n" +
+		"3. 对于矛盾、违和、不合理的维度组合, 在不严重偏离用户偏好的情况下, 自行进行筛选组合、补充，要在 5 个维度下充分发挥想象。\n" +
 		"4. 可自然融入给定语境(最近壁纸记录、漂移事件、节日节气氛围、自定义偏好关键词), 但不得改变组合要素;\n" +
 		"5. 禁止文字/水印/横幅/边框元素; 只输出正向画面描述。\n" +
 		"6. 画面有明确主体时, 主体应位于画面右侧, 以避开桌面图标; 构图明显要求居中时除外。\n" +
@@ -232,7 +234,8 @@ func (a *API) systemPrompt() string {
 		"环境整体低饱和, 唇色作为画面唯一高饱和色点; 镜头偏 85mm 定焦人像感与浅景深; " +
 		"服装倾向浅色系(衬衫/T恤/针织/卫衣/睡裙/百褶裙等), 动作优先安静的\"手与头部互动\"(托腮/撩发/抱头)或无手姿态(闭眼侧卧/直视镜头), 避免高难度手部特写; " +
 		"四肢与手部遵循自然解剖(手臂与腿部比例正常、五指清晰), 忌扭曲残缺; " +
-		"躺卧场景可用俯拍对角线构图; 场景在纯色影棚/卧室床品/沙发/咖啡厅/窗边逆光/户外自然光之间按组合与语境择优。" +
+		"躺卧场景可用俯拍对角线构图; 场景在纯色影棚/卧室床品/沙发/咖啡厅/窗边逆光/户外自然光之间按组合与语境择优；" +
+		"故事感，可以根据要表达的人物的心态，构想当时人物所处的背景和环境（比如：地铁站、路边、湖边、古镇街道、书店、教室、咖啡厅、运动场等）；" +
 		"以上均为倾向, 请结合画面合理性灵活取舍, 不必逐条硬套。\n" +
 		"8. 输出必须是 JSON 对象: {\"positive\": \"...\", \"reason\": \"一句中文理由\"}, 不得输出 JSON 以外的任何内容。"
 }

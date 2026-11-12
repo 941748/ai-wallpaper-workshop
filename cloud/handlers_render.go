@@ -37,7 +37,8 @@ func (a *API) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	a.bumpGen(u, raw.DeviceID)
 
 	wf := a.reg.Resolve(p.WorkflowID)
-	width, height := ClampSize(wf, p.Width, p.Height)
+	// P5: jobs 落库存物理屏尺寸(全链路物理口径); 渲染限宽由出图机按自身 max_side 自算,
+	// 渲染后放大回物理再上传——键/归档/历史过滤自此全部=设备规格。
 	priority := "normal"
 	if p.Priority == "idle" {
 		priority = "idle"
@@ -46,13 +47,13 @@ func (a *API) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	err := a.st.CreateJob(store.Job{
 		JobID: jobID, UserID: u.UserID, Kind: "gen", Priority: priority,
 		Positive: p.Positive, Negative: p.Negative,
-		Width: width, Height: height, Seed: p.Seed, WorkflowID: wf.ID,
+		Width: p.Width, Height: p.Height, Seed: p.Seed, WorkflowID: wf.ID,
 	})
 	if err != nil {
 		writeFail(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	a.logf("出图任务 user=%s job=%s %dx%d wf=%s", u.UserID, jobID, width, height, wf.ID)
+	a.logf("出图任务 user=%s job=%s 物理%dx%d wf=%s", u.UserID, jobID, p.Width, p.Height, wf.ID)
 	writeOK(w, map[string]string{"job_id": jobID})
 }
 

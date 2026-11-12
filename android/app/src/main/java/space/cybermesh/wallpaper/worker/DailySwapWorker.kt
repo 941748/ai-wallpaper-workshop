@@ -8,8 +8,9 @@ import space.cybermesh.wallpaper.net.Session
 import space.cybermesh.wallpaper.net.friendlyError
 
 /**
- * 每日自动换图(WorkManager 唯一周期任务, 间隔 1 天; 不常驻不轮询, 耗电≈0)。
- * 失败静默(下轮再试), 成功记录时间与结果到会话偏好供 UI 展示。
+ * 定点自动换图(每天 08:30 / 14:00, AutoSchedule OneTime 自链; 不常驻不轮询, 耗电≈0)。
+ * 无论成败都排下一个定点(失败静默记录, 下个定点再试; 不返回 retry 以免高频重试耗电)。
+ * 成功记录时间与结果到会话偏好供 UI 展示。
  */
 class DailySwapWorker(appContext: Context, params: WorkerParameters) :
     CoroutineWorker(appContext, params) {
@@ -17,15 +18,16 @@ class DailySwapWorker(appContext: Context, params: WorkerParameters) :
     override suspend fun doWork(): Result {
         val session = Session(applicationContext)
         session.load()
-        if (!session.state.value.loggedIn) return Result.success()
-        return try {
-            RenderEngine.renderAndSet(applicationContext, session)
-            session.recordAutoRun(System.currentTimeMillis(), "ok")
-            Result.success()
+        try {
+            if (session.state.value.loggedIn) {
+                RenderEngine.renderAndSet(applicationContext, session)
+                session.recordAutoRun(System.currentTimeMillis(), "ok")
+            }
         } catch (e: Exception) {
             session.recordAutoRun(System.currentTimeMillis(), "fail: " + friendlyError(e))
-            // 网络/配额类临时失败交给下一轮; 不返回 retry 以免高频重试耗电
-            Result.success()
         }
+        // 自链: 排下一个定点(08:30/14:00)——即使失败/未登录也排, 保持链条不断
+        AutoSchedule.enqueueNext(applicationContext)
+        return Result.success()
     }
 }

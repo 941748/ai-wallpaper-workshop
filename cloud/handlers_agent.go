@@ -56,8 +56,11 @@ func (a *API) handleAgentClaim(w http.ResponseWriter, r *http.Request) {
 		writeOK(w, map[string]any{"task": nil})
 		return
 	}
+	// P5: 下发尺寸=物理交付尺寸(全链路物理口径); 渲染限宽由出图机按自身 max_side 自行等比计算,
+	// 渲染后放大回物理再上传(渲染限宽职责在出图机: 显存是它自己的资源)。
 	ossKey := store.OssKeyFor(job.UserID, job.JobID, job.Width, job.Height)
-	a.logf("代理领任务 job=%s kind=%s %dx%d wf=%s", job.JobID, job.Kind, job.Width, job.Height, job.WorkflowID)
+	a.logf("代理领任务 job=%s kind=%s 物理%dx%d wf=%s",
+		job.JobID, job.Kind, job.Width, job.Height, job.WorkflowID)
 	writeOK(w, map[string]any{"task": map[string]any{
 		"job_id":       job.JobID,
 		"kind":         job.Kind,
@@ -67,7 +70,7 @@ func (a *API) handleAgentClaim(w http.ResponseWriter, r *http.Request) {
 		"height":       job.Height,
 		"seed":         job.Seed,
 		"workflow_id":  job.WorkflowID,
-		"oss_key":      ossKey, // 服务端算键, 代理只负责传到位
+		"oss_key":      ossKey, // 服务端算键(物理尺寸), 代理只负责传到位
 	}})
 }
 

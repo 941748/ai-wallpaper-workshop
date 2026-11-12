@@ -15,7 +15,9 @@ type Lora struct {
 
 // Workflow 一套出图工作流。
 // 出图工作流已固定为 Z-Image Turbo(z_image_wallpaper), 模型与采样参数冻结在模板内;
-// 注册表仅保留工作流白名单与尺寸约束(min_side/max_side), 其余字段仅作备注。
+// 注册表仅保留工作流白名单, 其余字段仅作备注。
+// P5: 渲染限宽已移交出图机配置(aw-agent 的 max_side, 8GB 显存=2048, 更大显存放开直出物理),
+// 服务端 min_side/max_side 不再参与决策(配置文件里的同名键会被忽略)。
 type Workflow struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
@@ -25,8 +27,6 @@ type Workflow struct {
 	CFG         float64 `json:"cfg"`
 	SamplerName string  `json:"sampler_name"`
 	Scheduler   string  `json:"scheduler"`
-	MinSide     int     `json:"min_side"`
-	MaxSide     int     `json:"max_side"`
 }
 
 // Registry 工作流注册表(白名单: LLM 只能在其中选择)。
@@ -43,7 +43,6 @@ func DefaultRegistry() *Registry {
 		Checkpoint: "z_image_turbo_int8_convrot.safetensors",
 		Steps:      8, CFG: 1.0,
 		SamplerName: "res_multistep", Scheduler: "simple",
-		MinSide: 512, MaxSide: 2560, // 上限覆盖 2.2K(2240x1400)/2K/1440p 原生屏
 	})
 	return r
 }
@@ -60,12 +59,6 @@ func (r *Registry) add(w Workflow) {
 	}
 	if w.Scheduler == "" {
 		w.Scheduler = "simple"
-	}
-	if w.MinSide <= 0 {
-		w.MinSide = 512
-	}
-	if w.MaxSide <= 0 {
-		w.MaxSide = 2560
 	}
 	r.workflows[w.ID] = w
 }
@@ -112,7 +105,7 @@ func (r *Registry) Default() Workflow {
 	for _, w := range r.workflows {
 		return w
 	}
-	return Workflow{ID: "wf-base", Checkpoint: "z_image_turbo_int8_convrot.safetensors", Steps: 8, CFG: 1, MinSide: 512, MaxSide: 1920}
+	return Workflow{ID: "wf-base", Checkpoint: "z_image_turbo_int8_convrot.safetensors", Steps: 8, CFG: 1}
 }
 
 // Resolve 白名单校验: 非法 ID 回退默认。
@@ -141,49 +134,4 @@ func (r *Registry) List() []Workflow {
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].ID < out[b].ID })
 	return out
-}
-
-// ClampSize 尺寸约束: 8 倍数就近, 每边裁剪到 [MinSide, MaxSide]。
-func ClampSize(w Workflow, width, height int) (int, int) {
-	width, height = round8(width), round8(height)
-	if width < w.MinSide {
-		width = round8(w.MinSide)
-	}
-	if height < w.MinSide {
-		height = round8(w.MinSide)
-	}
-	if width > w.MaxSide {
-		width = round8(w.MaxSide)
-	}
-	if height > w.MaxSide {
-		height = round8(w.MaxSide)
-	}
-	return width, height
-}
-
-func round8(v int) int {
-	if v <= 0 {
-		return 512
-	}
-	n := (v + 4) / 8 * 8
-	if n < 8 {
-		n = 8
-	}
-	return n
-}
-
-// BucketSize 出图尺寸: 优先按客户端主屏物理分辨率原生出图(8 倍数、受工作流上下限约束),
-// 超上限时等比缩放保持纵横比; 无有效屏幕值时退回 1920x1080。
-func BucketSize(screenW, screenH int, w Workflow) (int, int) {
-	if screenW >= 320 && screenH >= 320 {
-		if screenW <= w.MaxSide && screenH <= w.MaxSide {
-			return ClampSize(w, screenW, screenH)
-		}
-		r := float64(w.MaxSide) / float64(screenW)
-		if r2 := float64(w.MaxSide) / float64(screenH); r2 < r {
-			r = r2
-		}
-		return ClampSize(w, int(float64(screenW)*r+0.5), int(float64(screenH)*r+0.5))
-	}
-	return ClampSize(w, 1920, 1080)
 }

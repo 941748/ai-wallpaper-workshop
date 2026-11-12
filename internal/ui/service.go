@@ -118,7 +118,7 @@ func generateWallpaper(ctx context.Context, cfg *config.Config, cc *cloud.Client
 }
 
 // fitGenSize 本地兜底出图尺寸: 主屏物理分辨率对齐 8 倍数(下取整, 不超屏),
-// 同分辨率时 FitToScreen 为无损直贴; 超 2560 上限时等比缩放(与云端 workflows 上限对齐);
+// 同分辨率时 FitToScreen 为无损直贴; 超 2048 上限时等比缩放(P5: 与出图机渲染限宽对齐, 8GB 显存=2048);
 // 无效屏幕值退回 1920x1080。
 func fitGenSize(sw, sh int) (int, int) {
 	if sw < 320 || sh < 320 {
@@ -131,7 +131,7 @@ func fitGenSize(sw, sh int) (int, int) {
 	if h < 512 {
 		h = 512
 	}
-	const maxSide = 2560
+	const maxSide = 2048
 	if w > maxSide || h > maxSide {
 		r := float64(maxSide) / float64(w)
 		if r2 := float64(maxSide) / float64(h); r2 < r {
