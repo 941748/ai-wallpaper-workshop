@@ -278,9 +278,7 @@ window.initSettings = function () {
     if (await B.HasPairData()) {
       const go = await modal({
         title: "加入对方身份",
-        body: "本机已有偏好画像或壁纸数据。
-加入后本设备将改用对方的身份, 本机已有数据将不再同步——
-确定加入吗?",
+        body: "本机已有偏好画像或壁纸数据。\n加入后本设备将改用对方的身份, 本机已有数据将不再同步——\n确定加入吗?",
         buttons: [{ text: "取消", value: null }, { text: "仍要加入", primary: true }],
       });
       if (!go) return;

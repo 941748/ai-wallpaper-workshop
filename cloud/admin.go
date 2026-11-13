@@ -230,9 +230,7 @@ async function delUser(uid, el) {
   if (!confirm('删除身份 ' + uid + ' ?')) return;
   let r = await postDelUser(uid, false);
   if (r && r.need_force) {
-    if (!confirm('该身份有出图/画像数据 —— 删除将级联清空其全部云端数据(出图记录/画像/图片/设备/配额)!
-
-确定删除吗?')) return;
+    if (!confirm('该身份有出图/画像数据 —— 删除将级联清空其全部云端数据(出图记录/画像/图片/设备/配额)!\n\n确定删除吗?')) return;
     r = await postDelUser(uid, true);
   }
   if (r && r.ok) {
