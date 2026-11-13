@@ -11,9 +11,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Autorenew
-import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -129,7 +129,7 @@ private fun AppScaffold(session: Session) {
     val items = listOf(
         NavItem("gallery", "画廊", Icons.Outlined.Image),
         NavItem("auto", "自动换", Icons.Outlined.Autorenew),
-        NavItem("prefs", "偏好", Icons.Outlined.FavoriteBorder),
+        NavItem("prefs", "偏好", Icons.Outlined.StarBorder),
         NavItem("settings", "设置", Icons.Outlined.Settings),
     )
     Scaffold(

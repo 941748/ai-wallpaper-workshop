@@ -246,8 +246,10 @@ object Api {
     }
 
     /** 云端图片历史(收藏恒置顶); items 附提示词/seed。 */
-    suspend fun history(token: String, limit: Int = 100): HistoryResp = withIO {
-        call("GET", "/api/v1/history?limit=$limit", token)
+    /** 云端历史(归档表): offset 分页, fav=1 仅收藏。 */
+    suspend fun history(token: String, limit: Int = 100, offset: Int = 0, fav: Boolean = false): HistoryResp = withIO {
+        val favQ = if (fav) "&fav=1" else ""
+        call("GET", "/api/v1/history?limit=$limit&offset=$offset$favQ", token)
     }
 
     /** 收藏/取消收藏。 */
