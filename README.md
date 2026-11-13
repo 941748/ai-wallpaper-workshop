@@ -16,7 +16,7 @@ ComfyUI(Z-Image Turbo)出图 → 按屏幕物理分辨率适配 → 自动更换
 
 零注册、零登录、无托盘、无常驻进程——关掉窗口,系统里就没有它的进程。
 
-**当前版本: v1.2.9** · 官网 [cybermesh.space](https://www.cybermesh.space) · 客户端约 14 MB 单文件。
+**当前版本: v1.2.10** · 官网 [cybermesh.space](https://www.cybermesh.space) · 客户端约 14 MB 单文件。
 
 ## 下载
 
@@ -310,8 +310,8 @@ server {
 
    ```json
    {
-     "version": "1.2.9",
-     "file": "AIWallpaper-1.2.9.exe",
+     "version": "1.2.10",
+     "file": "AIWallpaper-1.2.10.exe",
      "sha256": "<64 位 hex>",
      "size": 14081024,
      "notes": "设备厂商型号显示·华为壁纸修复",
