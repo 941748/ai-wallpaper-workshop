@@ -20,8 +20,8 @@ android {
         applicationId = "space.cybermesh.wallpaper"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.1.13"
+        versionCode = 20
+        versionName = "1.1.14"
     }
 
     signingConfigs {
