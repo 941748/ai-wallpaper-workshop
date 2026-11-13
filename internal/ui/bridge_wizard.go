@@ -219,6 +219,17 @@ func (b *Bridge) SaveSurvey(req struct {
 	}
 	_ = signals.Append(b.dir, signals.Event{Type: signals.TypeWeightAdjust, Detail: detail})
 	b.be, b.cc = makeBackend(b.cfg) // profile 变更影响出图链路参数
+	// 保存即上云(与安卓行为一致, 负责人 2026-11-13): 全量推送, 服务端整体替换为本次真相;
+	// 短超时尽力而为, 失败不阻断保存(下次出图请求的 profile 上行仍会兜底同步)。
+	if cc := b.cc; cc != nil {
+		pctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		if pv, err := cc.PushProfile(pctx,
+			profile.Weights, profile.Disliked, profile.CustomKeywords, profile.Packs); err == nil && pv > 0 {
+			b.cfg.ProfileVer = pv // 以服务端授版为准, 保持双端版本一致
+			_ = b.cfg.Save(b.dir)
+		}
+		cancel()
+	}
 	return nil
 }
 

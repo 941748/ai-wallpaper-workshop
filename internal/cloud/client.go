@@ -703,6 +703,29 @@ func (c *Client) LinkRedeem(ctx context.Context, code string, info *DeviceInfoPc
 	return &out, nil
 }
 
+// PushProfile 保存画像后立即上云(与安卓 saveProfile 同一服务端接口, 双端行为一致:
+// 服务端整体替换为本次全量, 未提及的键即删——服务端是唯一真相)。
+// 返回新 profile_version; 失败返回 err, 调用方可静默(出图请求链路仍会兜底上行)。
+func (c *Client) PushProfile(ctx context.Context, profile map[string]float64, disliked, custom, packs []string) (int, error) {
+	var out struct {
+		ProfileVersion int `json:"profile_version"`
+	}
+	payload := map[string]any{"profile": profile}
+	if disliked != nil {
+		payload["disliked"] = disliked
+	}
+	if custom != nil {
+		payload["custom"] = custom
+	}
+	if packs != nil {
+		payload["packs"] = packs
+	}
+	if err := c.doJSON(ctx, c.meta, http.MethodPost, "/profile", payload, &out); err != nil {
+		return 0, err
+	}
+	return out.ProfileVersion, nil
+}
+
 // RefreshDevice 刷新本机设备属性(看设备列表前调, 存量行补报厂商/型号); 失败静默返回。
 func (c *Client) RefreshDevice(ctx context.Context, info *DeviceInfoPc) {
 	if info == nil {
