@@ -14,9 +14,14 @@ import (
 // ---------- 官网 ----------
 
 // handleSite 官网静态页(index.html 与 assets/); 非站点路径返回 404。
+// /api/ 下未注册的路径: 浏览器 GET 误入(手输/书签)跳官网, API 客户端(POST 等)仍回 JSON 404。
 func (a *API) handleSite(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	if strings.HasPrefix(p, "/api/") {
+		if r.Method == http.MethodGet {
+			http.Redirect(w, r, "/", http.StatusFound)
+			return
+		}
 		writeFail(w, http.StatusNotFound, "接口不存在")
 		return
 	}
